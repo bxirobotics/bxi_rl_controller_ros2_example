@@ -9,7 +9,7 @@
 using namespace std::chrono_literals;
 using namespace std;
 
-#if 1  //PS4 JS
+#if 0  //PS4 JS
 #define JS_VELX_AXIS 4
 #define JS_VELX_AXIS_DIR -1
 #define JS_VELY_AXIS 0
@@ -43,8 +43,8 @@ using namespace std;
 
 #define AXIS_DEAD_ZONE  1000
 
-#define MIN_SPEED_X -0.6
-#define MAX_SPEED_X 0.4
+#define MIN_SPEED_X -0.4
+#define MAX_SPEED_X 0.8
 #define MIN_SPEED_Y -0.4
 #define MAX_SPEED_Y 0.4
 #define MIN_SPEED_R -0.6
