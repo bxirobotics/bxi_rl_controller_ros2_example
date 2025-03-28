@@ -1,0 +1,3 @@
+[submodule "bxi_ros2_pkg"]
+	path = bxi_ros2_pkg
+	url = https://github.com/bxirobotics/bxi_ros2_pkg.git
