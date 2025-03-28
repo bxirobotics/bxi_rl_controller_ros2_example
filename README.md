@@ -20,7 +20,7 @@
 1. 系统版本需为`Ubuntu 22.04`，并安装对应版本`ROS2`
 2. 运行自带控制算法需安装`pinocchio 2.7.1`，并设置环境变量`LD_LIBRARY_PATH`
 3. 运行`mujoco`仿真需安装`libglfw3-dev`
-4. 将`source xxx/bxi_hw_realease/setup.bash`加入`.bashrc`，运行真机需以`root`用户运行
+4. 将`source xxx/bxi_ros2_pkg/setup.bash`加入`.bashrc`，运行真机需以`root`用户运行
 5. 设置`udev rules`，固定`IMU`设备名称为`/dev/ttyIMU`
 6. 运行强化学习示例需安装`torch`
 
