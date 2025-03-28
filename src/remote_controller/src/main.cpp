@@ -9,7 +9,7 @@
 using namespace std::chrono_literals;
 using namespace std;
 
-#if 0  //PS4 JS
+#if 1  //PS4 JS
 #define JS_VELX_AXIS 4
 #define JS_VELX_AXIS_DIR -1
 #define JS_VELY_AXIS 0
