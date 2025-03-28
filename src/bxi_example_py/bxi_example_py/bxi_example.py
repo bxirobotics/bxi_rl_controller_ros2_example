@@ -67,16 +67,16 @@ joint_nominal_pos = np.array([   # 指定的固定关节角度
 joint_kp = np.array([     # 指定关节的kp，和joint_name顺序一一对应
     150,150,150,150,20,20,
     150,150,150,150,20,20,
-    50,50,50,
-    20,20,20,20,20,
-    20,20,20,20,20], dtype=np.float32)
+    150,350,350,
+    20,20,10,20,10,
+    20,20,10,20,10], dtype=np.float32)
 
 joint_kd = np.array([  # 指定关节的kd，和joint_name顺序一一对应
     3,3,3,3,1,1,
     3,3,3,3,1,1,
-    1,1,1,
-    1,1,1,1,1,
-    1,1,1,1,1], dtype=np.float32)
+    3,5,5,
+    1,1,1,1,0.8,
+    1,1,1,1,0.8], dtype=np.float32)
 
 class env_cfg():
     """
@@ -156,22 +156,46 @@ def quaternion_to_euler_array(quat):
 
 def  _get_sin(phase):
     
-    phase %= 1.
+    # phase %= 1.
     
-    f = 0
-    phase_1 = 0.6
+    # f = 0
+    # phase_1 = 0.6
     
-    width_1 = phase_1
-    width_2 = 1 - phase_1
+    # width_1 = phase_1
+    # width_2 = 1 - phase_1
     
-    width_sin_1 = (2*math.pi)/2.
+    # width_sin_1 = (2*math.pi)/2.
     
-    if phase < phase_1:
-        f = math.sin(width_sin_1 * (phase / width_1))
-    else: 
-        f = -math.sin(width_sin_1 * ((phase - phase_1) / width_2))
+    # if phase < phase_1:
+    #     f = math.sin(width_sin_1 * (phase / width_1))
+    # else: 
+    #     f = -math.sin(width_sin_1 * ((phase - phase_1) / width_2))
     
-    return f
+    # return f
+    
+    return math.sin(2 * math.pi * phase)
+
+def  _get_cos(phase):
+    
+    # phase %= 1.
+    
+    # f = 0
+    # phase_1 = 0.6
+    
+    # width_1 = phase_1
+    # width_2 = 1 - phase_1
+    
+    # width_sin_1 = (2*math.pi)/2.
+    
+    # if phase < phase_1:
+    #     f = math.sin(width_sin_1 * (phase / width_1))
+    # else: 
+    #     f = -math.sin(width_sin_1 * ((phase - phase_1) / width_2))
+    
+    # return f
+    
+    return math.cos(2 * math.pi * phase)
+
 
 class BxiExample(Node):
 
@@ -239,7 +263,7 @@ class BxiExample(Node):
             print('robot reset 1!')
             self.step = 1
             return
-        elif self.step == 1 and self.loop_count >= (100./self.dt): # 延迟10s
+        elif self.step == 1 and self.loop_count >= (10./self.dt): # 延迟10s
             self.robot_rest(2, True) # first reset
             print('robot reset 2!')
             self.loop_count = 0
@@ -258,6 +282,7 @@ class BxiExample(Node):
             msg.header.stamp = self.get_clock().now().to_msg()
             msg.actuators_name = joint_name
             msg.pos = joint_nominal_pos.tolist()
+            # msg.pos = np.zeros(dof_num, dtype=np.float32).tolist()
             msg.vel = np.zeros(dof_num, dtype=np.float32).tolist()
             msg.torque = np.zeros(dof_num, dtype=np.float32).tolist()
             msg.kp = soft_joint_kp.tolist()
@@ -290,7 +315,8 @@ class BxiExample(Node):
 
             phase = count_lowlevel * self.dt  / env_cfg.rewards.cycle_time
             obs[0, 0] = _get_sin(phase)
-            obs[0, 1] = _get_sin(phase + 0.5)
+            # obs[0, 1] = _get_sin(phase + 0.5)
+            obs[0, 1] = _get_cos(phase)
             
             obs[0, 2] = x_vel_cmd * env_cfg.normalization.obs_scales.lin_vel
             obs[0, 3] = y_vel_cmd * env_cfg.normalization.obs_scales.lin_vel
