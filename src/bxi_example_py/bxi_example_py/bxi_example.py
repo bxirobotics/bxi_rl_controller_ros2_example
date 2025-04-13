@@ -10,7 +10,7 @@ import nav_msgs.msg
 import sensor_msgs.msg
 from threading import Lock
 import numpy as np
-import torch
+# import torch
 import time
 import sys
 import math
@@ -19,9 +19,11 @@ from std_msgs.msg import Header
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 
+import onnxruntime as ort
+
 robot_name = "elf25"
 
-ankle_y_offset = 0.1
+ankle_y_offset = 0.0
 
 dof_num = 25
 
@@ -58,15 +60,15 @@ joint_name = (
     )   
 
 joint_nominal_pos = np.array([   # 指定的固定关节角度
-    0,0.0,-0.3,0.6,-0.3,0.0,
-    0,0.0,-0.3,0.6,-0.3,0.0,
+    0,0.0,-0.5,1.0,-0.5,0.0,
+    0,0.0,-0.5,1.0,-0.5,0.0,
     0.0, 0.0, 0.0,
     0.7,0.2,-0.1,-1.5,0.0,
     0.7,-0.2,0.1,-1.5,0.0], dtype=np.float32)
 
 joint_kp = np.array([     # 指定关节的kp，和joint_name顺序一一对应
-    150,150,150,150,20,20,
-    150,150,150,150,20,20,
+    100,100,100,100,20,20,
+    100,100,100,100,20,20,
     150,350,350,
     20,20,10,20,10,
     20,20,10,20,10], dtype=np.float32)
@@ -94,16 +96,16 @@ class env_cfg():
         default_joint_angles = {
             'l_hip_z_joint': 0.0,
             'l_hip_x_joint': 0.0,
-            'l_hip_y_joint': -0.3,
-            'l_knee_y_joint': 0.6,
-            'l_ankle_y_joint': -0.3,
+            'l_hip_y_joint': -0.5,
+            'l_knee_y_joint': 1.0,
+            'l_ankle_y_joint': -0.5,
             'l_ankle_x_joint': 0.0,
             
             'r_hip_z_joint': 0.0,
             'r_hip_x_joint': 0.0,
-            'r_hip_y_joint': -0.3,
-            'r_knee_y_joint': 0.6,
-            'r_ankle_y_joint': -0.3,
+            'r_hip_y_joint': -0.5,
+            'r_knee_y_joint': 1.0,
+            'r_ankle_y_joint': -0.5,
             'r_ankle_x_joint': 0.0,
         }
 
@@ -111,11 +113,11 @@ class env_cfg():
         action_scale = 0.5
         
     class commands():
-        stand_com_threshold = 0.05 # if (lin_vel_x, lin_vel_y, ang_vel_yaw).norm < this, robot should stand
+        stand_com_threshold = -1.0 # if (lin_vel_x, lin_vel_y, ang_vel_yaw).norm < this, robot should stand
         sw_switch = True # use stand_com_threshold or not
 
     class rewards:
-        cycle_time = 0.7 
+        cycle_time = 0.56
 
     class normalization:
         class obs_scales:
@@ -156,24 +158,24 @@ def quaternion_to_euler_array(quat):
 
 def  _get_sin(phase):
     
-    # phase %= 1.
+    phase %= 1.
     
-    # f = 0
-    # phase_1 = 0.6
+    f = 0
+    phase_1 = 0.5
     
-    # width_1 = phase_1
-    # width_2 = 1 - phase_1
+    width_1 = phase_1
+    width_2 = 1 - phase_1
     
-    # width_sin_1 = (2*math.pi)/2.
+    width_sin_1 = (2*math.pi)/2.
     
-    # if phase < phase_1:
-    #     f = math.sin(width_sin_1 * (phase / width_1))
-    # else: 
-    #     f = -math.sin(width_sin_1 * ((phase - phase_1) / width_2))
+    if phase < phase_1:
+        f = math.sin(width_sin_1 * (phase / width_1))
+    else: 
+        f = -math.sin(width_sin_1 * ((phase - phase_1) / width_2))
     
-    # return f
+    return f
     
-    return math.sin(2 * math.pi * phase)
+    # return math.sin(2 * math.pi * phase)
 
 def  _get_cos(phase):
     
@@ -207,10 +209,14 @@ class BxiExample(Node):
         self.topic_prefix = self.get_parameter('/topic_prefix').get_parameter_value().string_value
         print('topic_prefix:', self.topic_prefix)
 
-        # 策略文件在policy目录下
-        self.declare_parameter('/policy_file', 'default_value')
-        self.policy_file = self.get_parameter('/policy_file').get_parameter_value().string_value
-        print('policy_file:', self.policy_file)
+        # # 策略文件在policy目录下
+        # self.declare_parameter('/policy_file', 'default_value')
+        # self.policy_file = self.get_parameter('/policy_file').get_parameter_value().string_value
+        # print('policy_file:', self.policy_file)
+        
+        self.declare_parameter('/onnx_file', 'default_value')
+        self.onnx_file = self.get_parameter('/onnx_file').get_parameter_value().string_value        
+        print("onnx_file:", self.onnx_file)
 
         qos = QoSProfile(depth=1, durability=qos_profile_sensor_data.durability, reliability=qos_profile_sensor_data.reliability)
         
@@ -242,9 +248,17 @@ class BxiExample(Node):
 
         self.last_action = np.zeros((env_cfg.env.num_actions), dtype=np.double)
         
-        # 加载策略文件，策略文件在policy目录下
-        self.policy = torch.jit.load(self.policy_file)
-        print("Load model from:", self.policy_file)
+        # # 加载策略文件，策略文件在policy目录下
+        # self.policy = torch.jit.load(self.policy_file)
+        # print("Load model from:", self.policy_file)
+
+        policy_input = np.zeros([1, env_cfg.env.num_observations], dtype=np.float32)
+        print("policy test")
+        # # 执行推理，输出角度(双腿是12个)
+        # self.action[:] = self.policy(torch.tensor(policy_input))[0].detach().numpy()
+        
+        self.initialize_onnx(self.onnx_file)
+        self.action[:] = self.inference_step(policy_input)
 
         self.vx = 0.1
         self.vy = 0
@@ -254,7 +268,48 @@ class BxiExample(Node):
         self.loop_count = 0
         self.dt = 0.01  # loop @100Hz
         self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
-  
+
+    # 初始化部分（完整版）
+    def initialize_onnx(self, model_path):
+        # 配置执行提供者（根据硬件选择最优后端）
+        providers = [
+            'CUDAExecutionProvider',  # 优先使用GPU
+            'CPUExecutionProvider'    # 回退到CPU
+        ] if ort.get_device() == 'GPU' else ['CPUExecutionProvider']
+        
+        # 启用线程优化配置
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = 4  # 设置计算线程数
+        options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        
+        # 创建推理会话
+        self.session = ort.InferenceSession(
+            model_path,
+            providers=providers,
+            sess_options=options
+        )
+        
+        # 预存输入输出信息
+        self.input_info = self.session.get_inputs()[0]
+        self.output_info = self.session.get_outputs()[0]
+        
+        # 预分配输入内存（可选，适合固定输入尺寸）
+        self.input_buffer = np.zeros(
+            self.input_info.shape,
+            dtype=np.float32
+        )
+
+    # 循环推理部分（极速版）
+    def inference_step(self, obs_data):
+        # 使用预分配内存（如果适用）
+        np.copyto(self.input_buffer, obs_data)  # 比直接赋值更安全
+        
+        # 极简推理（比原版快5-15%）
+        return self.session.run(
+            [self.output_info.name], 
+            {self.input_info.name: self.input_buffer}
+        )[0][0]  # 直接获取第一个输出的第一个样本
+ 
     def timer_callback(self):
         
         # ptyhon 与 rclpy 多线程不太友好，这里使用定时间+简易状态机运行a
@@ -315,8 +370,8 @@ class BxiExample(Node):
 
             phase = count_lowlevel * self.dt  / env_cfg.rewards.cycle_time
             obs[0, 0] = _get_sin(phase)
-            # obs[0, 1] = _get_sin(phase + 0.5)
-            obs[0, 1] = _get_cos(phase)
+            obs[0, 1] = _get_sin(phase + 0.5)
+            # obs[0, 1] = _get_cos(phase)
             
             obs[0, 2] = x_vel_cmd * env_cfg.normalization.obs_scales.lin_vel
             obs[0, 3] = y_vel_cmd * env_cfg.normalization.obs_scales.lin_vel
@@ -337,8 +392,11 @@ class BxiExample(Node):
             for i in range(env_cfg.env.frame_stack):
                 policy_input[0, i * env_cfg.env.num_single_obs : (i + 1) * env_cfg.env.num_single_obs] = self.hist_obs[i][0, :]
             
-            # 执行推理，输出角度(双腿是12个)
-            self.action[:] = self.policy(torch.tensor(policy_input))[0].detach().numpy()
+            # # 执行推理，输出角度(双腿是12个)
+            # self.action[:] = self.policy(torch.tensor(policy_input))[0].detach().numpy()
+            
+            self.action[:] = self.inference_step(policy_input)
+            
             self.action = np.clip(self.action, -env_cfg.normalization.clip_actions, env_cfg.normalization.clip_actions)
 
             self.target_q = self.action * env_cfg.control.action_scale

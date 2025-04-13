@@ -43,12 +43,12 @@ using namespace std;
 
 #define AXIS_DEAD_ZONE  1000
 
-#define MIN_SPEED_X -0.4
-#define MAX_SPEED_X 0.8
-#define MIN_SPEED_Y -0.4
-#define MAX_SPEED_Y 0.4
-#define MIN_SPEED_R -0.6
-#define MAX_SPEED_R 0.6
+#define MIN_SPEED_X -1.5
+#define MAX_SPEED_X 1.5
+#define MIN_SPEED_Y -0.5
+#define MAX_SPEED_Y 0.5
+#define MIN_SPEED_R -0.5
+#define MAX_SPEED_R 0.5
 
 #define AXIS_VALUE_MAX 32767
 

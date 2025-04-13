@@ -10,6 +10,9 @@ def generate_launch_description():
     policy_file_name = "policy/policy.jit"
     policy_file = os.path.join(get_package_share_path("bxi_example_py"), policy_file_name)
 
+    onnx_file_name = "policy/model.onnx"
+    onnx_file = os.path.join(get_package_share_path("bxi_example_py"), onnx_file_name)
+
     return LaunchDescription(
         [
             Node(
@@ -31,6 +34,7 @@ def generate_launch_description():
                 parameters=[
                     {"/topic_prefix": "hardware/"},
                     {"/policy_file": policy_file},
+                    {"/onnx_file": onnx_file},
                 ],
                 emulate_tty=True,
                 arguments=[("__log_level:=debug")],
