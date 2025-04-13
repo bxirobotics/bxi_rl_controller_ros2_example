@@ -1,0 +1,2 @@
+KERNEL=="ttyUSB*", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE:="0660", SYMLINK+="ttyIMU"
+KERNEL=="ttyUSB*", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE:="0660", SYMLINK+="ttyBAT"
