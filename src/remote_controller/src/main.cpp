@@ -9,7 +9,7 @@
 using namespace std::chrono_literals;
 using namespace std;
 
-#if 1  //PS4 JS
+#if 0  //PS4 JS
 #define JS_VELX_AXIS 4
 #define JS_VELX_AXIS_DIR -1
 #define JS_VELY_AXIS 0
@@ -188,14 +188,15 @@ private:
                             system("killall -SIGINT pt_main_thread");
                             system("killall -SIGINT bxi_example_py");
                             system("killall -SIGINT hardware");
+                            system("killall -SIGINT hardware_trunk");
                             printf("kill robot_controller\n");//robot_controller
 
                             reset_value();
                         }
                         break;
                         case JS_START_BT:{
-                            system("mkdir -p /tmp/bxi_log");
-                            system("ros2 launch bxi_example_py example_launch_hw.py > /tmp/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                            system("mkdir -p /var/log/bxi_log");
+                            system("ros2 launch bxi_example_py_trunk example_launch_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
                             printf("run robot\n");//robot_controller
 
                             reset_value();
