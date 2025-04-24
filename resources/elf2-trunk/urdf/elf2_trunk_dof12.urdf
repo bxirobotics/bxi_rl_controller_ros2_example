@@ -1491,4 +1491,36 @@
       effort="7"
       velocity="20" />
   </joint>
+  <link
+    name="d435i">
+  </link>
+  <joint
+    name="d435i_joint"
+    type="fixed">
+    <origin
+      xyz="0.03255 0 0.2818"
+      rpy="-1.5708 0 -1.5708" />
+    <parent
+      link="base_link" />
+    <child
+      link="d435i" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="mid360">
+  </link>
+  <joint
+    name="mid360_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0.23988"
+      rpy="3.1416 0 1.5708" />
+    <parent
+      link="base_link" />
+    <child
+      link="mid360" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
 </robot>
