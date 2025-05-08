@@ -3,7 +3,7 @@ import numpy as np
 
 # joint_nominal_pos 需要从主模块或者配置文件中获取
 # 为了示例，我们在这里定义一个简化的版本，实际应用中需要正确传递或加载
-# 这个值应该与 bxi_example.py 中的 joint_nominal_pos 一致，特别是手臂部分
+# 这个值与 bxi_example.py 中的 joint_nominal_pos 一致，特别是手臂部分
 # joint_nominal_pos_arm_related = {
 #     "l_shld_y": 0.7,
 #     "l_shld_z": -0.1,
@@ -21,9 +21,13 @@ class ArmMotionController:
         self.arm_base_height_y = arm_base_height_y
         self.arm_float_amp = arm_float_amp
         self.arm_startup_duration = arm_startup_duration
+        self.arm_shutdown_duration = arm_startup_duration # 可以独立设置，这里复用启动时长
         
         self.arm_wave_start_time = None
-        self.is_waving = False # 内部状态，标记是否应该挥舞
+        self.arm_wave_stop_time = None
+        self.is_waving = False # 内部状态，标记是否应该挥舞 (启动完成到开始关闭前)
+        self.is_starting_up = False # 标记是否正在启动过渡
+        self.is_shutting_down = False # 标记是否正在关闭过渡
 
         # 索引常量，基于 bxi_example.py 中的 joint_name
         self.L_SHLD_Y_IDX = 15
@@ -40,16 +44,23 @@ class ArmMotionController:
 
 
     def start_waving(self, current_sim_time):
-        if not self.is_waving:
-            self.is_waving = True
+        # 只有在完全停止或正在关闭（此时取消关闭并重新启动）时才启动
+        if not self.is_waving or self.is_shutting_down:
+            self.is_waving = True # 标记开始挥舞（包含启动过渡）
+            self.is_starting_up = True
+            self.is_shutting_down = False
             self.arm_wave_start_time = current_sim_time
-            self.logger.info(f"Arm waving started at {current_sim_time:.2f}s.")
+            self.arm_wave_stop_time = None # 清除停止时间
+            self.logger.info(f"Arm waving initiated at {current_sim_time:.2f}s.")
 
-    def stop_waving(self):
-        if self.is_waving:
-            self.is_waving = False
-            self.arm_wave_start_time = None # 重置启动时间
-            self.logger.info("Arm waving stopped.")
+    def stop_waving(self, current_sim_time):
+        # 只有在正在挥舞（包括启动完成）且尚未开始关闭时才触停止
+        if self.is_waving and not self.is_shutting_down:
+            self.is_shutting_down = True
+            self.is_starting_up = False # 如果在启动中被停止，则取消启动状态
+            self.arm_wave_stop_time = current_sim_time
+            # self.is_waving 保持 True 直到关闭完成
+            self.logger.info(f"Arm waving shutdown initiated at {current_sim_time:.2f}s.")
 
     def calculate_arm_waving(self, base_pos, time_in_seconds, loop_count_for_log=0):
         """
@@ -65,58 +76,87 @@ class ArmMotionController:
         """
         pos = base_pos.copy() # 操作副本，不直接修改传入的 base_pos
 
-        if not self.is_waving: # 如果没有在挥舞状态，直接返回原始pos
+        if not self.is_waving and not self.is_shutting_down: # 如果完全停止，则不进行任何计算
             return pos
 
-        startup_factor = 1.0
-        if self.arm_wave_start_time is not None:
-            elapsed_time = time_in_seconds - self.arm_wave_start_time
-            if elapsed_time < self.arm_startup_duration:
-                startup_factor = elapsed_time / self.arm_startup_duration
-            else:
-                startup_factor = 1.0
-            startup_factor = max(0.0, min(1.0, startup_factor)) # 确保在0-1之间
-        else:
-            # 如果 arm_wave_start_time 为 None 但 is_waving 为 True (理论上不应发生，除非 start_waving 未正确调用)
-            # 为安全起见，不进行挥舞
-            self.logger.warn("ArmMotionController: is_waving is True but arm_wave_start_time is None. Defaulting to no wave.")
-            startup_factor = 0.0
-            # 或者可以强制调用 start_waving:
-            # self.start_waving(time_in_seconds)
-            # startup_factor = 0.0 # 第一次调用，从0开始
+        current_wave_amplitude_factor = 0.0
 
+        if self.is_shutting_down:
+            if self.arm_wave_stop_time is None: # 安全检查，理论上不应发生
+                self.logger.warn("ArmMotionController: is_shutting_down is True but arm_wave_stop_time is None. Forcing stop.")
+                self.is_waving = False
+                self.is_shutting_down = False
+                return pos
+            
+            shutdown_elapsed_time = time_in_seconds - self.arm_wave_stop_time
+            if shutdown_elapsed_time >= self.arm_shutdown_duration:
+                current_wave_amplitude_factor = 0.0
+                self.is_waving = False
+                self.is_shutting_down = False
+                self.arm_wave_start_time = None
+                self.arm_wave_stop_time = None
+                self.logger.info(f"Arm waving shutdown completed at {time_in_seconds:.2f}s.")
+                return pos # 关闭完成，返回原始位置
+            else:
+                # 因子从1平滑到0
+                current_wave_amplitude_factor = 1.0 - (shutdown_elapsed_time / self.arm_shutdown_duration)
+        
+        elif self.is_waving: # 包括 is_starting_up 和正常挥舞
+            if self.arm_wave_start_time is None: # 安全检查
+                self.logger.warn("ArmMotionController: is_waving is True but arm_wave_start_time is None. Defaulting to no wave.")
+                return pos # 或者强制启动 self.start_waving(time_in_seconds) 并设置 factor 为 0
+
+            startup_elapsed_time = time_in_seconds - self.arm_wave_start_time
+            if self.is_starting_up:
+                if startup_elapsed_time >= self.arm_startup_duration:
+                    current_wave_amplitude_factor = 1.0
+                    self.is_starting_up = False # 启动完成
+                    self.logger.info(f"Arm waving startup completed at {time_in_seconds:.2f}s.")
+                else:
+                    # 因子从0平滑到1
+                    current_wave_amplitude_factor = startup_elapsed_time / self.arm_startup_duration
+            else: # 正常挥舞 (启动已完成)
+                current_wave_amplitude_factor = 1.0
+        
+        current_wave_amplitude_factor = max(0.0, min(1.0, current_wave_amplitude_factor))
+
+        # --- 应用 current_wave_amplitude_factor 到所有运动计算 ---
         # 左肩Y轴 (l_shld_y_joint)
-        current_l_shld_y = base_pos[self.L_SHLD_Y_IDX]
-        target_base_y_lift = current_l_shld_y + (self.arm_base_height_y - current_l_shld_y) * startup_factor
-        float_y_movement = self.arm_float_amp * math.sin(2 * math.pi * self.arm_freq * time_in_seconds) * startup_factor
+        # 目标基础Y抬升位置是从当前策略给出的位置向 arm_base_height_y 过渡
+        # 这个过渡本身也受 current_wave_amplitude_factor (代表启动或关闭的整体进度) 影响
+        current_l_shld_y_from_policy = base_pos[self.L_SHLD_Y_IDX]
+        # target_base_y_lift 是指挥舞动作的Y轴中心，这个中心本身在启动/关闭时平滑变化
+        # 当 factor=0, target_base_y_lift = current_l_shld_y_from_policy
+        # 当 factor=1, target_base_y_lift = self.arm_base_height_y
+        target_base_y_lift = current_l_shld_y_from_policy + \
+                             (self.arm_base_height_y - current_l_shld_y_from_policy) * current_wave_amplitude_factor
+        
+        # 浮动量也受整体因子影响
+        float_y_movement = self.arm_float_amp * math.sin(2 * math.pi * self.arm_freq * time_in_seconds) * current_wave_amplitude_factor
         final_target_l_shld_y = target_base_y_lift + float_y_movement
         pos[self.L_SHLD_Y_IDX] = final_target_l_shld_y
 
         # 左肩Z轴 (l_shld_z_joint)
-        current_l_shld_z = base_pos[self.L_SHLD_Z_IDX] # 获取当前Z轴位置
-        # 目标Z轴基础位置也应该从当前位置平滑过渡到标称位置（或一个中心摆动位置）
-        # 这里简化为从当前 policy/nominal 给出的 base_pos[17] 开始摆动
-        wave_z_movement = 0.5 * self.arm_amp * math.sin(2 * math.pi * self.arm_freq * time_in_seconds + math.pi / 2) * startup_factor
-        final_target_l_shld_z = current_l_shld_z + (0.0 - current_l_shld_z + wave_z_movement) * startup_factor # 从当前位置向 (标称位置+摆动) 过渡
-        # 上述逻辑可能复杂了，简化：直接在当前策略给出的Z轴基础上叠加平滑启动的摆动
-        # final_target_l_shld_z = base_pos[self.L_SHLD_Z_IDX] + wave_z_movement
-        # 进一步修正：Z轴的摆动中心应该是其标称值，摆动从标称值开始，并应用startup_factor
-        # nominal_l_shld_z = joint_nominal_pos_ref[self.L_SHLD_Z_IDX] # 需要传入 joint_nominal_pos
-        # 为了简化，我们假设 base_pos[self.L_SHLD_Z_IDX] 已经是策略期望的中心，我们只叠加启动的wave
-        final_target_l_shld_z = base_pos[self.L_SHLD_Z_IDX] + wave_z_movement # 保持与之前版本相似的逻辑，在策略输出上叠加
+        # Z轴的摆动也受整体因子影响
+        wave_z_movement = 0.5 * self.arm_amp * math.sin(2 * math.pi * self.arm_freq * time_in_seconds + math.pi / 2) * current_wave_amplitude_factor
+        # Z轴摆动的中心是其在 base_pos 中的值 (策略输出)
+        final_target_l_shld_z = base_pos[self.L_SHLD_Z_IDX] + wave_z_movement
         pos[self.L_SHLD_Z_IDX] = final_target_l_shld_z
 
-
         # 左肘Y轴 (l_elb_y_joint)
-        # 肘部的目标位置是其标称位置，加上一个与肩部Y轴*最终*浮动量（float_y_movement）成比例的调整
-        # 这个调整也应该平滑启动。由于 float_y_movement 已经包含了 startup_factor。
-        final_target_l_elb_y = self.joint_nominal_l_elb_y + (0.1 * float_y_movement) # 使用 0.1 作为肘部跟随系数
+        # 肘部的跟随运动也受整体因子影响 (通过 float_y_movement 间接实现)
+        final_target_l_elb_y = self.joint_nominal_l_elb_y + (0.1 * float_y_movement) # float_y_movement 已包含 current_wave_amplitude_factor
         pos[self.L_ELB_Y_IDX] = final_target_l_elb_y
 
         if loop_count_for_log % 100 == 0: # 每100次循环（约1秒）打印一次日志
-            self.logger.info(f"ArmCtrl Debug @ {time_in_seconds:.2f}s (SF: {startup_factor:.3f}):")
-            self.logger.info(f"  LShY: Cur={current_l_shld_y:.3f}, TgtBaseY={target_base_y_lift:.3f}, Float={float_y_movement:.3f}, FinalTgtY={final_target_l_shld_y:.3f}")
-            self.logger.info(f"  LShZ: Base={base_pos[self.L_SHLD_Z_IDX]:.3f}, WaveZ={wave_z_movement:.3f}, FinalTgtZ={final_target_l_shld_z:.3f}")
+            status_str = "Idle"
+            if self.is_starting_up: status_str = "StartingUp"
+            elif self.is_shutting_down: status_str = "ShuttingDown"
+            elif self.is_waving: status_str = "WavingActive"
+
+            self.logger.info(f"ArmCtrl Debug @ {time_in_seconds:.2f}s (Factor: {current_wave_amplitude_factor:.3f}, Status: {status_str}):")
+            self.logger.info(f"  LShY: BasePol={current_l_shld_y_from_policy:.3f}, TgtBaseY={target_base_y_lift:.3f}, Float={float_y_movement:.3f}, FinalTgtY={final_target_l_shld_y:.3f}")
+            self.logger.info(f"  LShZ: BasePol={base_pos[self.L_SHLD_Z_IDX]:.3f}, WaveZ={wave_z_movement:.3f}, FinalTgtZ={final_target_l_shld_z:.3f}")
             self.logger.info(f"  LElbY: Nom={self.joint_nominal_l_elb_y:.3f}, FinalTgtY={final_target_l_elb_y:.3f}")
             
         return pos

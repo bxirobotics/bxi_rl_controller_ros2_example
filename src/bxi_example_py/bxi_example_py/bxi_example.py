@@ -278,12 +278,12 @@ class BxiExample(Node):
             logger=self.get_logger(),
             arm_freq=0.3,
             arm_amp=0.5,
-            arm_base_height_y=-1.2,
+            arm_base_height_y=-1.6,
             arm_float_amp=0.4,
-            arm_startup_duration=2.0,
+            arm_startup_duration=3.0,
             joint_nominal_pos_ref=joint_nominal_pos # 传递标称位置数组的引用
         )
-        self.enable_arm_waving_flag = True # 用于从外部控制是否启用挥舞的总开关
+        self.enable_arm_waving_flag = False # 默认不启动手臂挥舞，由mode控制
 
 
     # 初始化部分（完整版）
@@ -380,11 +380,13 @@ class BxiExample(Node):
 
                 current_sim_time = self.loop_count * self.dt
                 if self.enable_arm_waving_flag:
-                    if not self.arm_motion_controller.is_waving:
+                    # 如果挥舞标志为True，并且控制器当前没有在挥舞（也不是正在关闭，避免重复启动或在关闭时启动）
+                    if not self.arm_motion_controller.is_waving and not self.arm_motion_controller.is_shutting_down:
                         self.arm_motion_controller.start_waving(current_sim_time)
-                else:
-                    if self.arm_motion_controller.is_waving:
-                        self.arm_motion_controller.stop_waving()
+                else: # enable_arm_waving_flag is False
+                    # 如果挥舞标志为False，并且控制器当前正在挥舞且没有在关闭过程中
+                    if self.arm_motion_controller.is_waving and not self.arm_motion_controller.is_shutting_down:
+                        self.arm_motion_controller.stop_waving(current_sim_time)
             
             count_lowlevel = self.loop_count
             
@@ -433,8 +435,8 @@ class BxiExample(Node):
             qpos = joint_nominal_pos.copy()
             qpos[:12] += self.target_q
             
-            # 如果启用手臂挥舞，计算手臂挥舞动作
-            if self.enable_arm_waving_flag: # 或者直接检查 self.arm_motion_controller.is_waving
+            # 如果控制器处于挥舞或关闭状态（is_waving 在关闭完成前都为True），则计算手臂动作
+            if self.arm_motion_controller.is_waving:
                 qpos = self.arm_motion_controller.calculate_arm_waving(qpos, current_sim_time, self.loop_count)
             
             msg = bxiMsg.ActuatorCmds()
@@ -505,7 +507,12 @@ class BxiExample(Node):
         with self.lock_in:
             self.vx = msg.vel_des.x
             self.vy = msg.vel_des.y
-            self.dyaw = msg.yawdot_des    
+            self.dyaw = msg.yawdot_des
+            # 根据接收到的 mode 控制手臂挥舞
+            if msg.mode == 1: # 修改为 mode = 1 时挥舞手臂
+                self.enable_arm_waving_flag = True
+            else:
+                self.enable_arm_waving_flag = False
         
     def imu_callback(self, msg):
         quat = msg.orientation
