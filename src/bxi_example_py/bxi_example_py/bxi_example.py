@@ -18,6 +18,7 @@ from collections import deque
 from std_msgs.msg import Header
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
+from .arm_motion_controller import ArmMotionController # 导入新的控制器类
 
 import onnxruntime as ort
 
@@ -63,7 +64,7 @@ joint_nominal_pos = np.array([   # 指定的固定关节角度
     0,0.0,-0.5,1.0,-0.5,0.0,
     0,0.0,-0.5,1.0,-0.5,0.0,
     0.0, 0.0, 0.0,
-    0.7,0.2,-0.1,-1.5,0.0,
+    0.7,0.2,-0.1,-1.5,0.0, # l_shld_y_joint is 0.7 initially
     0.7,-0.2,0.1,-1.5,0.0], dtype=np.float32)
 
 joint_kp = np.array([     # 指定关节的kp，和joint_name顺序一一对应
@@ -269,6 +270,22 @@ class BxiExample(Node):
         self.dt = 0.01  # loop @100Hz
         self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
 
+        # 初始化手臂挥舞相关参数 - 这些参数现在由 ArmMotionController 管理
+        # self.arm_waving = False  # 手臂挥舞状态 -> 由 BxiExample 控制，通过调用控制器方法
+        
+        # 实例化手臂运动控制器
+        self.arm_motion_controller = ArmMotionController(
+            logger=self.get_logger(),
+            arm_freq=0.3,
+            arm_amp=0.5,
+            arm_base_height_y=-1.2,
+            arm_float_amp=0.4,
+            arm_startup_duration=2.0,
+            joint_nominal_pos_ref=joint_nominal_pos # 传递标称位置数组的引用
+        )
+        self.enable_arm_waving_flag = True # 用于从外部控制是否启用挥舞的总开关
+
+
     # 初始化部分（完整版）
     def initialize_onnx(self, model_path):
         # 配置执行提供者（根据硬件选择最优后端）
@@ -356,6 +373,18 @@ class BxiExample(Node):
                 x_vel_cmd = self.vx
                 y_vel_cmd = self.vy
                 yaw_vel_cmd = self.dyaw
+                
+                # 可以从外部控制手臂挥舞状态
+                # self.arm_waving = True  # 这里设置为True进行测试
+                # 通过 self.enable_arm_waving_flag 控制是否调用控制器
+
+                current_sim_time = self.loop_count * self.dt
+                if self.enable_arm_waving_flag:
+                    if not self.arm_motion_controller.is_waving:
+                        self.arm_motion_controller.start_waving(current_sim_time)
+                else:
+                    if self.arm_motion_controller.is_waving:
+                        self.arm_motion_controller.stop_waving()
             
             count_lowlevel = self.loop_count
             
@@ -404,6 +433,10 @@ class BxiExample(Node):
             qpos = joint_nominal_pos.copy()
             qpos[:12] += self.target_q
             
+            # 如果启用手臂挥舞，计算手臂挥舞动作
+            if self.enable_arm_waving_flag: # 或者直接检查 self.arm_motion_controller.is_waving
+                qpos = self.arm_motion_controller.calculate_arm_waving(qpos, current_sim_time, self.loop_count)
+            
             msg = bxiMsg.ActuatorCmds()
             msg.header.frame_id = robot_name
             msg.header.stamp = self.get_clock().now().to_msg()
@@ -419,6 +452,8 @@ class BxiExample(Node):
 
         self.loop_count += 1
     
+    # calculate_arm_waving 方法已移至 ArmMotionController 类
+
     def robot_rest(self, reset_step, release):
         req = bxiSrv.RobotReset.Request()
         req.reset_step = reset_step
@@ -510,4 +545,3 @@ def main(args=None):
         
 if __name__ == '__main__':
     main()
-    

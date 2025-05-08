@@ -11,13 +11,13 @@ def generate_launch_description():
     xml_file = os.path.join(get_package_share_path("description"), xml_file_name)
 
     policy_file_name = "policy/policy.jit"
-    policy_file = os.path.join(get_package_share_path("bxi_example_py"), policy_file_name)
+    policy_file = os.path.join(get_package_share_path("xi_example_py_trunk"), policy_file_name)
 
     vino_file_name = "policy/model.xml"
-    vino_file = os.path.join(get_package_share_path("bxi_example_py"), vino_file_name)
+    vino_file = os.path.join(get_package_share_path("xi_example_py_trunk"), vino_file_name)
 
     onnx_file_name = "policy/model.onnx"
-    onnx_file = os.path.join(get_package_share_path("bxi_example_py"), onnx_file_name)
+    onnx_file = os.path.join(get_package_share_path("xi_example_py_trunk"), onnx_file_name)
 
     return LaunchDescription(
         [
@@ -34,9 +34,9 @@ def generate_launch_description():
             ),
 
             Node(
-                package="bxi_example_py",
-                executable="bxi_example_py",
-                name="bxi_example_py",
+                package="xi_example_py_trunk",
+                executable="xi_example_py_trunk",
+                name="xi_example_py_trunk",
                 output="screen",
                 parameters=[
                     {"/topic_prefix": "simulation/"},
