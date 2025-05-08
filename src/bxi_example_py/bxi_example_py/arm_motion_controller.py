@@ -31,14 +31,26 @@ class ArmMotionController:
 
         # 索引常量，基于 bxi_example.py 中的 joint_name
         self.L_SHLD_Y_IDX = 15
-        self.L_SHLD_Z_IDX = 17
-        self.L_ELB_Y_IDX = 18
+        self.L_SHLD_Z_IDX = 17 # l_shld_z_joint
+        self.L_ELB_Y_IDX = 18  # l_elb_y_joint
+        # 注意：代码中之前对 L_SHLD_Z_IDX 的注释是 l_shld_z_joint，但实际用的是17，对应 l_shld_x_joint。
+        # 假设这里控制的是 Y, X, ELB_Y 三个关节，或者 Y, Z, ELB_Y。
+        # 根据 joint_name 顺序:
+        # 15: "l_shld_y_joint"
+        # 16: "l_shld_x_joint"
+        # 17: "l_shld_z_joint"
+        # 18: "l_elb_y_joint"
+        # 如果之前 L_SHLD_Z_IDX = 17 是指 l_shld_z_joint，那么它是正确的。
+        # 如果是指 l_shld_x_joint，那么索引是16。
+        # 我将假设之前的索引是正确的，即控制 l_shld_y, l_shld_z, l_elb_y。
+
+        self.last_calculated_arm_pos = np.zeros(3) # To store [l_shld_y, l_shld_z, l_elb_y]
 
         if joint_nominal_pos_ref is None:
             # 提供一个默认值或者抛出错误，因为这个值对于肘部计算很重要
             self.logger.warn("joint_nominal_pos_ref not provided to ArmMotionController, using potentially incorrect defaults for elbow.")
             # 使用一个基于之前观察到的默认值，但这非常不推荐
-            self.joint_nominal_l_elb_y = -1.5 
+            self.joint_nominal_l_elb_y = -1.5
         else:
             self.joint_nominal_l_elb_y = joint_nominal_pos_ref[self.L_ELB_Y_IDX]
 
@@ -120,43 +132,60 @@ class ArmMotionController:
         
         current_wave_amplitude_factor = max(0.0, min(1.0, current_wave_amplitude_factor))
 
-        # --- 应用 current_wave_amplitude_factor 到所有运动计算 ---
-        # 左肩Y轴 (l_shld_y_joint)
-        # 目标基础Y抬升位置是从当前策略给出的位置向 arm_base_height_y 过渡
-        # 这个过渡本身也受 current_wave_amplitude_factor (代表启动或关闭的整体进度) 影响
-        current_l_shld_y_from_policy = base_pos[self.L_SHLD_Y_IDX]
-        # target_base_y_lift 是指挥舞动作的Y轴中心，这个中心本身在启动/关闭时平滑变化
-        # 当 factor=0, target_base_y_lift = current_l_shld_y_from_policy
-        # 当 factor=1, target_base_y_lift = self.arm_base_height_y
-        target_base_y_lift = current_l_shld_y_from_policy + \
-                             (self.arm_base_height_y - current_l_shld_y_from_policy) * current_wave_amplitude_factor
+        # --- 计算目标手臂关节位置 ---
+        final_target_l_shld_y = 0.0
+        final_target_l_shld_z = 0.0
+        final_target_l_elb_y = 0.0
+
+        if self.is_shutting_down:
+            shutdown_progress = (time_in_seconds - self.arm_wave_stop_time) / self.arm_shutdown_duration
+            shutdown_progress = max(0.0, min(1.0, shutdown_progress)) # clamp to [0,1]
+
+            # 从 last_calculated_arm_pos 插值到 base_pos (策略期望的静止位)
+            final_target_l_shld_y = self.last_calculated_arm_pos[0] * (1.0 - shutdown_progress) + base_pos[self.L_SHLD_Y_IDX] * shutdown_progress
+            final_target_l_shld_z = self.last_calculated_arm_pos[1] * (1.0 - shutdown_progress) + base_pos[self.L_SHLD_Z_IDX] * shutdown_progress
+            final_target_l_elb_y = self.last_calculated_arm_pos[2] * (1.0 - shutdown_progress) + base_pos[self.L_ELB_Y_IDX] * shutdown_progress
         
-        # 浮动量也受整体因子影响
-        float_y_movement = self.arm_float_amp * math.sin(2 * math.pi * self.arm_freq * time_in_seconds) * current_wave_amplitude_factor
-        final_target_l_shld_y = target_base_y_lift + float_y_movement
+        elif self.is_waving: # 启动中或正常挥舞
+            # 左肩Y轴 (l_shld_y_joint)
+            current_l_shld_y_from_policy = base_pos[self.L_SHLD_Y_IDX]
+            target_base_y_lift = current_l_shld_y_from_policy + \
+                                 (self.arm_base_height_y - current_l_shld_y_from_policy) * current_wave_amplitude_factor
+            float_y_movement = self.arm_float_amp * math.sin(2 * math.pi * self.arm_freq * time_in_seconds) * current_wave_amplitude_factor
+            final_target_l_shld_y = target_base_y_lift + float_y_movement
+
+            # 左肩Z轴 (l_shld_z_joint)
+            wave_z_movement = 0.5 * self.arm_amp * math.sin(2 * math.pi * self.arm_freq * time_in_seconds + math.pi / 2) * current_wave_amplitude_factor
+            final_target_l_shld_z = base_pos[self.L_SHLD_Z_IDX] + wave_z_movement
+            
+            # 左肘Y轴 (l_elb_y_joint)
+            final_target_l_elb_y = self.joint_nominal_l_elb_y + (0.1 * float_y_movement)
+
+            # 存储当前计算的挥舞目标，供关闭时使用
+            self.last_calculated_arm_pos[0] = final_target_l_shld_y
+            self.last_calculated_arm_pos[1] = final_target_l_shld_z
+            self.last_calculated_arm_pos[2] = final_target_l_elb_y
+        
+        else: # 完全停止 (is_waving is False, is_shutting_down is False)
+            return pos # 直接返回原始pos
+
         pos[self.L_SHLD_Y_IDX] = final_target_l_shld_y
-
-        # 左肩Z轴 (l_shld_z_joint)
-        # Z轴的摆动也受整体因子影响
-        wave_z_movement = 0.5 * self.arm_amp * math.sin(2 * math.pi * self.arm_freq * time_in_seconds + math.pi / 2) * current_wave_amplitude_factor
-        # Z轴摆动的中心是其在 base_pos 中的值 (策略输出)
-        final_target_l_shld_z = base_pos[self.L_SHLD_Z_IDX] + wave_z_movement
         pos[self.L_SHLD_Z_IDX] = final_target_l_shld_z
-
-        # 左肘Y轴 (l_elb_y_joint)
-        # 肘部的跟随运动也受整体因子影响 (通过 float_y_movement 间接实现)
-        final_target_l_elb_y = self.joint_nominal_l_elb_y + (0.1 * float_y_movement) # float_y_movement 已包含 current_wave_amplitude_factor
         pos[self.L_ELB_Y_IDX] = final_target_l_elb_y
 
         if loop_count_for_log % 100 == 0: # 每100次循环（约1秒）打印一次日志
             status_str = "Idle"
             if self.is_starting_up: status_str = "StartingUp"
             elif self.is_shutting_down: status_str = "ShuttingDown"
-            elif self.is_waving: status_str = "WavingActive"
+            elif self.is_waving: status_str = "WavingActive" # is_waving is True, but not starting or shutting
 
+            current_l_shld_y_from_policy = base_pos[self.L_SHLD_Y_IDX] # Re-calculate for logging if needed
             self.logger.info(f"ArmCtrl Debug @ {time_in_seconds:.2f}s (Factor: {current_wave_amplitude_factor:.3f}, Status: {status_str}):")
-            self.logger.info(f"  LShY: BasePol={current_l_shld_y_from_policy:.3f}, TgtBaseY={target_base_y_lift:.3f}, Float={float_y_movement:.3f}, FinalTgtY={final_target_l_shld_y:.3f}")
-            self.logger.info(f"  LShZ: BasePol={base_pos[self.L_SHLD_Z_IDX]:.3f}, WaveZ={wave_z_movement:.3f}, FinalTgtZ={final_target_l_shld_z:.3f}")
-            self.logger.info(f"  LElbY: Nom={self.joint_nominal_l_elb_y:.3f}, FinalTgtY={final_target_l_elb_y:.3f}")
+            # self.logger.info(f"  LShY: BasePol={current_l_shld_y_from_policy:.3f}, TgtBaseY={target_base_y_lift:.3f}, Float={float_y_movement:.3f}, FinalTgtY={final_target_l_shld_y:.3f}")
+            # self.logger.info(f"  LShZ: BasePol={base_pos[self.L_SHLD_Z_IDX]:.3f}, WaveZ={wave_z_movement:.3f}, FinalTgtZ={final_target_l_shld_z:.3f}")
+            self.logger.info(f"  LShY_final: {final_target_l_shld_y:.3f}, LShZ_final: {final_target_l_shld_z:.3f}, LElbY_final: {final_target_l_elb_y:.3f}")
+            if self.is_shutting_down:
+                self.logger.info(f"    ShuttingDown: LastCalc=({self.last_calculated_arm_pos[0]:.2f},{self.last_calculated_arm_pos[1]:.2f},{self.last_calculated_arm_pos[2]:.2f}), Base=({base_pos[self.L_SHLD_Y_IDX]:.2f},{base_pos[self.L_SHLD_Z_IDX]:.2f},{base_pos[self.L_ELB_Y_IDX]:.2f})")
+
             
         return pos

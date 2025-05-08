@@ -276,10 +276,10 @@ class BxiExample(Node):
         # 实例化手臂运动控制器
         self.arm_motion_controller = ArmMotionController(
             logger=self.get_logger(),
-            arm_freq=0.3,
+            arm_freq=0.5,
             arm_amp=0.5,
-            arm_base_height_y=-1.6,
-            arm_float_amp=0.4,
+            arm_base_height_y=-1.8,
+            arm_float_amp=0.5,
             arm_startup_duration=3.0,
             joint_nominal_pos_ref=joint_nominal_pos # 传递标称位置数组的引用
         )
