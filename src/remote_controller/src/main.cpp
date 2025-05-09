@@ -224,7 +224,7 @@ private:
                         break;
                         case JS_MODE_BT:{
                             const std::lock_guard<std::mutex> guard(lock_);
-                            mode = (mode % 3) + 1;
+                            mode = (mode % 4) + 1;
                             printf("mode: %d\n", mode);
                         }
                         break;

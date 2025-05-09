@@ -19,6 +19,7 @@ from std_msgs.msg import Header
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 from .arm_motion_controller import ArmMotionController # 导入新的控制器类
+from .right_arm_handshake_controller import RightArmHandshakeController # 导入右手握手控制器
 
 import onnxruntime as ort
 
@@ -57,7 +58,7 @@ joint_name = (
     "r_shld_x_joint",   # 右臂_肩关节_x轴
     "r_shld_z_joint",   # 右臂_肩关节_z轴
     "r_elb_y_joint",    # 右臂_肘关节_y轴
-    "r_elb_z_joint",    # 右臂_肘关节_y轴
+    "r_elb_z_joint",    # 右臂_肘关节_z轴
     )   
 
 joint_nominal_pos = np.array([   # 指定的固定关节角度
@@ -277,13 +278,21 @@ class BxiExample(Node):
         self.arm_motion_controller = ArmMotionController(
             logger=self.get_logger(),
             arm_freq=0.5,
-            arm_amp=0.5,
-            arm_base_height_y=-1.8,
-            arm_float_amp=0.5,
+            arm_amp=0.6,
+            arm_base_height_y=-1.6,
+            arm_float_amp=0.3,
             arm_startup_duration=3.0,
             joint_nominal_pos_ref=joint_nominal_pos # 传递标称位置数组的引用
         )
         self.enable_arm_waving_flag = False # 默认不启动手臂挥舞，由mode控制
+
+        # 实例化右手握手控制器
+        self.right_arm_handshake_controller = RightArmHandshakeController(
+            logger=self.get_logger(),
+            handshake_startup_duration=1.5, # 可以调整
+            joint_nominal_pos_ref=joint_nominal_pos
+        )
+        self.enable_right_arm_handshake_flag = False # 默认不启动右手握手
 
 
     # 初始化部分（完整版）
@@ -377,16 +386,24 @@ class BxiExample(Node):
                 # 可以从外部控制手臂挥舞状态
                 # self.arm_waving = True  # 这里设置为True进行测试
                 # 通过 self.enable_arm_waving_flag 控制是否调用控制器
+                # 通过 self.enable_right_arm_handshake_flag 控制是否调用右手握手控制器
 
                 current_sim_time = self.loop_count * self.dt
+                # 左手挥舞控制
                 if self.enable_arm_waving_flag:
-                    # 如果挥舞标志为True，并且控制器当前没有在挥舞（也不是正在关闭，避免重复启动或在关闭时启动）
                     if not self.arm_motion_controller.is_waving and not self.arm_motion_controller.is_shutting_down:
                         self.arm_motion_controller.start_waving(current_sim_time)
-                else: # enable_arm_waving_flag is False
-                    # 如果挥舞标志为False，并且控制器当前正在挥舞且没有在关闭过程中
+                else: 
                     if self.arm_motion_controller.is_waving and not self.arm_motion_controller.is_shutting_down:
                         self.arm_motion_controller.stop_waving(current_sim_time)
+                
+                # 右手握手控制
+                if self.enable_right_arm_handshake_flag:
+                    if not self.right_arm_handshake_controller.is_handshaking and not self.right_arm_handshake_controller.is_shutting_down:
+                        self.right_arm_handshake_controller.start_handshake(current_sim_time)
+                else:
+                    if self.right_arm_handshake_controller.is_handshaking and not self.right_arm_handshake_controller.is_shutting_down:
+                        self.right_arm_handshake_controller.stop_handshake(current_sim_time)
             
             count_lowlevel = self.loop_count
             
@@ -435,10 +452,14 @@ class BxiExample(Node):
             qpos = joint_nominal_pos.copy()
             qpos[:12] += self.target_q
             
-            # 如果控制器处于挥舞或关闭状态（is_waving 在关闭完成前都为True），则计算手臂动作
+            # 如果左手控制器处于挥舞或关闭状态，则计算左手臂动作
             if self.arm_motion_controller.is_waving:
                 qpos = self.arm_motion_controller.calculate_arm_waving(qpos, current_sim_time, self.loop_count)
             
+            # 如果右手控制器处于握手或关闭状态，则计算右手臂动作
+            if self.right_arm_handshake_controller.is_handshaking:
+                qpos = self.right_arm_handshake_controller.calculate_handshake_motion(qpos, current_sim_time, self.loop_count)
+
             msg = bxiMsg.ActuatorCmds()
             msg.header.frame_id = robot_name
             msg.header.stamp = self.get_clock().now().to_msg()
@@ -508,11 +529,16 @@ class BxiExample(Node):
             self.vx = msg.vel_des.x
             self.vy = msg.vel_des.y
             self.dyaw = msg.yawdot_des
-            # 根据接收到的 mode 控制手臂挥舞
-            if msg.mode == 1: # 修改为 mode = 1 时挥舞手臂
+            # 根据接收到的 mode 控制手臂挥舞或握手
+            if msg.mode == 1: 
                 self.enable_arm_waving_flag = True
+                self.enable_right_arm_handshake_flag = False #确保不冲突
+            elif msg.mode == 3:
+                self.enable_right_arm_handshake_flag = True
+                self.enable_arm_waving_flag = False #确保不冲突
             else:
                 self.enable_arm_waving_flag = False
+                self.enable_right_arm_handshake_flag = False
         
     def imu_callback(self, msg):
         quat = msg.orientation
