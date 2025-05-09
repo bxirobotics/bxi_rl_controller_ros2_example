@@ -20,6 +20,7 @@ from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 from .arm_motion_controller import ArmMotionController # 导入新的控制器类
 from .right_arm_handshake_controller import RightArmHandshakeController # 导入右手握手控制器
+from .running_arm_controller import RunningArmController # 导入奔跑手臂控制器
 
 import onnxruntime as ort
 
@@ -282,6 +283,16 @@ class BxiExample(Node):
         )
         self.enable_right_arm_handshake_flag = False
 
+        # 实例化奔跑手臂控制器
+        self.running_arm_controller = RunningArmController(
+            logger=self.get_logger(),
+            joint_nominal_pos_ref=joint_nominal_pos,
+            arm_amplitude_y=0.2, # 降低Y轴摆幅从0.4到0.2
+            arm_amplitude_z=0.0, # Z轴摆幅保持0
+            elbow_coeff=0.3     # 降低肘部弯曲系数从0.5到0.3
+        )
+        self.enable_running_arm_motion_flag = False
+
     # 初始化部分（完整版）
     def initialize_onnx(self, model_path):
         # 配置执行提供者（根据硬件选择最优后端）
@@ -438,6 +449,26 @@ class BxiExample(Node):
             # 如果右手控制器处于握手或关闭状态，则计算右手臂动作
             if self.right_arm_handshake_controller.is_handshaking or self.right_arm_handshake_controller.is_shutting_down:
                 qpos = self.right_arm_handshake_controller.calculate_handshake_motion(qpos, current_sim_time, self.loop_count)
+
+            # 新增：奔跑手臂运动控制
+            leg_phase_left_signal = obs[0, 45]  # _get_sin(phase)
+            leg_phase_right_signal = obs[0, 46] # _get_sin(phase + 0.5)
+
+            if self.enable_running_arm_motion_flag:
+                if not self.running_arm_controller.is_active and not self.running_arm_controller.is_shutting_down:
+                    self.running_arm_controller.start_running_motion(current_sim_time)
+            else:
+                if self.running_arm_controller.is_active and not self.running_arm_controller.is_shutting_down:
+                    self.running_arm_controller.stop_running_motion(current_sim_time)
+            
+            if self.running_arm_controller.is_active_or_shutting_down:
+                qpos = self.running_arm_controller.calculate_running_arm_motion(
+                    qpos,
+                    current_sim_time,
+                    leg_phase_left_signal,
+                    leg_phase_right_signal,
+                    self.loop_count
+                )
             
             msg = bxiMsg.ActuatorCmds()
             msg.header.frame_id = robot_name
@@ -508,12 +539,24 @@ class BxiExample(Node):
             if msg.mode == 1: 
                 self.enable_arm_waving_flag = True
                 self.enable_right_arm_handshake_flag = False #确保不冲突
+                self.enable_running_arm_motion_flag = False #确保不冲突
             elif msg.mode == 3:
                 self.enable_right_arm_handshake_flag = True
                 self.enable_arm_waving_flag = False #确保不冲突
-            else:
+                self.enable_running_arm_motion_flag = False #确保不冲突
+            elif msg.mode == 5: # Changed: Mode for running arm motion now 5
+                self.get_logger().info("Mode 5 activated: Enabling running arm motion.")
+                self.enable_running_arm_motion_flag = True
+                self.enable_arm_waving_flag = False #确保不冲突
+                self.enable_right_arm_handshake_flag = False #确保不冲突
+            else: # Default: disable all special arm motions
                 self.enable_arm_waving_flag = False
                 self.enable_right_arm_handshake_flag = False
+                self.enable_running_arm_motion_flag = False
+                # Log if mode is unexpected, but still disable flags
+                # Mode 6 is no longer a special mode for running arms.
+                if msg.mode not in [0, 1, 2, 3, 4, 5]: # Adjusted known modes
+                     self.get_logger().warn(f"Unexpected mode {msg.mode} received, disabling all special arm motions.")
         
     def imu_callback(self, msg):
         quat = msg.orientation
