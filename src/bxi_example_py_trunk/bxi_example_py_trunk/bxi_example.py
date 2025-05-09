@@ -18,6 +18,8 @@ from collections import deque
 from std_msgs.msg import Header
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
+from .arm_motion_controller import ArmMotionController # 导入新的控制器类
+from .right_arm_handshake_controller import RightArmHandshakeController # 导入右手握手控制器
 
 import onnxruntime as ort
 
@@ -25,7 +27,7 @@ robot_name = "elf25"
 
 dof_num = 25
 
-dof_use = 14
+dof_use = 12
 
 joint_name = (
     "waist_y_joint",
@@ -46,10 +48,6 @@ joint_name = (
     "r_ankle_y_joint",   # 右腿_踝关节_y轴
     "r_ankle_x_joint",   # 右腿_踝关节_x轴
 
-    # "waist_z_joint",
-    # "waist_x_joint",
-    # "waist_y_joint",
-
     "l_shld_y_joint",   # 左臂_肩关节_y轴
     "l_shld_x_joint",   # 左臂_肩关节_x轴
     "l_shld_z_joint",   # 左臂_肩关节_z轴
@@ -65,22 +63,22 @@ joint_name = (
 
 joint_nominal_pos = np.array([   # 指定的固定关节角度
     0.0, 0.0, 0.0,
-    0,0.0,-0.5,1.0,-0.5,0.0,
-    0,0.0,-0.5,1.0,-0.5,0.0,
+    0,0.0,-0.3,0.6,-0.3,0.0,
+    0,0.0,-0.3,0.6,-0.3,0.0,
     0.7,0.2,-0.1,-1.5,0.0,
     0.7,-0.2,0.1,-1.5,0.0], dtype=np.float32)
 
 joint_kp = np.array([     # 指定关节的kp，和joint_name顺序一一对应
-    350,350,150,
-    100,100,100,100,20,5,
-    100,100,100,100,20,5,
-    20,20,10,20,10,
-    20,20,10,20,10], dtype=np.float32)
+    1000,1000,300,
+    100,100,100,100,20,10,
+    100,100,100,100,20,10,
+    30,30,30,30,30,
+    30,30,30,30,30], dtype=np.float32)
 
 joint_kd = np.array([  # 指定关节的kd，和joint_name顺序一一对应
-    5,5,3,
-    3,3,3,3,1,0.5,
-    3,3,3,3,1,0.5,
+    10,10,3,
+    3,3,3,3,1,1,
+    3,3,3,3,1,1,
     1,1,0.8,1,0.8,
     1,1,0.8,1,0.8], dtype=np.float32)
 
@@ -89,31 +87,31 @@ class env_cfg():
     Configuration class for the XBotL humanoid robot.
     """
     class env():
-        frame_stack = 66  # 历史观测帧数
-        num_single_obs = (47+6)  # 单帧观测数
+        frame_stack = 15  # 历史观测帧数
+        num_single_obs = (47+0)  # 单帧观测数
         num_observations = int(frame_stack * num_single_obs)  # 观测数
-        num_actions = (12+2)  # 动作数
+        num_actions = (12+0)  # 动作数
         num_commands = 5 # sin[2] vx vy vz
 
     class init_state():
 
         default_joint_angles = {
-            'waist_z_joint':0.0,
+            # 'waist_z_joint':0.0,
             # 'waist_x_joint':0.0,
-            'waist_y_joint':0.0,
+            # 'waist_y_joint':0.0,
             
             'l_hip_z_joint': 0.0,
             'l_hip_x_joint': 0.0,
-            'l_hip_y_joint': -0.5,
-            'l_knee_y_joint': 1.0,
-            'l_ankle_y_joint': -0.5,
+            'l_hip_y_joint': -0.3,
+            'l_knee_y_joint': 0.6,
+            'l_ankle_y_joint': -0.3,
             'l_ankle_x_joint': 0.0,
             
             'r_hip_z_joint': 0.0,
             'r_hip_x_joint': 0.0,
-            'r_hip_y_joint': -0.5,
-            'r_knee_y_joint': 1.0,
-            'r_ankle_y_joint': -0.5,
+            'r_hip_y_joint': -0.3,
+            'r_knee_y_joint': 0.6,
+            'r_ankle_y_joint': -0.3,
             'r_ankle_x_joint': 0.0,
         }
 
@@ -125,17 +123,17 @@ class env_cfg():
         sw_switch = True # use stand_com_threshold or not
 
     class rewards:
-        cycle_time = 0.56
+        cycle_time = 0.7
 
     class normalization:
         class obs_scales:
             lin_vel = 2.
             ang_vel = 1.
             dof_pos = 1.
-            dof_vel = 0.05
+            dof_vel = 0.1
             quat = 1.
         clip_observations = 100.
-        clip_actions = 100.
+        clip_actions = 10.
 
 class cfg():
 
@@ -169,7 +167,7 @@ def  _get_sin(phase):
     phase %= 1.
     
     f = 0
-    phase_1 = 0.5
+    phase_1 = 0.6
     
     width_1 = phase_1
     width_2 = 1 - phase_1
@@ -182,30 +180,28 @@ def  _get_sin(phase):
         f = -math.sin(width_sin_1 * ((phase - phase_1) / width_2))
     
     return f
-    
-    # return math.sin(2 * math.pi * phase)
 
-def  _get_cos(phase):
+from scipy.spatial.transform import Rotation as R
+def compute_gravity_projection(quat):
+    """
+    通过姿态四元数将全局重力方向投影到本地坐标系。
+    :param attitude_quat: 姿态四元数 (w, x, y, z)
+    :param global_gravity: 全局重力方向 (默认向量 [0, 0, -1])
+    :return: 重力在本地坐标系的投影 (x, y, z)
+    """
+    gravity=np.array([0.0, 0.0, -1.0]).astype(np.float32)
     
-    # phase %= 1.
+    # 将姿态四元数转换为旋转矩阵
+    rotation = R.from_quat(quat)  # (x, y, z, w)
+    # rot_matrix = rotation.as_matrix()
     
-    # f = 0
-    # phase_1 = 0.6
+    # 将全局重力方向转换到本地坐标系
+    # local_gravity = np.dot(rot_matrix.T, gravity)
     
-    # width_1 = phase_1
-    # width_2 = 1 - phase_1
+    local_gravity = rotation.apply(gravity, inverse=True).astype(np.float32)
     
-    # width_sin_1 = (2*math.pi)/2.
-    
-    # if phase < phase_1:
-    #     f = math.sin(width_sin_1 * (phase / width_1))
-    # else: 
-    #     f = -math.sin(width_sin_1 * ((phase - phase_1) / width_2))
-    
-    # return f
-    
-    return math.cos(2 * math.pi * phase)
-
+    # 返回归一化的本地重力方向
+    return local_gravity # / np.linalg.norm(local_gravity)
 
 class BxiExample(Node):
 
@@ -216,11 +212,6 @@ class BxiExample(Node):
         self.declare_parameter('/topic_prefix', 'default_value')
         self.topic_prefix = self.get_parameter('/topic_prefix').get_parameter_value().string_value
         print('topic_prefix:', self.topic_prefix)
-
-        # # 策略文件在policy目录下
-        # self.declare_parameter('/policy_file', 'default_value')
-        # self.policy_file = self.get_parameter('/policy_file').get_parameter_value().string_value
-        # print('policy_file:', self.policy_file)
         
         self.declare_parameter('/onnx_file', 'default_value')
         self.onnx_file = self.get_parameter('/onnx_file').get_parameter_value().string_value        
@@ -256,14 +247,8 @@ class BxiExample(Node):
 
         self.last_action = np.zeros((env_cfg.env.num_actions), dtype=np.double)
         
-        # # 加载策略文件，策略文件在policy目录下
-        # self.policy = torch.jit.load(self.policy_file)
-        # print("Load model from:", self.policy_file)
-
         policy_input = np.zeros([1, env_cfg.env.num_observations], dtype=np.float32)
         print("policy test")
-        # # 执行推理，输出角度(双腿是12个)
-        # self.action[:] = self.policy(torch.tensor(policy_input))[0].detach().numpy()
         
         self.initialize_onnx(self.onnx_file)
         self.action[:] = self.inference_step(policy_input)
@@ -276,6 +261,26 @@ class BxiExample(Node):
         self.loop_count = 0
         self.dt = 0.01  # loop @100Hz
         self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
+
+        # 实例化手臂运动控制器
+        self.arm_motion_controller = ArmMotionController(
+            logger=self.get_logger(),
+            arm_freq=0.5,
+            arm_amp=0.6,
+            arm_base_height_y=-1.6, # 根据需要调整，或者参考旧版的值
+            arm_float_amp=0.3,
+            arm_startup_duration=3.0,
+            joint_nominal_pos_ref=joint_nominal_pos 
+        )
+        self.enable_arm_waving_flag = False 
+
+        # 实例化右手握手控制器
+        self.right_arm_handshake_controller = RightArmHandshakeController(
+            logger=self.get_logger(),
+            handshake_startup_duration=1.5, 
+            joint_nominal_pos_ref=joint_nominal_pos
+        )
+        self.enable_right_arm_handshake_flag = False
 
     # 初始化部分（完整版）
     def initialize_onnx(self, model_path):
@@ -371,23 +376,22 @@ class BxiExample(Node):
                     count_lowlevel = 0
                     
             obs = np.zeros([1, env_cfg.env.num_single_obs], dtype=np.float32)
-            eu_ang = quaternion_to_euler_array(quat)
-            eu_ang[eu_ang > math.pi] -= 2 * math.pi
+            
+            projected_gravity = compute_gravity_projection(quat)
 
             phase = count_lowlevel * self.dt  / env_cfg.rewards.cycle_time
-            obs[0, 0] = _get_sin(phase)
-            obs[0, 1] = _get_sin(phase + 0.5)
-            # obs[0, 1] = _get_cos(phase)
             
-            obs[0, 2] = x_vel_cmd * env_cfg.normalization.obs_scales.lin_vel
-            obs[0, 3] = y_vel_cmd * env_cfg.normalization.obs_scales.lin_vel
-            obs[0, 4] = yaw_vel_cmd * env_cfg.normalization.obs_scales.ang_vel
-            
-            obs[0, env_cfg.env.num_commands:env_cfg.env.num_commands+env_cfg.env.num_actions] = (q - cfg.robot_config.default_dof_pos) * env_cfg.normalization.obs_scales.dof_pos
-            obs[0, env_cfg.env.num_commands+env_cfg.env.num_actions:env_cfg.env.num_commands+2*env_cfg.env.num_actions] = dq * env_cfg.normalization.obs_scales.dof_vel
-            obs[0, env_cfg.env.num_commands+2*env_cfg.env.num_actions:env_cfg.env.num_commands+3*env_cfg.env.num_actions] = self.action
-            obs[0, env_cfg.env.num_commands+3*env_cfg.env.num_actions:env_cfg.env.num_commands+3*env_cfg.env.num_actions+3] = omega
-            obs[0, env_cfg.env.num_commands+3*env_cfg.env.num_actions+3:env_cfg.env.num_commands+3*env_cfg.env.num_actions+6] = eu_ang
+            obs[0, 0:3] = projected_gravity
+            obs[0, 3:6] = omega
+            obs[0, 6:6+12] = (q - cfg.robot_config.default_dof_pos) * env_cfg.normalization.obs_scales.dof_pos
+            obs[0, 6+12:6+12+12] = dq * env_cfg.normalization.obs_scales.dof_vel
+            obs[0, 6+12+12:6+12+12+12] = self.action
+
+            obs[0, 42] = x_vel_cmd * env_cfg.normalization.obs_scales.lin_vel
+            obs[0, 43] = y_vel_cmd * env_cfg.normalization.obs_scales.lin_vel
+            obs[0, 44] = yaw_vel_cmd * env_cfg.normalization.obs_scales.ang_vel
+            obs[0, 45] = _get_sin(phase)
+            obs[0, 46] = _get_sin(phase + 0.5)
             
             obs = np.clip(obs, -env_cfg.normalization.clip_observations, env_cfg.normalization.clip_observations)
 
@@ -398,9 +402,6 @@ class BxiExample(Node):
             for i in range(env_cfg.env.frame_stack):
                 policy_input[0, i * env_cfg.env.num_single_obs : (i + 1) * env_cfg.env.num_single_obs] = self.hist_obs[i][0, :]
             
-            # # 执行推理，输出角度(双腿是12个)
-            # self.action[:] = self.policy(torch.tensor(policy_input))[0].detach().numpy()
-            
             self.action[:] = self.inference_step(policy_input)
             
             self.action = np.clip(self.action, -env_cfg.normalization.clip_actions, env_cfg.normalization.clip_actions)
@@ -409,9 +410,34 @@ class BxiExample(Node):
             
             qpos = joint_nominal_pos.copy()
             
-            qpos[0] += self.target_q[0]
-            qpos[2] += self.target_q[1]
-            qpos[3:15] += self.target_q[2:14]
+            qpos[3:15] += self.target_q
+
+            # 新增：手臂控制逻辑
+            current_sim_time = self.loop_count * self.dt
+
+            # 左手挥舞控制
+            if self.enable_arm_waving_flag:
+                if not self.arm_motion_controller.is_waving and not self.arm_motion_controller.is_shutting_down:
+                    self.arm_motion_controller.start_waving(current_sim_time)
+            else:
+                if self.arm_motion_controller.is_waving and not self.arm_motion_controller.is_shutting_down:
+                    self.arm_motion_controller.stop_waving(current_sim_time)
+
+            # 右手握手控制
+            if self.enable_right_arm_handshake_flag:
+                if not self.right_arm_handshake_controller.is_handshaking and not self.right_arm_handshake_controller.is_shutting_down:
+                    self.right_arm_handshake_controller.start_handshake(current_sim_time)
+            else:
+                if self.right_arm_handshake_controller.is_handshaking and not self.right_arm_handshake_controller.is_shutting_down:
+                    self.right_arm_handshake_controller.stop_handshake(current_sim_time)
+
+            # 如果左手控制器处于挥舞或关闭状态，则计算左手臂动作
+            if self.arm_motion_controller.is_waving or self.arm_motion_controller.is_shutting_down:
+                qpos = self.arm_motion_controller.calculate_arm_waving(qpos, current_sim_time, self.loop_count)
+
+            # 如果右手控制器处于握手或关闭状态，则计算右手臂动作
+            if self.right_arm_handshake_controller.is_handshaking or self.right_arm_handshake_controller.is_shutting_down:
+                qpos = self.right_arm_handshake_controller.calculate_handshake_motion(qpos, current_sim_time, self.loop_count)
             
             msg = bxiMsg.ActuatorCmds()
             msg.header.frame_id = robot_name
@@ -470,28 +496,24 @@ class BxiExample(Node):
         joint_tor = msg.effort
         
         with self.lock_in:
-            # self.qpos = np.array(joint_pos[3:15])
-            # self.qvel = np.array(joint_vel[3:15])
+            self.qpos = np.array(joint_pos[3:15])
+            self.qvel = np.array(joint_vel[3:15])
             
-            self.qpos[0] = np.array(joint_pos[0])
-            self.qpos[1] = np.array(joint_pos[2])
-            self.qvel[0] = np.array(joint_vel[0])
-            self.qvel[1] = np.array(joint_vel[2])
-            # self.qpos[0] = 0
-            # self.qpos[1] = 0
-            # self.qvel[0] = 0
-            # self.qvel[1] = 0
-            
-            
-            self.qpos[2:14] = np.array(joint_pos[3:15])
-            self.qvel[2:14] = np.array(joint_vel[3:15])
-
-
     def joy_callback(self, msg):
         with self.lock_in:
             self.vx = msg.vel_des.x
             self.vy = msg.vel_des.y
-            self.dyaw = msg.yawdot_des    
+            self.dyaw = msg.yawdot_des
+            # 根据接收到的 mode 控制手臂挥舞或握手
+            if msg.mode == 1: 
+                self.enable_arm_waving_flag = True
+                self.enable_right_arm_handshake_flag = False #确保不冲突
+            elif msg.mode == 3:
+                self.enable_right_arm_handshake_flag = True
+                self.enable_arm_waving_flag = False #确保不冲突
+            else:
+                self.enable_arm_waving_flag = False
+                self.enable_right_arm_handshake_flag = False
         
     def imu_callback(self, msg):
         quat = msg.orientation
@@ -531,4 +553,3 @@ def main(args=None):
         
 if __name__ == '__main__':
     main()
-    
