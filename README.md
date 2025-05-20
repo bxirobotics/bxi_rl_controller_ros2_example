@@ -11,18 +11,16 @@
 * 原代码包，位于 `src/`目录：
 1. `src/bix_example`:机器人控制接口使用示例，实现初始化流程和基础的消息接收和发送
 2. `src/bix_example_py`:机器人强化学习控制示例`python`版,演示如何使用强化学习控制机器人
-3. `remote_controller`:遥控器，使用`ps4`手柄控制机器人移动，可以控制真机和仿真环境
+3. `remote_controller`:遥控器，使用`xbox`手柄控制机器人移动，可以控制真机和仿真环境
 
 ## 使用说明
 
 ### 系统环境以及依赖
 真机已配置好环境，到手即可使用，重新安装系统后或者在其他机器运行仿真需重新配置环境。具体如下：
 1. 系统版本需为`Ubuntu 22.04`，并安装对应版本`ROS2`
-2. 运行自带控制算法需安装`pinocchio 2.7.1`，并设置环境变量`LD_LIBRARY_PATH`
-3. 运行`mujoco`仿真需安装`libglfw3-dev`
-4. 将`source xxx/bxi_ros2_pkg/setup.bash`加入`.bashrc`，运行真机需以`root`用户运行
-5. 设置`udev rules`，固定`IMU`设备名称为`/dev/ttyIMU`
-6. 运行强化学习示例需安装`torch`
+2. 运行`mujoco`仿真需安装`libglfw3-dev`
+3. 将`source xxx/bxi_ros2_pkg/setup.bash`加入`.bashrc`，运行真机需以`root`用户运行
+4. 运行强化学习示例需安装`torch` `onnxruntime`
 
 ### 仿真与真机差异
 
@@ -37,34 +35,16 @@
 3. 话题中的控制指令必须按给定的关节顺序发送，关节顺序见例程`src/bix_example`
 4. 仿真和真机均设置有失控保护，丢失控制指令`100ms`后触发保护，触发保护后电机失能，需重新初始化才可使用
 
-
 ### 启动流程
 
-仿真和真机启动时电机都处于失能状态，所有参数均不可控，启动流程分为两步，第一步初始化使能电机的位置控制，电机可以设置`pos kp kd`三个参数实现位置控制，第二步初始化使能全部控参数，电机可以设置`pos vel tor kp kd`，具体启动示例可以参考`src/bxi_example`
+仿真和真机启动时电机都处于失能状态，所有参数均不可控，启动流程分为两步，第一步初始化使能电机的位置控制，电机可以设置`pos kp kd`三个参数实现位置控制，第二步初始化使能全部控参数，电机可以设置`pos vel tor kp kd`，具体启动示例可以参考`src/bxi_example_py`
 
 ### 编译/运行示例代码
 示例代码简单描述了如何订阅接收传感器消息，调用初始化服务并对机器人进行一个简单的位置控制    
 1. 在代码根目录下运行 `colcon build` 编译 `./src` 目录下所有的包；编译成功后，运行`source ./install/setup.bash`设置新的环境变量；    
-2. 运行 模拟器/真机 以及控制程序：    
-* 运行`ros2 launch bxi_example example_launch.py`启动 模拟器 + 控制程序    
-* 运行`ros2 launch bxi_example example_launch_hw.py`启动 真机 + 控制程序    
-上述命令同时启动机器人节点和一个控制节点
-3. 运行强化学习示例：
+2. 运行强化学习示例：
 * 运行`ros2 launch bxi_example_py example_launch.py`启动 模拟器 + 控制程序（强化学习版）    
 * 运行`ros2 launch bxi_example_py example_launch_hw.py`启动 真机 + 控制程序 （强化学习版）
-* 运行`ros2 launch bxi_example_py example_launch_hw_slope.py`启动 真机 + 控制程序 （强化学习上下斜坡）
-
-### 运行基础控制程序
-提前连接遥控器
-1. 启动遥控器节点：`ros2 launch remote_controller remote_conroller_launch.py`
-2. 启动仿真节点和控制节点：`ros2 launch robot_controller manager_bot_elf.launch.py`
-3. 间隔一秒按两次遥控器模式切换按钮启动机器人，按键定义见开箱说明
-4. 运行真机程序时将第二条命令改为：`ros2 launch robot_controller manager_bot_elf_hw.launch.py`
-
-### 其他节点启动指令
-
-1. `mujoco`节点:`ros2 launch mujoco simulation_bot_elf_launch.py`
-2. `hardware`节点：`ros2 launch hardware hardware_launch.py`
 
 ### 硬件保护
 硬件节点除了通信超时保护之外还带有扭矩保护，超速保护，位置保护
