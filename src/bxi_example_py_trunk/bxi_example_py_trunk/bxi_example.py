@@ -18,7 +18,7 @@ from collections import deque
 from std_msgs.msg import Header
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
-from .arm_motion_controller import ArmMotionController # 导入新的控制器类
+from .arm_motion_controller import ArmMotionController # 导入左手挥舞控制器
 from .right_arm_handshake_controller import RightArmHandshakeController # 导入右手握手控制器
 from .running_arm_controller import RunningArmController # 导入奔跑手臂控制器
 
