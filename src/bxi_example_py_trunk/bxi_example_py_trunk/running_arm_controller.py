@@ -2,16 +2,28 @@ import math
 import numpy as np
 
 class RunningArmController:
+    """
+    实现机器人奔跑时的手臂协调运动控制器。
+    
+    该控制器根据腿部运动相位自动调整手臂摆动，以模拟人类奔跑时手臂与腿部的自然协调。
+    主要特点：
+    1. 手臂与腿部协调摆动：左腿前伸时右臂前摆，右腿前伸时左臂前摆
+    2. 动作平滑过渡：动作启动和停止时有平滑缓动
+    3. 肘部自然弯曲：肩部摆动时肘部自然弯曲，提高真实感
+    4. 支持不同奔跑速度：可根据腿部相位信号自动调整摆动幅度
+    """
     def __init__(self, logger, joint_nominal_pos_ref,
-                 arm_startup_duration=1.5, arm_shutdown_duration=1.5,
-                 arm_amplitude_y=0.5, arm_amplitude_z=0.2, elbow_coeff=0.3):
+                 arm_startup_duration=3.0, arm_shutdown_duration=3.0,
+                 arm_amplitude_y=0.15, arm_amplitude_z=0.02, elbow_coeff=0.15,
+                 smoothing_factor=0.8):
         self.logger = logger
         self.joint_nominal_pos_ref = joint_nominal_pos_ref
         self.arm_startup_duration = arm_startup_duration
         self.arm_shutdown_duration = arm_shutdown_duration
-        self.arm_amplitude_y = arm_amplitude_y  # Shoulder Y-axis swing amplitude
-        self.arm_amplitude_z = arm_amplitude_z  # Shoulder Z-axis swing amplitude (optional, for more natural motion)
-        self.elbow_coeff = elbow_coeff # Coefficient for elbow movement based on shoulder Y
+        self.arm_amplitude_y = arm_amplitude_y  # 肩部Y轴摆动幅度 (前后摆动，进一步减小以使动作更柔和)
+        self.arm_amplitude_z = arm_amplitude_z  # 肩部Z轴摆动幅度 (极轻微内外摆动，提高自然度)
+        self.elbow_coeff = elbow_coeff  # 肘部运动系数 (与肩部Y轴相关，更小值使弯曲更柔和自然)
+        self.smoothing_factor = smoothing_factor  # 腿部相位信号的平滑因子 (越大平滑效果越明显)
 
         self.motion_start_time = None
         self.motion_stop_time = None
@@ -51,47 +63,94 @@ class RunningArmController:
         
         # 开始关闭时的关节位置，用于平滑过渡
         self.shutdown_start_positions = self.current_joint_positions.copy()
+        
+        # 添加平滑过滤器
+        self.prev_leg_phase_left = 0.0
+        self.prev_leg_phase_right = 0.0
+        
+        # 添加用于自然摆动的低通滤波器
+        self.filtered_l_shld_y_swing = 0.0
+        self.filtered_l_shld_z_swing = 0.0
+        self.filtered_r_shld_y_swing = 0.0
+        self.filtered_r_shld_z_swing = 0.0
 
     def start_running_motion(self, current_sim_time):
+        """
+        启动奔跑手臂运动。
+        
+        如果控制器当前未运行或正在关闭，则启动运动过程。
+        
+        参数:
+            current_sim_time (float): 当前仿真时间（秒）
+        """
         if not self.is_running_motion or self.is_shutting_down:
             self.is_running_motion = True
             self.is_starting_up = True
             self.is_shutting_down = False
             self.motion_start_time = current_sim_time
             self.motion_stop_time = None
-            self.logger.info(f"RunningArmController: Motion initiated at {current_sim_time:.2f}s.")
+            self.logger.info(f"奔跑手臂控制器: 运动启动于 {current_sim_time:.2f}秒。")
 
     def stop_running_motion(self, current_sim_time):
+        """
+        停止奔跑手臂运动。
+        
+        如果控制器当前正在运行且未处于关闭状态，则启动关闭过程。
+        
+        参数:
+            current_sim_time (float): 当前仿真时间（秒）
+        """
         if self.is_running_motion and not self.is_shutting_down:
             self.is_shutting_down = True
             self.is_starting_up = False
             self.motion_stop_time = current_sim_time
             # 保存当前关节位置作为关闭过渡的起点
             self.shutdown_start_positions = self.current_joint_positions.copy()
-            self.logger.info(f"RunningArmController: Motion shutdown initiated at {current_sim_time:.2f}s.")
+            self.logger.info(f"奔跑手臂控制器: 运动关闭启动于 {current_sim_time:.2f}秒。")
 
     def calculate_running_arm_motion(self, base_pos, time_in_seconds, leg_phase_left_signal, leg_phase_right_signal, loop_count_for_log=0):
+        """
+        计算奔跑时手臂的协调运动。
+        
+        根据腿部相位信号计算手臂关节角度，实现手臂与腿部的自然协调。
+        
+        参数:
+            base_pos (numpy.ndarray): 基础关节位置数组
+            time_in_seconds (float): 当前仿真时间（秒）
+            leg_phase_left_signal (float): 左腿相位信号，范围[-1,1]
+            leg_phase_right_signal (float): 右腿相位信号，范围[-1,1]
+            loop_count_for_log (int): 循环计数，用于控制日志输出频率
+            
+        返回:
+            numpy.ndarray: 更新后的关节位置数组
+        """
         pos = base_pos.copy()
 
+        # 如果控制器未激活，直接返回基础位置
         if not self.is_running_motion and not self.is_shutting_down:
             return pos
 
+        # 初始化动作幅度因子
         current_motion_amplitude_factor = 0.0
 
+        # ===== 处理关闭状态 =====
         if self.is_shutting_down:
             if self.motion_stop_time is None:
-                self.logger.warn("RunningArmController: is_shutting_down but motion_stop_time is None. Forcing stop.")
+                self.logger.warn("奔跑手臂控制器: 处于关闭状态但没有停止时间，强制停止。")
                 self.is_running_motion = False
                 self.is_shutting_down = False
                 return pos
             
+            # 计算关闭过渡的进度
             shutdown_elapsed_time = time_in_seconds - self.motion_stop_time
             if shutdown_elapsed_time >= self.arm_shutdown_duration:
+                # 关闭过渡完成，重置所有状态
                 current_motion_amplitude_factor = 0.0
                 self.is_running_motion = False
                 self.is_shutting_down = False
                 self.motion_start_time = None
                 self.motion_stop_time = None
+                
                 # 完全回到标称位置
                 pos[self.L_SHLD_Y_IDX] = self.nominal_l_shld_y
                 pos[self.L_SHLD_Z_IDX] = self.nominal_l_shld_z
@@ -108,68 +167,103 @@ class RunningArmController:
                 self.current_joint_positions["r_shld_z"] = self.nominal_r_shld_z
                 self.current_joint_positions["r_elb_y"] = self.nominal_r_elb_y
                 
-                self.logger.info(f"RunningArmController: Motion shutdown completed at {time_in_seconds:.2f}s.")
+                self.logger.info(f"奔跑手臂控制器: 动作关闭完成于 {time_in_seconds:.2f}秒。")
                 return pos
             else:
-                # 使用平滑缓动函数实现从当前姿势到标称姿势的平滑过渡
+                # 使用平滑缓动函数计算过渡因子
                 t = shutdown_elapsed_time / self.arm_shutdown_duration
                 current_motion_amplitude_factor = 1.0 - self._smooth_easing(t)
         
-        elif self.is_running_motion: # Includes starting_up and normal running
+        # ===== 处理运行状态（包括启动和正常运行） =====
+        elif self.is_running_motion:
             if self.motion_start_time is None:
-                self.logger.warn("RunningArmController: is_running_motion but motion_start_time is None. Defaulting to no motion.")
+                self.logger.warn("奔跑手臂控制器: 处于运行状态但没有启动时间，默认不执行动作。")
                 return pos
 
+            # 计算启动过渡的进度
             startup_elapsed_time = time_in_seconds - self.motion_start_time
             if self.is_starting_up:
                 if startup_elapsed_time >= self.arm_startup_duration:
+                    # 启动过渡完成，进入正常运行状态
                     current_motion_amplitude_factor = 1.0
                     self.is_starting_up = False
-                    self.logger.info(f"RunningArmController: Motion startup completed at {time_in_seconds:.2f}s.")
+                    self.logger.info(f"奔跑手臂控制器: 动作启动完成于 {time_in_seconds:.2f}秒。")
                 else:
-                    # 使用平滑缓动函数实现从标称姿势到运动姿势的平滑过渡
+                    # 使用平滑缓动函数计算过渡因子
                     t = startup_elapsed_time / self.arm_startup_duration
                     current_motion_amplitude_factor = self._smooth_easing(t)
-            else: # Normal running
+            else: # 正常运行状态
                 current_motion_amplitude_factor = 1.0
         
+        # 确保动作幅度因子在有效范围内
         current_motion_amplitude_factor = max(0.0, min(1.0, current_motion_amplitude_factor))
 
-        # --- Calculate target arm joint positions based on leg phases ---
-        # "迈左腿时手臂向右挥，迈右腿时手臂向左挥"
-        # Left leg forward -> Right arm forward, Left arm backward
-        # Right leg forward -> Left arm forward, Right arm backward
-        # Assuming leg_phase_signal is positive for forward swing, negative for backward.
-
-        # Left Arm (synchronized with right leg's phase)
-        # If right leg is forward (leg_phase_right_signal > 0), left arm swings forward.
-        l_shld_y_swing = self.arm_amplitude_y * leg_phase_right_signal
-        # 将Z轴摆动设为0，防止上肢抬起
-        l_shld_z_swing = 0
-
-        target_l_shld_y = self.nominal_l_shld_y + l_shld_y_swing * current_motion_amplitude_factor
-        target_l_shld_z = self.nominal_l_shld_z + l_shld_z_swing * current_motion_amplitude_factor
-        target_l_elb_y = self.nominal_l_elb_y - self.elbow_coeff * abs(l_shld_y_swing) * current_motion_amplitude_factor
-
-        # Right Arm (synchronized with left leg's phase)
-        # If left leg is forward (leg_phase_left_signal > 0), right arm swings forward.
-        r_shld_y_swing = self.arm_amplitude_y * leg_phase_left_signal
-        # 将Z轴摆动设为0，防止上肢抬起
-        r_shld_z_swing = 0
-
-        target_r_shld_y = self.nominal_r_shld_y + r_shld_y_swing * current_motion_amplitude_factor
-        target_r_shld_z = self.nominal_r_shld_z + r_shld_z_swing * current_motion_amplitude_factor
-        target_r_elb_y = self.nominal_r_elb_y - self.elbow_coeff * abs(r_shld_y_swing) * current_motion_amplitude_factor
+        # ===== 计算目标手臂关节位置 =====
+        # 基于腿部相位计算手臂运动
+        # "迈左腿时右手臂向前挥，迈右腿时左手臂向前挥"
+        
+        # 平滑处理腿部相位信号，减少突变
+        smoothed_leg_phase_left = self._smooth_signal(leg_phase_left_signal, self.prev_leg_phase_left, self.smoothing_factor)
+        smoothed_leg_phase_right = self._smooth_signal(leg_phase_right_signal, self.prev_leg_phase_right, self.smoothing_factor)
+        
+        # 更新上一次的相位值，用于下一次平滑
+        self.prev_leg_phase_left = smoothed_leg_phase_left
+        self.prev_leg_phase_right = smoothed_leg_phase_right
+        
+        # 左臂 (与右腿相位同步)
+        # 如果右腿前伸(leg_phase_right_signal > 0)，左臂前摆
+        raw_l_shld_y_swing = self.arm_amplitude_y * smoothed_leg_phase_right
+        raw_l_shld_z_swing = self.arm_amplitude_z * smoothed_leg_phase_right
+        
+        # 进一步平滑肩部摆动，提供更柔和的过渡
+        self.filtered_l_shld_y_swing = self._smooth_signal(raw_l_shld_y_swing, self.filtered_l_shld_y_swing, 0.3)
+        self.filtered_l_shld_z_swing = self._smooth_signal(raw_l_shld_z_swing, self.filtered_l_shld_z_swing, 0.3)
+        
+        # 计算左肩目标角度
+        target_l_shld_y = self.nominal_l_shld_y + self.filtered_l_shld_y_swing * current_motion_amplitude_factor
+        target_l_shld_z = self.nominal_l_shld_z + self.filtered_l_shld_z_swing * current_motion_amplitude_factor
+        
+        # 改进肘部运动，使用正弦曲线提供更自然的弯曲运动
+        # 振幅更小，运动更温和，并引入相位延迟
+        elbow_phase_offset = 0.2  # 肘部相对肩部的相位延迟
+        elbow_motion = self.elbow_coeff * math.sin(math.pi * (smoothed_leg_phase_right - elbow_phase_offset)) * current_motion_amplitude_factor
+        target_l_elb_y = self.nominal_l_elb_y - abs(elbow_motion)  # 使用绝对值确保肘部始终微曲
+        
+        # 右臂 (与左腿相位同步)
+        # 如果左腿前伸(leg_phase_left_signal > 0)，右臂前摆
+        raw_r_shld_y_swing = self.arm_amplitude_y * smoothed_leg_phase_left
+        raw_r_shld_z_swing = self.arm_amplitude_z * smoothed_leg_phase_left
+        
+        # 进一步平滑肩部摆动，提供更柔和的过渡
+        self.filtered_r_shld_y_swing = self._smooth_signal(raw_r_shld_y_swing, self.filtered_r_shld_y_swing, 0.3)
+        self.filtered_r_shld_z_swing = self._smooth_signal(raw_r_shld_z_swing, self.filtered_r_shld_z_swing, 0.3)
+        
+        # 计算右肩目标角度
+        target_r_shld_y = self.nominal_r_shld_y + self.filtered_r_shld_y_swing * current_motion_amplitude_factor
+        target_r_shld_z = self.nominal_r_shld_z + self.filtered_r_shld_z_swing * current_motion_amplitude_factor
+        
+        # 右肘的相似处理
+        elbow_motion = self.elbow_coeff * math.sin(math.pi * (smoothed_leg_phase_left - elbow_phase_offset)) * current_motion_amplitude_factor
+        target_r_elb_y = self.nominal_r_elb_y - abs(elbow_motion)
 
         if self.is_shutting_down:
-            # 从保存的停止时的位置平滑过渡到标称位置
-            pos[self.L_SHLD_Y_IDX] = self.shutdown_start_positions["l_shld_y"] * current_motion_amplitude_factor + self.nominal_l_shld_y * (1.0 - current_motion_amplitude_factor)
-            pos[self.L_SHLD_Z_IDX] = self.shutdown_start_positions["l_shld_z"] * current_motion_amplitude_factor + self.nominal_l_shld_z * (1.0 - current_motion_amplitude_factor)
-            pos[self.L_ELB_Y_IDX] = self.shutdown_start_positions["l_elb_y"] * current_motion_amplitude_factor + self.nominal_l_elb_y * (1.0 - current_motion_amplitude_factor)
-            pos[self.R_SHLD_Y_IDX] = self.shutdown_start_positions["r_shld_y"] * current_motion_amplitude_factor + self.nominal_r_shld_y * (1.0 - current_motion_amplitude_factor)
-            pos[self.R_SHLD_Z_IDX] = self.shutdown_start_positions["r_shld_z"] * current_motion_amplitude_factor + self.nominal_r_shld_z * (1.0 - current_motion_amplitude_factor)
-            pos[self.R_ELB_Y_IDX] = self.shutdown_start_positions["r_elb_y"] * current_motion_amplitude_factor + self.nominal_r_elb_y * (1.0 - current_motion_amplitude_factor)
+            # 改进关闭过渡逻辑，确保平滑过渡到标称位置
+            # 采用目标位置和当前位置之间的线性插值，而不是直接从保存的停止位置过渡
+            
+            # 计算每个关节的目标位置和当前位置之间的线性插值
+            lerp_factor = 1.0 - current_motion_amplitude_factor  # 从当前位置到标称位置的插值因子
+            
+            # 左臂平滑过渡
+            pos[self.L_SHLD_Y_IDX] = self.shutdown_start_positions["l_shld_y"] * current_motion_amplitude_factor + self.nominal_l_shld_y * lerp_factor
+            pos[self.L_SHLD_Z_IDX] = self.shutdown_start_positions["l_shld_z"] * current_motion_amplitude_factor + self.nominal_l_shld_z * lerp_factor
+            pos[self.L_ELB_Y_IDX] = self.shutdown_start_positions["l_elb_y"] * current_motion_amplitude_factor + self.nominal_l_elb_y * lerp_factor
+            
+            # 右臂平滑过渡
+            pos[self.R_SHLD_Y_IDX] = self.shutdown_start_positions["r_shld_y"] * current_motion_amplitude_factor + self.nominal_r_shld_y * lerp_factor
+            pos[self.R_SHLD_Z_IDX] = self.shutdown_start_positions["r_shld_z"] * current_motion_amplitude_factor + self.nominal_r_shld_z * lerp_factor
+            pos[self.R_ELB_Y_IDX] = self.shutdown_start_positions["r_elb_y"] * current_motion_amplitude_factor + self.nominal_r_elb_y * lerp_factor
         else: # Startup or active running
+            # 应用计算出的关节角度
             pos[self.L_SHLD_Y_IDX] = target_l_shld_y
             pos[self.L_SHLD_Z_IDX] = target_l_shld_z
             pos[self.L_ELB_Y_IDX] = target_l_elb_y
@@ -186,26 +280,52 @@ class RunningArmController:
             self.current_joint_positions["r_elb_y"] = target_r_elb_y
 
         if loop_count_for_log % 100 == 0:
-            status_str = "Idle"
-            if self.is_starting_up: status_str = "StartingUp"
-            elif self.is_shutting_down: status_str = "ShuttingDown"
-            elif self.is_running_motion: status_str = "RunningActive"
+            status_str = "空闲"
+            if self.is_starting_up: status_str = "启动中"
+            elif self.is_shutting_down: status_str = "关闭中"
+            elif self.is_running_motion: status_str = "运行中"
             
-            self.logger.info(f"RunningArmCtrl @ {time_in_seconds:.2f}s (Factor: {current_motion_amplitude_factor:.3f}, Status: {status_str}):")
-            self.logger.info(f"  LegPhL: {leg_phase_left_signal:.3f}, LegPhR: {leg_phase_right_signal:.3f}")
-            self.logger.info(f"  LShY: {pos[self.L_SHLD_Y_IDX]:.3f}, LShZ: {pos[self.L_SHLD_Z_IDX]:.3f}, LElbY: {pos[self.L_ELB_Y_IDX]:.3f}")
-            self.logger.info(f"  RShY: {pos[self.R_SHLD_Y_IDX]:.3f}, RShZ: {pos[self.R_SHLD_Z_IDX]:.3f}, RElbY: {pos[self.R_ELB_Y_IDX]:.3f}")
+            self.logger.info(f"奔跑手臂控制器 @ {time_in_seconds:.2f}秒 (系数: {current_motion_amplitude_factor:.3f}, 状态: {status_str}):")
+            self.logger.info(f"  原始腿相位: 左:{leg_phase_left_signal:.3f}, 右:{leg_phase_right_signal:.3f}")
+            self.logger.info(f"  平滑腿相位: 左:{smoothed_leg_phase_left:.3f}, 右:{smoothed_leg_phase_right:.3f}")
+            self.logger.info(f"  左肩摆动: Y:{self.filtered_l_shld_y_swing:.3f}, Z:{self.filtered_l_shld_z_swing:.3f}")
+            self.logger.info(f"  左臂角度: 肩Y:{pos[self.L_SHLD_Y_IDX]:.3f}, 肩Z:{pos[self.L_SHLD_Z_IDX]:.3f}, 肘Y:{pos[self.L_ELB_Y_IDX]:.3f}")
+            self.logger.info(f"  右臂角度: 肩Y:{pos[self.R_SHLD_Y_IDX]:.3f}, 肩Z:{pos[self.R_SHLD_Z_IDX]:.3f}, 肘Y:{pos[self.R_ELB_Y_IDX]:.3f}")
+            
+            # 添加额外调试信息
+            if self.is_shutting_down:
+                self.logger.info(f"  关闭进度: {shutdown_elapsed_time:.2f}/{self.arm_shutdown_duration:.2f}秒")
+            elif self.is_starting_up:
+                self.logger.info(f"  启动进度: {startup_elapsed_time:.2f}/{self.arm_startup_duration:.2f}秒")
 
         return pos
         
     def _smooth_easing(self, t):
         """
-        平滑缓动函数，提供比线性更加平滑的过渡
+        改进的平滑缓动函数，采用三阶埃尔米特插值
         t: 0到1之间的值，表示过渡进度
         返回: 平滑过渡的值（0到1之间）
         """
-        # 使用三次方函数实现平滑缓动
-        return t * t * (3.0 - 2.0 * t)
+        # 确保 t 在 [0, 1] 区间内
+        t = max(0.0, min(1.0, t))
+        
+        # 使用标准三阶埃尔米特插值函数 (更温和的S曲线)
+        # 公式: 3t^2 - 2t^3
+        return 3.0 * (t**2) - 2.0 * (t**3)
+        
+    def _smooth_signal(self, new_value, prev_value, smoothing_factor):
+        """
+        信号平滑函数，用于减少信号噪声和突变
+        
+        参数:
+            new_value (float): 新的信号值
+            prev_value (float): 上一个信号值
+            smoothing_factor (float): 平滑因子，范围[0,1]，越大平滑效果越强
+            
+        返回:
+            float: 平滑后的信号值
+        """
+        return prev_value * smoothing_factor + new_value * (1.0 - smoothing_factor)
 
     # Helper properties for bxi_example.py to check status
     @property

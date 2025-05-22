@@ -4,7 +4,7 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, qos_profile_sensor_data
 from rclpy.time import Time
-import communication.msg as bxiMsg
+import communication.msg as bxiMsg        # 实例化手臂运动控制器
 import communication.srv as bxiSrv
 import nav_msgs.msg 
 import sensor_msgs.msg
@@ -66,8 +66,9 @@ joint_nominal_pos = np.array([   # 指定的固定关节角度
     0.0, 0.0, 0.0,
     0,0.0,-0.3,0.6,-0.3,0.0,
     0,0.0,-0.3,0.6,-0.3,0.0,
-    0.7,0.2,-0.1,-1.5,0.0,
-    0.7,-0.2,0.1,-1.5,0.0], dtype=np.float32)
+    0.0,0.0,0.0,-0.3,0.0,     # 左臂放在大腿旁边 (Y=0 肩平, X=0 前后居中, Z=0 不旋转, 肘关节微弯)
+    0.0,0.0,0.0,-0.3,0.0],    # 右臂放在大腿旁边 (Y=0 肩平, X=0 前后居中, Z=0 不旋转, 肘关节微弯)
+    dtype=np.float32)
 
 joint_kp = np.array([     # 指定关节的kp，和joint_name顺序一一对应
     1000,1000,300,
@@ -266,11 +267,11 @@ class BxiExample(Node):
         # 实例化手臂运动控制器
         self.arm_motion_controller = ArmMotionController(
             logger=self.get_logger(),
-            arm_freq=0.5,
-            arm_amp=0.6,
-            arm_base_height_y=-1.6, # 根据需要调整，或者参考旧版的值
-            arm_float_amp=0.3,
-            arm_startup_duration=3.0,
+            arm_freq=0.5,           # 挥舞频率，适中
+            arm_amp=0.7,            # 大幅度的左右摆动
+            arm_base_height_y=-2.2, # 手臂抬起高度，适中
+            arm_float_amp=0.0,      # 去除上下浮动
+            arm_startup_duration=2.0, # 快速启动
             joint_nominal_pos_ref=joint_nominal_pos 
         )
         self.enable_arm_waving_flag = False 
@@ -287,9 +288,12 @@ class BxiExample(Node):
         self.running_arm_controller = RunningArmController(
             logger=self.get_logger(),
             joint_nominal_pos_ref=joint_nominal_pos,
-            arm_amplitude_y=0.2, # 降低Y轴摆幅从0.4到0.2
-            arm_amplitude_z=0.0, # Z轴摆幅保持0
-            elbow_coeff=0.3     # 降低肘部弯曲系数从0.5到0.3
+            arm_startup_duration=3.0,  # 更长的启动时间确保非常平滑的过渡
+            arm_shutdown_duration=3.0, # 更长的关闭时间确保非常平滑的过渡
+            arm_amplitude_y=0.15,      # 进一步减小Y轴摆幅使动作更柔和
+            arm_amplitude_z=0.02,      # 极轻微Z轴摆动增加自然感
+            elbow_coeff=0.15,          # 进一步降低肘部弯曲系数使动作柔和
+            smoothing_factor=0.8       # 添加平滑因子，确保动作流畅
         )
         self.enable_running_arm_motion_flag = False
 

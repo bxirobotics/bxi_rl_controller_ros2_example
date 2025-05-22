@@ -16,12 +16,12 @@ class ArmMotionController:
     def __init__(self, logger, arm_freq=0.3, arm_amp=0.5, arm_base_height_y=-1.2,
                  arm_float_amp=0.4, arm_startup_duration=2.0, joint_nominal_pos_ref=None):
         self.logger = logger
-        self.arm_freq = arm_freq
-        self.arm_amp = arm_amp
-        self.arm_base_height_y = arm_base_height_y
-        self.arm_float_amp = arm_float_amp
-        self.arm_startup_duration = arm_startup_duration
-        self.arm_shutdown_duration = arm_startup_duration # 可以独立设置，这里复用启动时长
+        self.arm_freq = arm_freq  # 手臂挥舞频率
+        self.arm_amp = arm_amp  # 挥舞幅度
+        self.arm_base_height_y = arm_base_height_y  # 手臂抬起高度（肩关节Y轴）
+        self.arm_float_amp = arm_float_amp  # 上下浮动幅度
+        self.arm_startup_duration = arm_startup_duration  # 启动过渡时间
+        self.arm_shutdown_duration = arm_startup_duration  # 关闭过渡时间
         
         self.arm_wave_start_time = None
         self.arm_wave_stop_time = None
@@ -147,19 +147,22 @@ class ArmMotionController:
             final_target_l_elb_y = self.last_calculated_arm_pos[2] * (1.0 - shutdown_progress) + base_pos[self.L_ELB_Y_IDX] * shutdown_progress
         
         elif self.is_waving: # 启动中或正常挥舞
-            # 左肩Y轴 (l_shld_y_joint)
+            # 左肩Y轴 (l_shld_y_joint) - 从大腿旁边抬起到固定高度
             current_l_shld_y_from_policy = base_pos[self.L_SHLD_Y_IDX]
-            target_base_y_lift = current_l_shld_y_from_policy + \
-                                 (self.arm_base_height_y - current_l_shld_y_from_policy) * current_wave_amplitude_factor
-            float_y_movement = self.arm_float_amp * math.sin(2 * math.pi * self.arm_freq * time_in_seconds) * current_wave_amplitude_factor
-            final_target_l_shld_y = target_base_y_lift + float_y_movement
+            # 将手臂抬到固定高度，不添加上下浮动
+            final_target_l_shld_y = current_l_shld_y_from_policy + \
+                                  (self.arm_base_height_y - current_l_shld_y_from_policy) * current_wave_amplitude_factor
 
-            # 左肩Z轴 (l_shld_z_joint)
-            wave_z_movement = 0.5 * self.arm_amp * math.sin(2 * math.pi * self.arm_freq * time_in_seconds + math.pi / 2) * current_wave_amplitude_factor
+            # 左肩Z轴 (l_shld_z_joint) - 专注于左右摆动（简单的挥舞）
+            # 增加左右摆动幅度，使挥舞动作更明显
+            wave_z_movement = self.arm_amp * math.sin(2 * math.pi * self.arm_freq * time_in_seconds) * current_wave_amplitude_factor
             final_target_l_shld_z = base_pos[self.L_SHLD_Z_IDX] + wave_z_movement
             
-            # 左肘Y轴 (l_elb_y_joint)
-            final_target_l_elb_y = self.joint_nominal_l_elb_y + (0.1 * float_y_movement)
+            # 左肘Y轴 (l_elb_y_joint) - 保持固定的弯曲度
+            # 固定肘部弯曲，不随着肩部运动而变化
+            elbow_bend_base = -0.6  # 基础弯曲程度，适中
+            final_target_l_elb_y = elbow_bend_base * current_wave_amplitude_factor + \
+                                 base_pos[self.L_ELB_Y_IDX] * (1.0 - current_wave_amplitude_factor)
 
             # 存储当前计算的挥舞目标，供关闭时使用
             self.last_calculated_arm_pos[0] = final_target_l_shld_y
