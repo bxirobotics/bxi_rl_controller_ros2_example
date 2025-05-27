@@ -4,17 +4,11 @@ import numpy as np
 class RunningArmController:
     """
     实现机器人奔跑时的手臂协调运动控制器。
-    
-    该控制器根据腿部运动相位自动调整手臂摆动，以模拟人类奔跑时手臂与腿部的自然协调。
-    主要特点：
-    1. 手臂与腿部协调摆动：左腿前伸时右臂前摆，右腿前伸时左臂前摆
-    2. 动作平滑过渡：动作启动和停止时有平滑缓动
-    3. 肘部自然弯曲：肩部摆动时肘部自然弯曲，提高真实感
-    4. 支持不同奔跑速度：可根据腿部相位信号自动调整摆动幅度
+
     """
     def __init__(self, logger, joint_nominal_pos_ref,
                  arm_startup_duration=3.0, arm_shutdown_duration=3.0,
-                 arm_amplitude_y=0.15, arm_amplitude_z=0.02, elbow_coeff=0.15,
+                 arm_amplitude_y=0.15, arm_amplitude_z=0.02, elbow_coeff=0.05,
                  smoothing_factor=0.8):
         self.logger = logger
         self.joint_nominal_pos_ref = joint_nominal_pos_ref
@@ -22,7 +16,7 @@ class RunningArmController:
         self.arm_shutdown_duration = arm_shutdown_duration
         self.arm_amplitude_y = arm_amplitude_y  # 肩部Y轴摆动幅度 (前后摆动，进一步减小以使动作更柔和)
         self.arm_amplitude_z = arm_amplitude_z  # 肩部Z轴摆动幅度 (极轻微内外摆动，提高自然度)
-        self.elbow_coeff = elbow_coeff  # 肘部运动系数 (与肩部Y轴相关，更小值使弯曲更柔和自然)
+        self.elbow_coeff = elbow_coeff  # 肘部运动系数 (与肩部Y轴相关，更小值使弯曲更柔和自然，保持整体平衡)
         self.smoothing_factor = smoothing_factor  # 腿部相位信号的平滑因子 (越大平滑效果越明显)
 
         self.motion_start_time = None
@@ -223,10 +217,12 @@ class RunningArmController:
         target_l_shld_y = self.nominal_l_shld_y + self.filtered_l_shld_y_swing * current_motion_amplitude_factor
         target_l_shld_z = self.nominal_l_shld_z + self.filtered_l_shld_z_swing * current_motion_amplitude_factor
         
-        # 改进肘部运动，使用正弦曲线提供更自然的弯曲运动
-        # 振幅更小，运动更温和，并引入相位延迟
+        # 改进肘部运动，使用更小的运动幅度保持机器人整体平衡
+        # 进一步减小振幅，使肘部运动更加微妙，减少对平衡的影响
         elbow_phase_offset = 0.2  # 肘部相对肩部的相位延迟
         elbow_motion = self.elbow_coeff * math.sin(math.pi * (smoothed_leg_phase_right - elbow_phase_offset)) * current_motion_amplitude_factor
+        # 进一步限制肘部运动范围，确保平衡
+        elbow_motion = elbow_motion * 0.6  # 额外的缩放因子，进一步减小运动幅度
         target_l_elb_y = self.nominal_l_elb_y - abs(elbow_motion)  # 使用绝对值确保肘部始终微曲
         
         # 右臂 (与左腿相位同步)
@@ -242,8 +238,10 @@ class RunningArmController:
         target_r_shld_y = self.nominal_r_shld_y + self.filtered_r_shld_y_swing * current_motion_amplitude_factor
         target_r_shld_z = self.nominal_r_shld_z + self.filtered_r_shld_z_swing * current_motion_amplitude_factor
         
-        # 右肘的相似处理
+        # 右肘的相似处理，同样减小运动幅度以保持平衡
         elbow_motion = self.elbow_coeff * math.sin(math.pi * (smoothed_leg_phase_left - elbow_phase_offset)) * current_motion_amplitude_factor
+        # 进一步限制肘部运动范围，确保平衡
+        elbow_motion = elbow_motion * 0.6  # 额外的缩放因子，进一步减小运动幅度
         target_r_elb_y = self.nominal_r_elb_y - abs(elbow_motion)
 
         if self.is_shutting_down:
