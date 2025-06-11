@@ -28,7 +28,7 @@ setup(
         # ('share/' + package_name + '/policy', ['policy/policy.jit']),
         # ('share/' + package_name + '/policy', ['policy/policy_slope.jit']),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', ['launch/example_launch.py']),
+        # ('share/' + package_name + '/launch', ['launch/example_launch.py']),
         ('share/' + package_name + '/launch', ['launch/example_launch_hw.py']),
         # ('share/' + package_name + '/launch', ['launch/example_launch_hw_slope.py']),
     ] + get_data_files(),
