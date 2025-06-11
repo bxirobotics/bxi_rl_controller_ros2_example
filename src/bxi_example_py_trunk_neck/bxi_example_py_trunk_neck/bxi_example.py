@@ -18,6 +18,9 @@ from collections import deque
 from std_msgs.msg import Header
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
+from .arm_motion_controller import ArmMotionController # 导入左手挥舞控制器
+from .right_arm_handshake_controller import RightArmHandshakeController # 导入右手握手控制器
+from .running_arm_controller import RunningArmController # 导入奔跑手臂控制器
 
 import onnxruntime as ort
 
@@ -191,6 +194,28 @@ def  _get_sin(phase):
     
     # return math.sin(2 * math.pi * phase)
 
+from scipy.spatial.transform import Rotation as R
+def compute_gravity_projection(quat):
+    """
+    通过姿态四元数将全局重力方向投影到本地坐标系。
+    :param attitude_quat: 姿态四元数 (w, x, y, z)
+    :param global_gravity: 全局重力方向 (默认向量 [0, 0, -1])
+    :return: 重力在本地坐标系的投影 (x, y, z)
+    """
+    gravity=np.array([0.0, 0.0, -1.0]).astype(np.float32)
+    
+    # 将姿态四元数转换为旋转矩阵
+    rotation = R.from_quat(quat)  # (x, y, z, w)
+    # rot_matrix = rotation.as_matrix()
+    
+    # 将全局重力方向转换到本地坐标系
+    # local_gravity = np.dot(rot_matrix.T, gravity)
+    
+    local_gravity = rotation.apply(gravity, inverse=True).astype(np.float32)
+    
+    # 返回归一化的本地重力方向
+    return local_gravity # / np.linalg.norm(local_gravity)
+
 def  _get_cos(phase):
     
     # phase %= 1.
@@ -282,6 +307,39 @@ class BxiExample(Node):
         self.loop_count = 0
         self.dt = 0.01  # loop @100Hz
         self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
+
+        # 实例化手臂运动控制器
+        self.arm_motion_controller = ArmMotionController(
+            logger=self.get_logger(),
+            arm_freq=0.5,           # 挥舞频率，适中
+            arm_amp=0.7,            # 大幅度的左右摆动
+            arm_base_height_y=-2.2, # 手臂抬起高度，适中
+            arm_float_amp=0.0,      # 去除上下浮动
+            arm_startup_duration=2.0, # 快速启动
+            joint_nominal_pos_ref=joint_nominal_pos 
+        )
+        self.enable_arm_waving_flag = False 
+
+        # 实例化右手握手控制器
+        self.right_arm_handshake_controller = RightArmHandshakeController(
+            logger=self.get_logger(),
+            handshake_startup_duration=1.5, 
+            joint_nominal_pos_ref=joint_nominal_pos
+        )
+        self.enable_right_arm_handshake_flag = False
+
+        # 实例化奔跑手臂控制器
+        self.running_arm_controller = RunningArmController(
+            logger=self.get_logger(),
+            joint_nominal_pos_ref=joint_nominal_pos,
+            arm_startup_duration=3.0,  # 更长的启动时间确保非常平滑的过渡
+            arm_shutdown_duration=3.0, # 更长的关闭时间确保非常平滑的过渡
+            arm_amplitude_y=0.15,      # 进一步减小Y轴摆幅使动作更柔和
+            arm_amplitude_z=0.02,      # 极轻微Z轴摆动增加自然感
+            elbow_coeff=0.15,          # 进一步降低肘部弯曲系数使动作柔和
+            smoothing_factor=0.8       # 添加平滑因子，确保动作流畅
+        )
+        self.enable_running_arm_motion_flag = False
 
     # 初始化部分（完整版）
     def initialize_onnx(self, model_path):
@@ -420,6 +478,53 @@ class BxiExample(Node):
             # qpos[3:15] += self.target_q[2:14]
             
             qpos[3:15] += self.target_q
+
+            # 新增：手臂控制逻辑
+            current_sim_time = self.loop_count * self.dt
+
+            # 左手挥舞控制
+            if self.enable_arm_waving_flag:
+                if not self.arm_motion_controller.is_waving and not self.arm_motion_controller.is_shutting_down:
+                    self.arm_motion_controller.start_waving(current_sim_time)
+            else:
+                if self.arm_motion_controller.is_waving and not self.arm_motion_controller.is_shutting_down:
+                    self.arm_motion_controller.stop_waving(current_sim_time)
+
+            # 右手握手控制
+            if self.enable_right_arm_handshake_flag:
+                if not self.right_arm_handshake_controller.is_handshaking and not self.right_arm_handshake_controller.is_shutting_down:
+                    self.right_arm_handshake_controller.start_handshake(current_sim_time)
+            else:
+                if self.right_arm_handshake_controller.is_handshaking and not self.right_arm_handshake_controller.is_shutting_down:
+                    self.right_arm_handshake_controller.stop_handshake(current_sim_time)
+
+            # 如果左手控制器处于挥舞或关闭状态，则计算左手臂动作
+            if self.arm_motion_controller.is_waving or self.arm_motion_controller.is_shutting_down:
+                qpos = self.arm_motion_controller.calculate_arm_waving(qpos, current_sim_time, self.loop_count)
+
+            # 如果右手控制器处于握手或关闭状态，则计算右手臂动作
+            if self.right_arm_handshake_controller.is_handshaking or self.right_arm_handshake_controller.is_shutting_down:
+                qpos = self.right_arm_handshake_controller.calculate_handshake_motion(qpos, current_sim_time, self.loop_count)
+
+            # 新增：奔跑手臂运动控制
+            leg_phase_left_signal = obs[0, 0]  # np.sin(2. * np.pi * phase)
+            leg_phase_right_signal = obs[0, 1] # np.cos(2. * np.pi * phase)
+
+            if self.enable_running_arm_motion_flag:
+                if not self.running_arm_controller.is_active and not self.running_arm_controller.is_shutting_down:
+                    self.running_arm_controller.start_running_motion(current_sim_time)
+            else:
+                if self.running_arm_controller.is_active and not self.running_arm_controller.is_shutting_down:
+                    self.running_arm_controller.stop_running_motion(current_sim_time)
+            
+            if self.running_arm_controller.is_active_or_shutting_down:
+                qpos = self.running_arm_controller.calculate_running_arm_motion(
+                    qpos,
+                    current_sim_time,
+                    leg_phase_left_signal,
+                    leg_phase_right_signal,
+                    self.loop_count
+                )
             
             msg = bxiMsg.ActuatorCmds()
             msg.header.frame_id = robot_name
@@ -501,7 +606,29 @@ class BxiExample(Node):
         with self.lock_in:
             self.vx = msg.vel_des.x
             self.vy = msg.vel_des.y
-            self.dyaw = msg.yawdot_des    
+            self.dyaw = msg.yawdot_des
+            
+            # 使用模运算让模式周期性循环 (周期为6)
+            mode_cyclic = msg.mode % 6
+            
+            # 根据接收到的 mode 控制手臂挥舞或握手
+            if mode_cyclic == 1: 
+                self.enable_arm_waving_flag = True
+                self.enable_right_arm_handshake_flag = False #确保不冲突
+                self.enable_running_arm_motion_flag = False #确保不冲突
+            elif mode_cyclic == 3:
+                self.enable_right_arm_handshake_flag = True
+                self.enable_arm_waving_flag = False #确保不冲突
+                self.enable_running_arm_motion_flag = False #确保不冲突
+            elif mode_cyclic == 5: # Mode for running arm motion
+                self.get_logger().info(f"Mode {msg.mode} (cyclic: {mode_cyclic}) activated: Enabling running arm motion.")
+                self.enable_running_arm_motion_flag = True
+                self.enable_arm_waving_flag = False #确保不冲突
+                self.enable_right_arm_handshake_flag = False #确保不冲突
+            else: # Default: disable all special arm motions (mode_cyclic == 0, 2, 4)
+                self.enable_arm_waving_flag = False
+                self.enable_right_arm_handshake_flag = False
+                self.enable_running_arm_motion_flag = False    
         
     def imu_callback(self, msg):
         quat = msg.orientation
