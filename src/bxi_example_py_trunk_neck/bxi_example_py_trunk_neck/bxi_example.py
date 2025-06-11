@@ -194,28 +194,6 @@ def  _get_sin(phase):
     
     # return math.sin(2 * math.pi * phase)
 
-from scipy.spatial.transform import Rotation as R
-def compute_gravity_projection(quat):
-    """
-    通过姿态四元数将全局重力方向投影到本地坐标系。
-    :param attitude_quat: 姿态四元数 (w, x, y, z)
-    :param global_gravity: 全局重力方向 (默认向量 [0, 0, -1])
-    :return: 重力在本地坐标系的投影 (x, y, z)
-    """
-    gravity=np.array([0.0, 0.0, -1.0]).astype(np.float32)
-    
-    # 将姿态四元数转换为旋转矩阵
-    rotation = R.from_quat(quat)  # (x, y, z, w)
-    # rot_matrix = rotation.as_matrix()
-    
-    # 将全局重力方向转换到本地坐标系
-    # local_gravity = np.dot(rot_matrix.T, gravity)
-    
-    local_gravity = rotation.apply(gravity, inverse=True).astype(np.float32)
-    
-    # 返回归一化的本地重力方向
-    return local_gravity # / np.linalg.norm(local_gravity)
-
 def  _get_cos(phase):
     
     # phase %= 1.
