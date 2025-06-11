@@ -189,6 +189,7 @@ private:
                             system("killall -SIGINT bxi_example_py");
                             system("killall -SIGINT hardware");
                             system("killall -SIGINT hardware_trunk");
+                            system("killall -SIGINT hardware_trunk_neck");
                             printf("kill robot_controller\n");//robot_controller
 
                             reset_value();
