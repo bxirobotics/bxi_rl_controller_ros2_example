@@ -599,7 +599,7 @@ class BxiExample(Node):
                 self.enable_arm_waving_flag = False #确保不冲突
                 self.enable_running_arm_motion_flag = False #确保不冲突
             elif mode_cyclic == 5: # Mode for running arm motion
-                self.get_logger().info(f"Mode {msg.mode} (cyclic: {mode_cyclic}) activated: Enabling running arm motion.")
+                # self.get_logger().info(f"Mode {msg.mode} (cyclic: {mode_cyclic}) activated: Enabling running arm motion.")
                 self.enable_running_arm_motion_flag = True
                 self.enable_arm_waving_flag = False #确保不冲突
                 self.enable_right_arm_handshake_flag = False #确保不冲突
