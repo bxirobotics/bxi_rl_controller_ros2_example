@@ -1,14 +1,15 @@
-# bxi_ros2_example
+# bxi_rl_controller_ros2_example
 
 ## 简介
 
-本仓库为半醒科技有限公司机器人软件仓库，提供机器人底层驱动，仿真环境以及使用示例，基于`ROS2`开发，子仓库`bxi_ros2_pkg`为预编译二进制包：  
-* 二进制包，位于 `bxi_ros2_pkg/`目录：
+本仓库为半醒科技基于强化学习的控制器程序，可以运行并控制运行在mujoco仿真环境的机器人或真机机器人。    
+本控制框架基于`ROS2`开发，其中ROS2环境和mujoco仿真包[`bxi_ros2_pkg`](https://github.com/bxirobotics/bxi_ros2_pkg)为预编译二进制包：  
+*  `bxi_ros2_pkg/`目录：
 1. `communication`：机器人通信包定义，包含自定义的通信包格式
 2. `description`:机器人描述文件，包含机器人`urdf`文件以及`meshe`文件
 3. `mujoco`:机器人仿真环境，用于提前验证算法，所有算法在真机运行之前必须使用仿真环境进行验证
 4. `hardware`:机器人硬件控制包，启动后本节点发布机器人所有传感器数据，并接收控制指令
-* 原代码包，位于 `src/`目录：
+* 控制程序代码，位于 `src/`目录：
 1. `src/bix_example`:机器人控制接口使用示例，实现初始化流程和基础的消息接收和发送
 2. `src/bix_example_py`:机器人强化学习控制示例`python`版,演示如何使用强化学习控制机器人
 3. `remote_controller`:遥控器，使用`xbox`手柄控制机器人移动，可以控制真机和仿真环境
@@ -41,8 +42,10 @@
 
 ### 编译/运行示例代码
 示例代码简单描述了如何订阅接收传感器消息，调用初始化服务并对机器人进行一个简单的位置控制    
-1. 在代码根目录下运行 `colcon build` 编译 `./src` 目录下所有的包；编译成功后，运行`source ./install/setup.bash`设置新的环境变量；    
-2. 运行强化学习示例：
+1. 将 ROS2环境和mujoco仿真包[`bxi_ros2_pkg`](https://github.com/bxirobotics/bxi_ros2_pkg) 放到 /opt/bxi/bxi_ros2_pkg , 并激活它：
+   `source /opt/bxi/bxi_ros2_pkg/setup.bash`    
+2. 在bxi_rl_controller_ros2_example代码根目录下运行 `colcon build` 编译 `./src` 目录下所有的包；编译成功后，运行`source ./install/setup.bash`设置新的环境变量；    
+3. 运行强化学习示例：
 * 运行`ros2 launch bxi_example_py example_launch.py`启动 模拟器 + 控制程序（强化学习版）    
 * 运行`ros2 launch bxi_example_py example_launch_hw.py`启动 真机 + 控制程序 （强化学习版）
 
