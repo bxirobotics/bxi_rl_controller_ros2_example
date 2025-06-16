@@ -30,6 +30,8 @@ dof_num = 25
 
 dof_use = 12
 
+ankle_y_offset = 0.06
+
 joint_name = (
     "waist_y_joint",
     "waist_x_joint",
@@ -76,15 +78,15 @@ joint_nominal_pos = np.array([   # 指定的固定关节角度
 
 joint_kp = np.array([     # 指定关节的kp，和joint_name顺序一一对应
     500,500,300,
-    100,100,100,100,10,10,
-    100,100,100,100,10,10,
+    100,100,100,150,30,10,
+    100,100,100,150,30,10,
     20,20,10,20,10,
     20,20,10,20,10], dtype=np.float32)
 
 joint_kd = np.array([  # 指定关节的kd，和joint_name顺序一一对应
     5,5,3,
-    3,3,3,3,1,1,
-    3,3,3,3,1,1,
+    2,2,2,2.5,1,1,
+    2,2,2,2.5,1,1,
     1,1,0.8,1,0.8,
     1,1,0.8,1,0.8], dtype=np.float32)
 
@@ -126,7 +128,7 @@ class env_cfg():
         
     class commands():
         stand_com_threshold = 0.05 # if (lin_vel_x, lin_vel_y, ang_vel_yaw).norm < this, robot should stand
-        sw_switch = False # use stand_com_threshold or not
+        sw_switch = True # use stand_com_threshold or not
 
     class rewards:
         cycle_time = 0.7
@@ -499,6 +501,9 @@ class BxiExample(Node):
                     self.loop_count
                 )
             
+            qpos[4+3] += ankle_y_offset
+            qpos[10+3] += ankle_y_offset
+            
             msg = bxiMsg.ActuatorCmds()
             msg.header.frame_id = robot_name
             msg.header.stamp = self.get_clock().now().to_msg()
@@ -559,6 +564,9 @@ class BxiExample(Node):
         with self.lock_in:
             self.qpos = np.array(joint_pos[3:15])
             self.qvel = np.array(joint_vel[3:15])
+            
+            self.qpos[4] -= ankle_y_offset
+            self.qpos[10] -= ankle_y_offset
             
             # self.qpos[0] = np.array(joint_pos[0])
             # self.qpos[1] = np.array(joint_pos[2])
