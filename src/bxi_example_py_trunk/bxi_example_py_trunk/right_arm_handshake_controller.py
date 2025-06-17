@@ -33,7 +33,6 @@ class RightArmHandshakeController:
         self.shutdown_start_positions = np.zeros(4) # 开始关闭时的关节位置，用于平滑过渡
 
         if joint_nominal_pos_ref is None:
-            self.logger.warn("joint_nominal_pos_ref not provided to RightArmHandshakeController, using default for target pose which might be suboptimal.")
             # Store nominal positions for relevant joints for smooth return if needed
             self.joint_nominal_r_shld_y = 0.7 # Default from bxi_example.py
             self.joint_nominal_r_shld_x = -0.2
@@ -59,7 +58,6 @@ class RightArmHandshakeController:
             self.is_shutting_down = False
             self.handshake_start_time = current_sim_time
             self.handshake_stop_time = None
-            self.logger.info(f"Right arm handshake initiated at {current_sim_time:.2f}s.")
 
     def stop_handshake(self, current_sim_time):
         if self.is_handshaking and not self.is_shutting_down:
@@ -68,7 +66,6 @@ class RightArmHandshakeController:
             self.handshake_stop_time = current_sim_time
             # 保存当前关节位置作为关闭过渡的起点
             self.shutdown_start_positions = self.current_joint_positions.copy()
-            self.logger.info(f"Right arm handshake shutdown initiated at {current_sim_time:.2f}s.")
 
     def calculate_handshake_motion(self, base_pos, time_in_seconds, loop_count_for_log=0):
         pos = base_pos.copy()
@@ -92,7 +89,6 @@ class RightArmHandshakeController:
         # 关闭握手动作
         if self.is_shutting_down:
             if self.handshake_stop_time is None:
-                self.logger.warn("RightArmHandshakeController: is_shutting_down is True but handshake_stop_time is None. Forcing stop.")
                 self.is_handshaking = False
                 self.is_shutting_down = False
                 return pos
@@ -107,7 +103,6 @@ class RightArmHandshakeController:
                 self.is_shutting_down = False
                 self.handshake_start_time = None
                 self.handshake_stop_time = None
-                self.logger.info(f"Right arm handshake shutdown completed at {time_in_seconds:.2f}s.")
                 
                 # 直接设置为标称位置
                 pos[self.R_SHLD_Y_IDX] = nominal_r_shld_y
@@ -137,7 +132,6 @@ class RightArmHandshakeController:
         # 启动或维持握手动作
         elif self.is_handshaking:
             if self.handshake_start_time is None:
-                self.logger.warn("RightArmHandshakeController: is_handshaking is True but handshake_start_time is None. Defaulting to nominal.")
                 return pos 
 
             startup_elapsed_time = time_in_seconds - self.handshake_start_time
@@ -148,7 +142,6 @@ class RightArmHandshakeController:
                     # 完全达到握手姿势
                     current_transition_factor = 1.0
                     self.is_starting_up = False
-                    self.logger.info(f"Right arm handshake startup completed at {time_in_seconds:.2f}s.")
                 else:
                     # 使用平滑缓动函数实现从标称姿势到握手姿势的平滑过渡
                     t = startup_elapsed_time / self.handshake_startup_duration
@@ -179,16 +172,6 @@ class RightArmHandshakeController:
         pos[self.R_SHLD_X_IDX] = final_target_r_shld_x
         pos[self.R_SHLD_Z_IDX] = final_target_r_shld_z
         pos[self.R_ELB_Y_IDX] = final_target_r_elb_y
-
-        # 日志记录（每100次迭代一次）
-        if loop_count_for_log % 100 == 0:
-            status_str = "Idle"
-            if self.is_starting_up: status_str = "StartingUp"
-            elif self.is_shutting_down: status_str = "ShuttingDown"
-            elif self.is_handshaking: status_str = "HandshakingActive"
-
-            self.logger.info(f"RightArmCtrl Debug @ {time_in_seconds:.2f}s (Factor: {current_transition_factor:.3f}, Status: {status_str}):")
-            self.logger.info(f"  RShY: {final_target_r_shld_y:.3f}, RShX: {final_target_r_shld_x:.3f}, RShZ: {final_target_r_shld_z:.3f}, RElbY: {final_target_r_elb_y:.3f}")
 
         return pos
     
