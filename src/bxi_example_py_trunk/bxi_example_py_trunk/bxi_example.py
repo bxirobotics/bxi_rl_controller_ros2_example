@@ -313,9 +313,9 @@ class BxiExample(Node):
             joint_nominal_pos_ref=joint_nominal_pos,
             arm_startup_duration=3.0,  # 更长的启动时间确保非常平滑的过渡
             arm_shutdown_duration=3.0, # 更长的关闭时间确保非常平滑的过渡
-            arm_amplitude_y=0.20,      # 进一步减小Y轴摆幅使动作更柔和
-            arm_amplitude_z=0.05,      # 极轻微Z轴摆动增加自然感
-            elbow_coeff=0.15,          # 进一步降低肘部弯曲系数使动作柔和
+            arm_amplitude_y=0.15,      # 进一步减小Y轴摆幅使动作更柔和
+            arm_amplitude_z=0.08,      # 极轻微Z轴摆动增加自然感
+            elbow_coeff=0.1,          # 进一步降低肘部弯曲系数使动作柔和
             smoothing_factor=0.8       # 添加平滑因子，确保动作流畅
         )
         self.enable_running_arm_motion_flag = False
@@ -633,9 +633,17 @@ class BxiExample(Node):
             self.prev_left_arm_btn = left_arm_btn
             self.prev_right_arm_btn = right_arm_btn
             
-            # 默认奔跑手臂动作：当没有特殊手臂动作时启用
+            # 检测机器人速度，解决静止时手臂不对称问题
+            vel_norm = np.sqrt(self.vx**2 + self.vy**2 + self.dyaw**2)
+            
+            # 默认奔跑手臂动作：当没有特殊手臂动作且非静止状态时启用
             if not self.enable_arm_waving_flag and not self.enable_right_arm_handshake_flag:
-                self.enable_running_arm_motion_flag = True
+                if vel_norm > env_cfg.commands.stand_com_threshold:
+                    # 运动状态：启用奔跑手臂动作
+                    self.enable_running_arm_motion_flag = True
+                else:
+                    # 静止状态：禁用奔跑手臂动作，确保手臂左右对称
+                    self.enable_running_arm_motion_flag = False
             else:
                 self.enable_running_arm_motion_flag = False    
         
