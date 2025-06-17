@@ -37,6 +37,7 @@ using namespace std;
 #define JS_GAIT_WALK_BT 4
 #define JS_HEIGHT_UPPER_BT  1
 #define JS_HEIGHT_LOWER_BT  3
+#define JS_LEFT_ARM_BT      6
 #define JS_MODE_BT          7
 #define JS_START_BT 13
 #endif
@@ -105,6 +106,8 @@ private:
     double velr = 0;    //旋转速度
     double velr_filt = 0;
     int mode = 0;
+    bool left_arm_toggle = false;   // 左手挥舞切换状态
+    bool right_arm_toggle = false;  // 右手握手切换状态
 
     void timer_callback(){
         auto message = communication::msg::MotionCommands();{
@@ -149,6 +152,10 @@ private:
             message.vel_des.y = velxy_filt[1];
             message.yawdot_des = velr_filt;
             message.mode = mode;
+
+            // 设置手臂控制标志
+            message.btn_6 = left_arm_toggle ? 1 : 0;    // BT6控制左手挥舞
+            message.btn_7 = right_arm_toggle ? 1 : 0;   // BT7控制右手握手
 
             height_filt = height_filt * 0.9 + stand_height * 0.1;
             message.height_des = height_filt;
@@ -223,10 +230,16 @@ private:
                             printf("stand_height: %f\n", stand_height);
                         }
                         break;
+                        case JS_LEFT_ARM_BT:{
+                            const std::lock_guard<std::mutex> guard(lock_);
+                            left_arm_toggle = !left_arm_toggle;
+                            printf("Left arm waving toggle: %s\n", left_arm_toggle ? "ON" : "OFF");
+                        }
+                        break;
                         case JS_MODE_BT:{
                             const std::lock_guard<std::mutex> guard(lock_);
-                            mode += 1;
-                            printf("mode: %d\n", mode);
+                            right_arm_toggle = !right_arm_toggle;
+                            printf("Right arm handshake toggle: %s\n", right_arm_toggle ? "ON" : "OFF");
                         }
                         break;
                         default:

@@ -48,7 +48,6 @@ class ArmMotionController:
 
         if joint_nominal_pos_ref is None:
             # 提供一个默认值或者抛出错误，因为这个值对于肘部计算很重要
-            self.logger.warn("joint_nominal_pos_ref not provided to ArmMotionController, using potentially incorrect defaults for elbow.")
             # 使用一个基于之前观察到的默认值，但这非常不推荐
             self.joint_nominal_l_elb_y = -1.5
         else:
@@ -63,7 +62,6 @@ class ArmMotionController:
             self.is_shutting_down = False
             self.arm_wave_start_time = current_sim_time
             self.arm_wave_stop_time = None # 清除停止时间
-            self.logger.info(f"Arm waving initiated at {current_sim_time:.2f}s.")
 
     def stop_waving(self, current_sim_time):
         # 只有在正在挥舞（包括启动完成）且尚未开始关闭时才触停止
@@ -72,7 +70,6 @@ class ArmMotionController:
             self.is_starting_up = False # 如果在启动中被停止，则取消启动状态
             self.arm_wave_stop_time = current_sim_time
             # self.is_waving 保持 True 直到关闭完成
-            self.logger.info(f"Arm waving shutdown initiated at {current_sim_time:.2f}s.")
 
     def calculate_arm_waving(self, base_pos, time_in_seconds, loop_count_for_log=0):
         """
@@ -95,7 +92,6 @@ class ArmMotionController:
 
         if self.is_shutting_down:
             if self.arm_wave_stop_time is None: # 安全检查，理论上不应发生
-                self.logger.warn("ArmMotionController: is_shutting_down is True but arm_wave_stop_time is None. Forcing stop.")
                 self.is_waving = False
                 self.is_shutting_down = False
                 return pos
@@ -107,7 +103,6 @@ class ArmMotionController:
                 self.is_shutting_down = False
                 self.arm_wave_start_time = None
                 self.arm_wave_stop_time = None
-                self.logger.info(f"Arm waving shutdown completed at {time_in_seconds:.2f}s.")
                 return pos # 关闭完成，返回原始位置
             else:
                 # 因子从1平滑到0
@@ -115,7 +110,6 @@ class ArmMotionController:
         
         elif self.is_waving: # 包括 is_starting_up 和正常挥舞
             if self.arm_wave_start_time is None: # 安全检查
-                self.logger.warn("ArmMotionController: is_waving is True but arm_wave_start_time is None. Defaulting to no wave.")
                 return pos # 或者强制启动 self.start_waving(time_in_seconds) 并设置 factor 为 0
 
             startup_elapsed_time = time_in_seconds - self.arm_wave_start_time
@@ -123,7 +117,6 @@ class ArmMotionController:
                 if startup_elapsed_time >= self.arm_startup_duration:
                     current_wave_amplitude_factor = 1.0
                     self.is_starting_up = False # 启动完成
-                    self.logger.info(f"Arm waving startup completed at {time_in_seconds:.2f}s.")
                 else:
                     # 因子从0平滑到1
                     current_wave_amplitude_factor = startup_elapsed_time / self.arm_startup_duration
@@ -176,19 +169,4 @@ class ArmMotionController:
         pos[self.L_SHLD_Z_IDX] = final_target_l_shld_z
         pos[self.L_ELB_Y_IDX] = final_target_l_elb_y
 
-        if loop_count_for_log % 100 == 0: # 每100次循环（约1秒）打印一次日志
-            status_str = "Idle"
-            if self.is_starting_up: status_str = "StartingUp"
-            elif self.is_shutting_down: status_str = "ShuttingDown"
-            elif self.is_waving: status_str = "WavingActive" # is_waving is True, but not starting or shutting
-
-            current_l_shld_y_from_policy = base_pos[self.L_SHLD_Y_IDX] # Re-calculate for logging if needed
-            self.logger.info(f"ArmCtrl Debug @ {time_in_seconds:.2f}s (Factor: {current_wave_amplitude_factor:.3f}, Status: {status_str}):")
-            # self.logger.info(f"  LShY: BasePol={current_l_shld_y_from_policy:.3f}, TgtBaseY={target_base_y_lift:.3f}, Float={float_y_movement:.3f}, FinalTgtY={final_target_l_shld_y:.3f}")
-            # self.logger.info(f"  LShZ: BasePol={base_pos[self.L_SHLD_Z_IDX]:.3f}, WaveZ={wave_z_movement:.3f}, FinalTgtZ={final_target_l_shld_z:.3f}")
-            self.logger.info(f"  LShY_final: {final_target_l_shld_y:.3f}, LShZ_final: {final_target_l_shld_z:.3f}, LElbY_final: {final_target_l_elb_y:.3f}")
-            if self.is_shutting_down:
-                self.logger.info(f"    ShuttingDown: LastCalc=({self.last_calculated_arm_pos[0]:.2f},{self.last_calculated_arm_pos[1]:.2f},{self.last_calculated_arm_pos[2]:.2f}), Base=({base_pos[self.L_SHLD_Y_IDX]:.2f},{base_pos[self.L_SHLD_Z_IDX]:.2f},{base_pos[self.L_ELB_Y_IDX]:.2f})")
-
-            
         return pos 
