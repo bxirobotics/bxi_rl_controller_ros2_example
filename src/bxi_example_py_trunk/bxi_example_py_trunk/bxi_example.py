@@ -97,7 +97,7 @@ class env_cfg():
     class env():
         frame_stack = 66  # 历史观测帧数
         num_single_obs = (47+0)  # 单帧观测数
-        num_observations = int(frame_stack * num_single_obs)  # 观测数
+        num_observations = int(frame_stack * num_single_obs)  # 总观测空间 (66×47)
         num_actions = (12+0)  # 动作数
         num_commands = 5 # sin[2] vx vy vz
 
@@ -303,14 +303,18 @@ class BxiExample(Node):
         )
         self.enable_right_arm_handshake_flag = False
 
+        # 添加按钮状态跟踪，用于检测状态变化
+        self.prev_left_arm_btn = 0
+        self.prev_right_arm_btn = 0
+
         # 实例化奔跑手臂控制器
         self.running_arm_controller = RunningArmController(
             logger=self.get_logger(),
             joint_nominal_pos_ref=joint_nominal_pos,
             arm_startup_duration=3.0,  # 更长的启动时间确保非常平滑的过渡
             arm_shutdown_duration=3.0, # 更长的关闭时间确保非常平滑的过渡
-            arm_amplitude_y=0.15,      # 进一步减小Y轴摆幅使动作更柔和
-            arm_amplitude_z=0.02,      # 极轻微Z轴摆动增加自然感
+            arm_amplitude_y=0.20,      # 进一步减小Y轴摆幅使动作更柔和
+            arm_amplitude_z=0.05,      # 极轻微Z轴摆动增加自然感
             elbow_coeff=0.15,          # 进一步降低肘部弯曲系数使动作柔和
             smoothing_factor=0.8       # 添加平滑因子，确保动作流畅
         )
@@ -473,15 +477,7 @@ class BxiExample(Node):
                 if self.right_arm_handshake_controller.is_handshaking and not self.right_arm_handshake_controller.is_shutting_down:
                     self.right_arm_handshake_controller.stop_handshake(current_sim_time)
 
-            # 如果左手控制器处于挥舞或关闭状态，则计算左手臂动作
-            if self.arm_motion_controller.is_waving or self.arm_motion_controller.is_shutting_down:
-                qpos = self.arm_motion_controller.calculate_arm_waving(qpos, current_sim_time, self.loop_count)
-
-            # 如果右手控制器处于握手或关闭状态，则计算右手臂动作
-            if self.right_arm_handshake_controller.is_handshaking or self.right_arm_handshake_controller.is_shutting_down:
-                qpos = self.right_arm_handshake_controller.calculate_handshake_motion(qpos, current_sim_time, self.loop_count)
-
-            # 新增：奔跑手臂运动控制
+            # 新增：奔跑手臂运动控制（移至前面以便后续优先级处理）
             leg_phase_left_signal = obs[0, 0]  # np.sin(2. * np.pi * phase)
             leg_phase_right_signal = obs[0, 1] # np.cos(2. * np.pi * phase)
 
@@ -491,8 +487,12 @@ class BxiExample(Node):
             else:
                 if self.running_arm_controller.is_active and not self.running_arm_controller.is_shutting_down:
                     self.running_arm_controller.stop_running_motion(current_sim_time)
+
+            # 并行控制输出：允许多个控制器同时计算，通过关节索引分配避免冲突
+            # 关节分配：左臂(15-19) 右臂(20-24) 奔跑控制器(15-24作为基础)
             
-            if self.running_arm_controller.is_active_or_shutting_down:
+            # 先应用奔跑控制器作为基础（如果活跃）
+            if self.running_arm_controller.is_active or self.running_arm_controller.is_shutting_down:
                 qpos = self.running_arm_controller.calculate_running_arm_motion(
                     qpos,
                     current_sim_time,
@@ -500,6 +500,20 @@ class BxiExample(Node):
                     leg_phase_right_signal,
                     self.loop_count
                 )
+            
+            # 并行应用左手控制器（覆盖左臂关节15-19）
+            if self.arm_motion_controller.is_waving or self.arm_motion_controller.is_shutting_down:
+                temp_qpos = qpos.copy()
+                temp_qpos = self.arm_motion_controller.calculate_arm_waving(temp_qpos, current_sim_time, self.loop_count)
+                # 只更新左臂关节
+                qpos[15:20] = temp_qpos[15:20]
+            
+            # 并行应用右手控制器（覆盖右臂关节20-24）
+            if self.right_arm_handshake_controller.is_handshaking or self.right_arm_handshake_controller.is_shutting_down:
+                temp_qpos = qpos.copy()
+                temp_qpos = self.right_arm_handshake_controller.calculate_handshake_motion(temp_qpos, current_sim_time, self.loop_count)
+                # 只更新右臂关节
+                qpos[20:25] = temp_qpos[20:25]
             
             qpos[4+3] += ankle_y_offset
             qpos[10+3] += ankle_y_offset
@@ -567,7 +581,6 @@ class BxiExample(Node):
             
             self.qpos[4] -= ankle_y_offset
             self.qpos[10] -= ankle_y_offset
-            
             # self.qpos[0] = np.array(joint_pos[0])
             # self.qpos[1] = np.array(joint_pos[2])
             # self.qvel[0] = np.array(joint_vel[0])
@@ -589,26 +602,41 @@ class BxiExample(Node):
             self.vy = msg.vel_des.y
             self.dyaw = msg.yawdot_des
             
-            # 使用模运算让模式周期性循环 (周期为6)
-            mode_cyclic = msg.mode % 6
+            # 智能按键控制逻辑
+            left_arm_btn = msg.btn_6   # BT6控制左手挥舞
+            right_arm_btn = msg.btn_7  # BT7控制右手握手
             
-            # 根据接收到的 mode 控制手臂挥舞或握手
-            if mode_cyclic == 1: 
-                self.enable_arm_waving_flag = True
-                self.enable_right_arm_handshake_flag = False #确保不冲突
-                self.enable_running_arm_motion_flag = False #确保不冲突
-            elif mode_cyclic == 3:
-                self.enable_right_arm_handshake_flag = True
-                self.enable_arm_waving_flag = False #确保不冲突
-                self.enable_running_arm_motion_flag = False #确保不冲突
-            elif mode_cyclic == 5: # Mode for running arm motion
-                # self.get_logger().info(f"Mode {msg.mode} (cyclic: {mode_cyclic}) activated: Enabling running arm motion.")
+            # 检测按钮状态变化（双边沿触发）
+            left_btn_changed = (left_arm_btn != self.prev_left_arm_btn)
+            right_btn_changed = (right_arm_btn != self.prev_right_arm_btn)
+            
+            # 智能状态处理
+            if left_btn_changed:  # BT6状态发生变化
+                if self.enable_arm_waving_flag:
+                    # 当前左手在挥舞，任何按键变化都停止左手
+                    self.enable_arm_waving_flag = False
+                else:
+                    # 当前左手未挥舞，任何按键变化都启动左手并停止右手
+                    self.enable_arm_waving_flag = True
+                    self.enable_right_arm_handshake_flag = False  # 互斥：停止右手
+            
+            if right_btn_changed:  # BT7状态发生变化
+                if self.enable_right_arm_handshake_flag:
+                    # 当前右手在握手，任何按键变化都停止右手
+                    self.enable_right_arm_handshake_flag = False
+                else:
+                    # 当前右手未握手，任何按键变化都启动右手并停止左手
+                    self.enable_right_arm_handshake_flag = True
+                    self.enable_arm_waving_flag = False  # 互斥：停止左手
+            
+            # 更新按钮状态历史
+            self.prev_left_arm_btn = left_arm_btn
+            self.prev_right_arm_btn = right_arm_btn
+            
+            # 默认奔跑手臂动作：当没有特殊手臂动作时启用
+            if not self.enable_arm_waving_flag and not self.enable_right_arm_handshake_flag:
                 self.enable_running_arm_motion_flag = True
-                self.enable_arm_waving_flag = False #确保不冲突
-                self.enable_right_arm_handshake_flag = False #确保不冲突
-            else: # Default: disable all special arm motions (mode_cyclic == 0, 2, 4)
-                self.enable_arm_waving_flag = False
-                self.enable_right_arm_handshake_flag = False
+            else:
                 self.enable_running_arm_motion_flag = False    
         
     def imu_callback(self, msg):
