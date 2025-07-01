@@ -19,9 +19,14 @@
 ### 系统环境以及依赖
 真机已配置好环境，到手即可使用，重新安装系统后或者在其他机器运行仿真需重新配置环境。具体如下：
 1. 系统版本需为`Ubuntu 22.04`，并安装对应版本`ROS2`
+https://blog.csdn.net/weixin_55944949/article/details/140373710
 2. 运行`mujoco`仿真需安装`libglfw3-dev`
-3. 将`source xxx/bxi_ros2_pkg/setup.bash`加入`.bashrc`，运行真机需以`root`用户运行
-4. 运行强化学习示例需安装`torch` `onnxruntime`
+`sudo apt install libglfw3-dev`
+3. 子模块`bxi_ros2_pkg`通过`git submodule init`下载 
+4. 将`source xxx/bxi_ros2_pkg/setup.bash`加入`.bashrc`，运行真机需以`root`用户运行
+5. 运行强化学习示例需安装`torch` `onnxruntime`
+`pip install torch`
+`pip install onnxruntime`
 
 ### 仿真与真机差异
 
@@ -48,6 +53,12 @@
 3. 运行强化学习示例：
 * 运行`ros2 launch bxi_example_py example_launch.py`启动 模拟器 + 控制程序（强化学习版）    
 * 运行`ros2 launch bxi_example_py example_launch_hw.py`启动 真机 + 控制程序 （强化学习版）
+```bash
+source /home/xuxin/allCode/bxi_ros2_example/bxi_ros2_pkg/setup.bash
+ros2 launch bxi_example_py example_launch.py
+ros2 launch bxi_example_py_trunk example_launch.py
+ros2 launch bxi_example_py_trunk example_launch_xx.py
+```
 
 ### 硬件保护
 硬件节点除了通信超时保护之外还带有扭矩保护，超速保护，位置保护
