@@ -154,8 +154,8 @@ private:
             message.mode = mode;
 
             // 设置手臂控制标志
-            message.btn_6 = left_arm_toggle ? 1 : 0;    // BT6控制左手挥舞
-            message.btn_7 = right_arm_toggle ? 1 : 0;   // BT7控制右手握手
+            // message.btn_6 = left_arm_toggle ? 1 : 0;    // BT6控制左手挥舞
+            // message.btn_7 = right_arm_toggle ? 1 : 0;   // BT7控制右手握手
 
             height_filt = height_filt * 0.9 + stand_height * 0.1;
             message.height_des = height_filt;
