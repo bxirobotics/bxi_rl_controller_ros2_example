@@ -22,6 +22,7 @@
 2. 运行`mujoco`仿真需安装`libglfw3-dev`
 3. 将`source xxx/bxi_ros2_pkg/setup.bash`加入`.bashrc`，运行真机需以`root`用户运行
 4. 运行强化学习示例需安装`torch` `onnxruntime`
+5. 将`./script/bxi-dev.rules`复制到`/etc/udev/rules.d/`
 
 ### 仿真与真机差异
 
