@@ -16,9 +16,9 @@ def generate_launch_description():
     return LaunchDescription(
         [
             Node(
-                package="hardware_trunk",
-                executable="hardware_trunk",
-                name="hardware_trunk",
+                package="hardware_ankle",
+                executable="hardware_ankle",
+                name="hardware_ankle",
                 output="screen",
                 parameters=[
                 ],
