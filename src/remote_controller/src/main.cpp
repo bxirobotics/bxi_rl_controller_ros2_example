@@ -109,6 +109,8 @@ private:
     bool left_arm_toggle = false;   // 左手挥舞切换状态
     bool right_arm_toggle = false;  // 右手握手切换状态
 
+    double vel_offset = 0.0;
+
     void timer_callback(){
         auto message = communication::msg::MotionCommands();{
             const std::lock_guard<std::mutex> guard(lock_);
@@ -148,7 +150,7 @@ private:
 
             velr_filt = velr * 0.05 + velr_filt *  0.95;
 
-            message.vel_des.x = velxy_filt[0];
+            message.vel_des.x = velxy_filt[0] + vel_offset;
             message.vel_des.y = velxy_filt[1];
             message.yawdot_des = velr_filt;
             message.mode = mode;
@@ -194,9 +196,11 @@ private:
                             system("killall -SIGINT robot_controller");
                             system("killall -SIGINT pt_main_thread");
                             system("killall -SIGINT bxi_example_py");
+                            system("killall -SIGINT bxi_example_py_trunk");
                             system("killall -SIGINT hardware");
                             system("killall -SIGINT hardware_trunk");
                             system("killall -SIGINT hardware_trunk_neck");
+                            system("killall -SIGINT hardware_ankle");
                             printf("kill robot_controller\n");//robot_controller
 
                             reset_value();
@@ -228,6 +232,18 @@ private:
                                 stand_height = STAND_HEIGHT_MIN;
                             }
                             printf("stand_height: %f\n", stand_height);
+                        }
+                        break;
+                        case JS_GAIT_STAND_BT:{
+                            const std::lock_guard<std::mutex> guard(lock_);
+                            vel_offset = 0.0;
+                            printf("change to stand\n");
+                        }
+                        break;
+                        case JS_GAIT_WALK_BT:{
+                            const std::lock_guard<std::mutex> guard(lock_);
+                            vel_offset = 0.0011;
+                            printf("change to walk\n");
                         }
                         break;
                         case JS_LEFT_ARM_BT:{
