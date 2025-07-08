@@ -27,6 +27,7 @@ https://blog.csdn.net/weixin_55944949/article/details/140373710
 5. 运行强化学习示例需安装`torch` `onnxruntime`
 `pip install torch`
 `pip install onnxruntime`
+6. 将`./script/bxi-dev.rules`复制到`/etc/udev/rules.d/`
 
 ### 仿真与真机差异
 
