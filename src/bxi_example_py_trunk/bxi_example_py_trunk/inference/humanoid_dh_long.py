@@ -123,7 +123,7 @@ class humanoid_dh_long_Agent(baseAgent):
         with torch.inference_mode():
             actions = self.script_module.inference(prop_obs_history.flatten().unsqueeze(0),
                                                     estimator_obs_history.flatten().unsqueeze(0),
-                                                    None).squeeze(0)
+                                                    ).squeeze(0)
             actions.clip_(-1.,1.)
 
         self.last_actions_buf = actions
