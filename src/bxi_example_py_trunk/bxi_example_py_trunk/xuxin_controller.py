@@ -19,6 +19,7 @@ from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 import torch
 from bxi_example_py_trunk.inference.humanoid_dh_long import humanoid_dh_long_Agent
+from bxi_example_py_trunk.inference.humanoid_dh_long_onnx import humanoid_dh_long_onnx_Agent
 
 import onnxruntime as ort
 
@@ -87,16 +88,15 @@ joint_kd = np.array([  # 指定关节的kd，和joint_name顺序一一对应
     1,1,0.8,1,0.8,
     1,1,0.8,1,0.8], dtype=np.float32)
 
-@torch.jit.script
 def quat_rotate_inverse(q, v):
-    shape = q.shape
-    q_w = q[:, -1]
-    q_vec = q[:, :3]
-    a = v * (2.0 * q_w ** 2 - 1.0).unsqueeze(-1)
-    b = torch.cross(q_vec, v, dim=-1) * q_w.unsqueeze(-1) * 2.0
-    c = q_vec * \
-        torch.bmm(q_vec.view(shape[0], 1, 3), v.view(
-            shape[0], 3, 1)).squeeze(-1) * 2.0
+    "x,y,z,w"
+    q_w = q[-1]
+    q_vec = q[:3]
+    
+    a = v * (2.0 * q_w ** 2 - 1.0)
+    b = np.cross(q_vec, v) * q_w * 2.0
+    c = q_vec * np.dot(q_vec, v) * 2.0
+    
     return a - b + c
 
 class BxiExample(Node):
@@ -113,6 +113,10 @@ class BxiExample(Node):
         self.declare_parameter('/policy_file', 'default_value')
         self.policy_file = self.get_parameter('/policy_file').get_parameter_value().string_value
         print('policy_file:', self.policy_file)
+
+        self.declare_parameter('/policy_file_onnx', 'default_value')
+        self.policy_file_onnx = self.get_parameter('/policy_file_onnx').get_parameter_value().string_value
+        print('policy_file_onnx:', self.policy_file_onnx)
 
         qos = QoSProfile(depth=1, durability=qos_profile_sensor_data.durability, reliability=qos_profile_sensor_data.reliability)
         
@@ -137,8 +141,9 @@ class BxiExample(Node):
         self.quat = np.zeros(4,dtype=np.double)
         
         self.device = "cuda"
-        self.agent = humanoid_dh_long_Agent(self.policy_file,self.device)
-
+        # self.agent = humanoid_dh_long_Agent(self.policy_file,self.device)
+        self.agent = humanoid_dh_long_onnx_Agent(self.policy_file_onnx,self.device)
+        
         self.vx = 0.1
         self.vy = 0
         self.dyaw = 0
@@ -194,17 +199,17 @@ class BxiExample(Node):
                                            
             dof_pos = q
             dof_vel = dq
-            quat = torch.tensor(self.quat,dtype=float,device=self.device)
-            g_vec = torch.tensor([0.,0.,-1.],dtype=float,device=self.device)
-            p_g_vec = quat_rotate_inverse(quat.unsqueeze(0),g_vec.unsqueeze(0)).squeeze()
+            quat = self.quat
+            g_vec = np.array([0.,0.,-1.])
+            p_g_vec = quat_rotate_inverse(quat,g_vec)
             obs_group={
-                "dof_pos":torch.tensor(dof_pos,dtype=float,device=self.device),
-                "dof_vel":torch.tensor(dof_vel,dtype=float,device=self.device),
-                "angular_velocity":torch.tensor(omega,dtype=float,device=self.device),
-                "commands":torch.tensor([x_vel_cmd, y_vel_cmd, yaw_vel_cmd],dtype=float,device=self.device),
+                "dof_pos":dof_pos,
+                "dof_vel":dof_vel,
+                "angular_velocity":omega,
+                "commands":np.array([x_vel_cmd, y_vel_cmd, yaw_vel_cmd]),
                 "projected_gravity":p_g_vec,
             }
-            target_q = self.agent.inference(obs_group).cpu().numpy()
+            target_q = self.agent.inference(obs_group)
             
             qpos = joint_nominal_pos.copy()
             qpos[3:15] = target_q

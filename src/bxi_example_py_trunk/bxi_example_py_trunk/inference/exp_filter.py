@@ -13,7 +13,10 @@ class expFilter:
 
     def filter(self,current):
         if self.last is None:
-            self.last = torch.zeros_like(current)
+            if type(current) is torch.Tensor:
+                self.last = torch.zeros_like(current)
+            elif type(current) is np.ndarray:
+                self.last = np.zeros_like(current)
         filtered = current * (1-self.alpha) + self.last * self.alpha
         self.last = filtered
         return filtered
