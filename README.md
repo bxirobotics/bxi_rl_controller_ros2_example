@@ -59,6 +59,7 @@ source /home/xuxin/allCode/bxi_ros2_example/bxi_ros2_pkg/setup.bash
 ros2 launch bxi_example_py example_launch.py
 ros2 launch bxi_example_py_trunk example_launch.py
 ros2 launch bxi_example_py_trunk example_launch_xx.py
+ros2 launch bxi_example_py_trunk example_launch_xx_terrain.py
 ```
 
 ### 硬件保护

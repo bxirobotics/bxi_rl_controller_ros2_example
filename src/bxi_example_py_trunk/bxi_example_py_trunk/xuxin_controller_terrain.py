@@ -20,6 +20,7 @@ from sensor_msgs.msg import JointState
 import torch
 from bxi_example_py_trunk.inference.humanoid_dh_long import humanoid_dh_long_Agent
 from bxi_example_py_trunk.inference.humanoid_dh_long_onnx import humanoid_dh_long_onnx_Agent
+from bxi_example_py_trunk.inference.humanoid_hurdle import humanoid_hurdle_onnx_Agent
 
 import onnxruntime as ort
 
@@ -49,10 +50,6 @@ joint_name = (
     "r_ankle_y_joint",   # 右腿_踝关节_y轴
     "r_ankle_x_joint",   # 右腿_踝关节_x轴
 
-    # "waist_z_joint",
-    # "waist_x_joint",
-    # "waist_y_joint",
-
     "l_shld_y_joint",   # 左臂_肩关节_y轴
     "l_shld_x_joint",   # 左臂_肩关节_x轴
     "l_shld_z_joint",   # 左臂_肩关节_z轴
@@ -75,18 +72,54 @@ joint_nominal_pos = np.array([   # 指定的固定关节角度
     dtype=np.float32)
 
 joint_kp = np.array([     # 指定关节的kp，和joint_name顺序一一对应
-    500,500,300,
-    100,100,100,150,30,10,
-    100,100,100,150,30,10,
-    20,20,10,20,10,
-    20,20,10,20,10], dtype=np.float32)
+    500,500,150,
+    150,150,150,300,40,40,
+    150,150,150,300,40,40,
+    150,150,150,150,150,
+    150,150,150,150,150,
+], dtype=np.float32)
 
 joint_kd = np.array([  # 指定关节的kd，和joint_name顺序一一对应
-    5,5,3,
-    2,2,2,2.5,1,1,
-    2,2,2,2.5,1,1,
-    1,1,0.8,1,0.8,
-    1,1,0.8,1,0.8], dtype=np.float32)
+    5,5,2,
+    2,2,2,4,2,2,
+    2,2,2,4,2,2,
+    2,2,2,2,2,
+    2,2,2,2,2,
+], dtype=np.float32)
+
+
+isaac_joint_names = [ # isaacgym顺序
+    # 0:5
+    "l_shld_y_joint",   # 左臂_肩关节_y轴
+    "l_shld_x_joint",   # 左臂_肩关节_x轴
+    "l_shld_z_joint",   # 左臂_肩关节_z轴
+    "l_elb_y_joint",   # 左臂_肘关节_y轴
+    "l_elb_z_joint",   # 左臂_肘关节_y轴
+    # 5:10
+    "r_shld_y_joint",   # 右臂_肩关节_y轴   
+    "r_shld_x_joint",   # 右臂_肩关节_x轴
+    "r_shld_z_joint",   # 右臂_肩关节_z轴
+    "r_elb_y_joint",    # 右臂_肘关节_y轴
+    "r_elb_z_joint",    # 右臂_肘关节_y轴
+    # 10:11
+    "waist_z_joint",
+    # 11:17
+    "l_hip_z_joint",   # 左腿_髋关节_z轴
+    "l_hip_x_joint",   # 左腿_髋关节_x轴
+    "l_hip_y_joint",   # 左腿_髋关节_y轴
+    "l_knee_y_joint",   # 左腿_膝关节_y轴
+    "l_ankle_y_joint",   # 左腿_踝关节_y轴
+    "l_ankle_x_joint",   # 左腿_踝关节_x轴
+    # 17:23
+    "r_hip_z_joint",   # 右腿_髋关节_z轴    
+    "r_hip_x_joint",   # 右腿_髋关节_x轴
+    "r_hip_y_joint",   # 右腿_髋关节_y轴
+    "r_knee_y_joint",   # 右腿_膝关节_y轴
+    "r_ankle_y_joint",   # 右腿_踝关节_y轴
+    "r_ankle_x_joint",   # 右腿_踝关节_x轴
+]
+index_isaac_in_mujoco = [joint_name.index(name) for name in isaac_joint_names]
+
 
 def quat_rotate_inverse(q, v):
     "x,y,z,w"
@@ -118,6 +151,9 @@ class BxiExample(Node):
         self.policy_file_onnx = self.get_parameter('/policy_file_onnx').get_parameter_value().string_value
         print('policy_file_onnx:', self.policy_file_onnx)
 
+        # print(index_isaac_in_mujoco)
+        self.num_actions = len(index_isaac_in_mujoco)
+
         qos = QoSProfile(depth=1, durability=qos_profile_sensor_data.durability, reliability=qos_profile_sensor_data.reliability)
         
         self.act_pub = self.create_publisher(bxiMsg.ActuatorCmds, self.topic_prefix+'actuators_cmds', qos)  # CHANGE
@@ -127,6 +163,7 @@ class BxiExample(Node):
         self.imu_sub = self.create_subscription(sensor_msgs.msg.Imu, self.topic_prefix+'imu_data', self.imu_callback, qos)
         self.touch_sub = self.create_subscription(bxiMsg.TouchSensor, self.topic_prefix+'touch_sensor', self.touch_callback, qos)
         self.joy_sub = self.create_subscription(bxiMsg.MotionCommands, 'motion_commands', self.joy_callback, qos)
+        # self.height_map_sub = self.create_subscription(bxiMsg.MotionCommands, 'motion_commands', self.height_map_callback, qos) # TODO:
 
         self.rest_srv = self.create_client(bxiSrv.RobotReset, self.topic_prefix+'robot_reset')
         self.sim_rest_srv = self.create_client(bxiSrv.SimulationReset, self.topic_prefix+'sim_reset')
@@ -135,22 +172,21 @@ class BxiExample(Node):
 
         self.lock_in = Lock()
         self.lock_ou = self.lock_in #Lock()
-        self.qpos = np.zeros(12,dtype=np.double)
-        self.qvel = np.zeros(12,dtype=np.double)
+        self.qpos = np.zeros(self.num_actions,dtype=np.double)
+        self.qvel = np.zeros(self.num_actions,dtype=np.double)
         self.omega = np.zeros(3,dtype=np.double)
         self.quat = np.zeros(4,dtype=np.double)
         
-        self.device = "cuda"
-        # self.agent = humanoid_dh_long_Agent(self.policy_file,self.device)
-        self.agent = humanoid_dh_long_onnx_Agent(self.policy_file_onnx)
+        self.agent = humanoid_hurdle_onnx_Agent(self.policy_file_onnx)
         
         self.vx = 0.1
         self.vy = 0
         self.dyaw = 0
+        self.height_map = 1.1 - np.zeros((18,9),dtype=np.double) # base_pos_z - height
 
         self.step = 0
         self.loop_count = 0
-        self.dt = 0.01  # loop @100Hz
+        self.dt = 0.02  # loop @100Hz # TODO:
         self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
 
     def timer_callback(self):
@@ -161,7 +197,7 @@ class BxiExample(Node):
             print('robot reset 1!')
             self.step = 1
             return
-        elif self.step == 1 and self.loop_count >= (10./self.dt): # 延迟10s
+        elif self.step == 1 and self.loop_count >= (20./self.dt): # 延迟10s
             self.robot_rest(2, True) # first reset
             print('robot reset 2!')
             self.loop_count = 0
@@ -169,7 +205,7 @@ class BxiExample(Node):
             return
         
         if self.step == 1:
-            soft_start = self.loop_count/(1./self.dt) # 1秒关节缓启动
+            soft_start = self.loop_count/(2./self.dt) # 1秒关节缓启动
             if soft_start > 1:
                 soft_start = 1
                 
@@ -196,6 +232,7 @@ class BxiExample(Node):
                 x_vel_cmd = self.vx
                 y_vel_cmd = self.vy
                 yaw_vel_cmd = self.dyaw
+                height_map = self.height_map
                                            
             dof_pos = q
             dof_vel = dq
@@ -208,11 +245,12 @@ class BxiExample(Node):
                 "angular_velocity":omega,
                 "commands":np.array([x_vel_cmd, y_vel_cmd, yaw_vel_cmd]),
                 "projected_gravity":p_g_vec,
+                "height_map":height_map.flatten(), # TODO: check flatten顺序
             }
             target_q = self.agent.inference(obs_group)
             
             qpos = joint_nominal_pos.copy()
-            qpos[3:15] = target_q
+            qpos[[index_isaac_in_mujoco]] = target_q
             # qpos[4+3] += ankle_y_offset
             # qpos[10+3] += ankle_y_offset
             
@@ -273,8 +311,8 @@ class BxiExample(Node):
         joint_tor = msg.effort
         
         with self.lock_in:
-            self.qpos = np.array(joint_pos[3:15])
-            self.qvel = np.array(joint_vel[3:15])
+            self.qpos = np.array(joint_pos)[index_isaac_in_mujoco]
+            self.qvel = np.array(joint_vel)[index_isaac_in_mujoco]
             # self.qpos[4] -= ankle_y_offset
             # self.qpos[10] -= ankle_y_offset
 
@@ -301,6 +339,14 @@ class BxiExample(Node):
     def odom_callback(self, msg): # 全局里程计（上帝视角，仅限仿真使用）
         base_pose = msg.pose
         base_twist = msg.twist
+
+    def height_map_callback(self, msg):
+        # 相对trunk原点的高度: base_pos[2] - height
+        # TODO: clip height map
+        # x np.linspace(-0.25,0.6,18)
+        # y np.linspace(-0.2,0.2,9)
+        with self.lock_in:
+            self.height_map = msg.height_map
 
 def main(args=None):
    

@@ -6,8 +6,7 @@ import time
 import onnxruntime as ort
 
 class humanoid_dh_long_onnx_Agent(baseAgent):
-    def __init__(self, policy_path, device):
-        self.device = device
+    def __init__(self, policy_path):
         self.num_prop_obs_input = 47
         self.num_estimator_input = 42
         self.include_history_steps = 5
@@ -62,7 +61,7 @@ class humanoid_dh_long_onnx_Agent(baseAgent):
         self.action_scale = 1.0
 
         self.prop_obs_history = np.zeros((self.num_prop_obs_input,self.long_history))
-        self.estimator_obs_history = np.zeros((self.num_estimator_input,self.include_history_steps))   
+        self.estimator_obs_history = np.zeros((self.num_estimator_input,self.include_history_steps))
 
         self.last_actions_buf = np.zeros(self.num_actions)
         self.inference_count = 0
@@ -148,19 +147,17 @@ class humanoid_dh_long_onnx_Agent(baseAgent):
         self.inference_count += 1
         dof_pos_target_urdf = self.exp_filter.filter(dof_pos_target_urdf)
         end = time.time()
-        print(f"推理时间:{(end-start)*1000:.1f}ms")
+        # print(f"推理时间:{(end-start)*1000:.1f}ms")
         return dof_pos_target_urdf
     
     def reset(self):
-        self.prop_obs_history = np.zeros((self.num_prop_obs_input,self.long_history),
-                                             device=self.device,requires_grad=False)
-        self.estimator_obs_history = np.zeros((self.num_estimator_input,self.include_history_steps),
-                                             device=self.device,requires_grad=False)   
-        self.last_actions_buf = np.zeros(self.num_actions,requires_grad=False)
+        self.prop_obs_history = np.zeros((self.num_prop_obs_input,self.long_history))
+        self.estimator_obs_history = np.zeros((self.num_estimator_input,self.include_history_steps))
+        self.last_actions_buf = np.zeros(self.num_actions)
         self.exp_filter.reset()
 
 if __name__=="__main__":
-    a=humanoid_dh_long_onnx_Agent("src/bxi_example_py_trunk/policy/model_xx.onnx","cpu")
+    a=humanoid_dh_long_onnx_Agent("src/bxi_example_py_trunk/policy/model_xx.onnx")
     obs_group={
         "dof_pos":np.zeros(12),
         "dof_vel":np.zeros(12),

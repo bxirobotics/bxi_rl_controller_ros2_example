@@ -31,6 +31,7 @@ setup(
         ('share/' + package_name + '/launch', ['launch/example_launch.py']),
         ('share/' + package_name + '/launch', ['launch/example_launch_hw.py']),
         ('share/' + package_name + '/launch', ['launch/example_launch_xx.py']),
+        ('share/' + package_name + '/launch', ['launch/example_launch_xx_terrain.py']),
         # ('share/' + package_name + '/launch', ['launch/example_launch_hw_slope.py']),
     ] + get_data_files(),
     install_requires=['setuptools'],
@@ -44,6 +45,7 @@ setup(
         'console_scripts': [
             'bxi_example_py_trunk = bxi_example_py_trunk.bxi_example:main',
             'xuxin_controller = bxi_example_py_trunk.xuxin_controller:main',
+            'xuxin_controller_terrain = bxi_example_py_trunk.xuxin_controller_terrain:main',
         ],
     },
 )
