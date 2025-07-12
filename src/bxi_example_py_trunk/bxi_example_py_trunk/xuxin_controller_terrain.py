@@ -1,3 +1,4 @@
+# Copyright (c) 2025 上海半醒科技有限公司. 保留所有权利. 未经许可，禁止复制、修改或分发
 import rclpy
 from rclpy.node import Node
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
@@ -20,7 +21,8 @@ from sensor_msgs.msg import JointState
 import torch
 from bxi_example_py_trunk.inference.humanoid_dh_long import humanoid_dh_long_Agent
 from bxi_example_py_trunk.inference.humanoid_dh_long_onnx import humanoid_dh_long_onnx_Agent
-from bxi_example_py_trunk.inference.humanoid_hurdle import humanoid_hurdle_onnx_Agent
+# from bxi_example_py_trunk.inference.humanoid_hurdle import humanoid_hurdle_onnx_Agent
+from bxi_example_py_trunk.inference.humanoid_hurdle_history import humanoid_hurdle_onnx_Agent
 
 import onnxruntime as ort
 
