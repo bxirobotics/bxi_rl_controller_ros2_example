@@ -25,6 +25,8 @@ from bxi_example_py_trunk.inference.humanoid_hurdle_history import humanoid_hurd
 
 import onnxruntime as ort
 
+from std_msgs.msg import Float32MultiArray
+
 robot_name = "elf25"
 
 dof_num = 25
@@ -164,7 +166,7 @@ class BxiExample(Node):
         self.imu_sub = self.create_subscription(sensor_msgs.msg.Imu, self.topic_prefix+'imu_data', self.imu_callback, qos)
         self.touch_sub = self.create_subscription(bxiMsg.TouchSensor, self.topic_prefix+'touch_sensor', self.touch_callback, qos)
         self.joy_sub = self.create_subscription(bxiMsg.MotionCommands, 'motion_commands', self.joy_callback, qos)
-        # self.height_map_sub = self.create_subscription(bxiMsg.MotionCommands, 'motion_commands', self.height_map_callback, qos) # TODO:
+        self.height_map_sub = self.create_subscription(Float32MultiArray,'/robot_height_map',self.height_map_callback,qos)
 
         self.rest_srv = self.create_client(bxiSrv.RobotReset, self.topic_prefix+'robot_reset')
         self.sim_rest_srv = self.create_client(bxiSrv.SimulationReset, self.topic_prefix+'sim_reset')
@@ -183,7 +185,7 @@ class BxiExample(Node):
         self.vx = 0.1
         self.vy = 0
         self.dyaw = 0
-        self.height_map = 1.1 - np.zeros((18,9),dtype=np.double) # base_pos_z - height
+        self.height_map = 1.1 - np.zeros(18*9,dtype=np.double) # base_pos_z - height
 
         self.step = 0
         self.loop_count = 0
@@ -246,8 +248,10 @@ class BxiExample(Node):
                 "angular_velocity":omega,
                 "commands":np.array([x_vel_cmd, y_vel_cmd, yaw_vel_cmd]),
                 "projected_gravity":p_g_vec,
-                "height_map":height_map.flatten(), # TODO: check flatten顺序
+                "height_map":height_map,
             }
+            np.set_printoptions(formatter={'float': '{:.2f}'.format})
+            # print(height_map)
             target_q = self.agent.inference(obs_group)
             
             qpos = joint_nominal_pos.copy()
@@ -342,12 +346,19 @@ class BxiExample(Node):
         base_twist = msg.twist
 
     def height_map_callback(self, msg):
-        # 相对trunk原点的高度: base_pos[2] - height
-        # TODO: clip height map
-        # x np.linspace(-0.25,0.6,18)
-        # y np.linspace(-0.2,0.2,9)
-        with self.lock_in:
-            self.height_map = msg.height_map
+        """处理高程图数据"""
+        try:
+            # 将一维数组转换为18×9的高程图
+            height_map_data = np.array(msg.data, dtype=np.double)
+            height_map = height_map_data
+            
+            # 更新高程图数据（使用互斥锁保护）
+            with self.lock_in:
+                # self.height_map = height_map
+                pass
+
+        except Exception as e:
+            self.get_logger().error(f"处理高程图数据失败: {str(e)}")
 
 def main(args=None):
    
