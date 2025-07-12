@@ -1,5 +1,4 @@
 import numpy as np
-import torch
 
 class expFilter:
     def __init__(self,alpha):
@@ -13,9 +12,7 @@ class expFilter:
 
     def filter(self,current):
         if self.last is None:
-            if type(current) is torch.Tensor:
-                self.last = torch.zeros_like(current)
-            elif type(current) is np.ndarray:
+            if type(current) is np.ndarray:
                 self.last = np.zeros_like(current)
         filtered = current * (1-self.alpha) + self.last * self.alpha
         self.last = filtered

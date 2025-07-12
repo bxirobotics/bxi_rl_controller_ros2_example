@@ -11,7 +11,6 @@ import nav_msgs.msg
 import sensor_msgs.msg
 from threading import Lock
 import numpy as np
-# import torch
 import time
 import sys
 import math
