@@ -13,6 +13,7 @@ import numpy as np
 # import torch
 import time
 import sys
+import os
 import math
 from collections import deque
 from std_msgs.msg import Header
@@ -30,7 +31,7 @@ dof_num = 25
 
 dof_use = 12
 
-ankle_y_offset = 0.04
+ankle_y_offset = 0.0
 
 joint_name = (
     "waist_y_joint",
@@ -416,6 +417,11 @@ class BxiExample(Node):
             obs = np.zeros([1, env_cfg.env.num_single_obs], dtype=np.float32)
             eu_ang = quaternion_to_euler_array(quat)
             eu_ang[eu_ang > math.pi] -= 2 * math.pi
+
+            #check safe
+            if (np.abs(eu_ang[0]) > (math.pi/4.0)) or (np.abs(eu_ang[1]) > (math.pi/4.0)):
+                print("check safe error, exit!")
+                os._exit()
 
             phase = count_lowlevel * self.dt  / env_cfg.rewards.cycle_time
             obs[0, 0] = np.sin(2. * np.pi * phase) #_get_sin(phase)
