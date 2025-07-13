@@ -23,6 +23,7 @@
 3. 将`source xxx/bxi_ros2_pkg/setup.bash`加入`.bashrc`，运行真机需以`root`用户运行
 4. 运行强化学习示例需安装`torch` `onnxruntime`
 5. 将`./script/bxi-dev.rules`复制到`/etc/udev/rules.d/`
+6. 设置遥控器自启动，按需修改`./script/ros_elf_launch.service`,复制到`/etc/systemd/system/`,使用`systemctl`工具使能自启动服务
 
 ### 仿真与真机差异
 
