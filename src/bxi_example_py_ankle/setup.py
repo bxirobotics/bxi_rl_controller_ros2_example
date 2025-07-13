@@ -1,7 +1,7 @@
 from setuptools import setup
 import os
 
-package_name = 'bxi_example_py_trunk'
+package_name = 'bxi_example_py_ankle'
 
 def get_data_files():
     data_files = []
@@ -41,7 +41,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'bxi_example_py_trunk = bxi_example_py_trunk.bxi_example:main',
+            'bxi_example_py_ankle = bxi_example_py_ankle.bxi_example:main',
         ],
     },
 )

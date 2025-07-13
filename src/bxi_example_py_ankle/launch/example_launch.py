@@ -7,14 +7,14 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
 
-    xml_file_name = "model/xml/elf2-trunk/elf2_trunk_dof25.xml"
+    xml_file_name = "model/xml/elf2-ankle/elf2_ankle_dof25.xml"
     xml_file = os.path.join(get_package_share_path("description"), xml_file_name)
 
     policy_file_name = "policy/policy.jit"
-    policy_file = os.path.join(get_package_share_path("bxi_example_py_trunk"), policy_file_name)
+    policy_file = os.path.join(get_package_share_path("bxi_example_py_ankle"), policy_file_name)
 
     onnx_file_name = "policy/model.onnx"
-    onnx_file = os.path.join(get_package_share_path("bxi_example_py_trunk"), onnx_file_name)
+    onnx_file = os.path.join(get_package_share_path("bxi_example_py_ankle"), onnx_file_name)
 
     return LaunchDescription(
         [
@@ -31,9 +31,9 @@ def generate_launch_description():
             ),
 
             Node(
-                package="bxi_example_py_trunk",
-                executable="bxi_example_py_trunk",
-                name="bxi_example_py_trunk",
+                package="bxi_example_py_ankle",
+                executable="bxi_example_py_ankle",
+                name="bxi_example_py_ankle",
                 output="screen",
                 parameters=[
                     {"/topic_prefix": "simulation/"},
