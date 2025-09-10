@@ -40,12 +40,13 @@ using namespace std;
 #define JS_LEFT_ARM_BT      6
 #define JS_MODE_BT          7
 #define JS_START_BT 13
+#define JS_START2_BT 14
 #endif
 
 #define AXIS_DEAD_ZONE  1000
 
-#define MIN_SPEED_X -0.8
-#define MAX_SPEED_X 0.8
+#define MIN_SPEED_X -0.5
+#define MAX_SPEED_X 1.0
 #define MIN_SPEED_Y -0.4
 #define MAX_SPEED_Y 0.4
 #define MIN_SPEED_R -0.6
@@ -53,9 +54,9 @@ using namespace std;
 
 #define AXIS_VALUE_MAX 32767
 
-#define STAND_HEIGHT 0.85
-#define STAND_HEIGHT_MIN    0.75
-#define STAND_HEIGHT_MAX    0.88
+#define STAND_HEIGHT 1.0
+#define STAND_HEIGHT_MIN    1.0
+#define STAND_HEIGHT_MAX    3.0
 
 class COMPublisher : public rclcpp::Node{
 public:
@@ -198,6 +199,7 @@ private:
                             system("killall -SIGINT bxi_example_py");
                             system("killall -SIGINT bxi_example_py_trunk");
                             system("killall -SIGINT bxi_example_py_ankle");
+                            system("killall -SIGINT bxi_example_py_foot");
                             system("killall -SIGINT hardware");
                             system("killall -SIGINT hardware_trunk");
                             system("killall -SIGINT hardware_trunk_neck");
@@ -209,7 +211,15 @@ private:
                         break;
                         case JS_START_BT:{
                             system("mkdir -p /var/log/bxi_log");
-                            system("ros2 launch bxi_example_py_ankle example_launch_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                            system("ros2 launch bxi_example_py_foot example_launch_walk_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                            printf("run robot\n");//robot_controller
+
+                            reset_value();
+                        }
+                        break;
+                        case JS_START2_BT:{
+                            system("mkdir -p /var/log/bxi_log");
+                            system("ros2 launch bxi_example_py_foot example_launch_run_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
                             printf("run robot\n");//robot_controller
 
                             reset_value();
@@ -217,7 +227,7 @@ private:
                         break;
                         case JS_HEIGHT_UPPER_BT:{
                             const std::lock_guard<std::mutex> guard(lock_);
-                            stand_height += 0.01;
+                            stand_height += 0.2;
                             if (stand_height > STAND_HEIGHT_MAX)
                             {
                                 stand_height = STAND_HEIGHT_MAX;
@@ -227,7 +237,7 @@ private:
                         break;
                         case JS_HEIGHT_LOWER_BT:{
                             const std::lock_guard<std::mutex> guard(lock_);
-                            stand_height -= 0.01;
+                            stand_height -= 0.2;
                             if (stand_height < STAND_HEIGHT_MIN)
                             {
                                 stand_height = STAND_HEIGHT_MIN;
