@@ -9,10 +9,12 @@
 2. `description`:机器人描述文件，包含机器人`urdf`文件以及`meshe`文件
 3. `mujoco`:机器人仿真环境，用于提前验证算法，所有算法在真机运行之前必须使用仿真环境进行验证
 4. `hardware`:机器人硬件控制包，启动后本节点发布机器人所有传感器数据，并接收控制指令
+5. `hardware_arm`:纯上身版机器人硬件控制包，启动后本节点发布机器人上半身手臂信息，并接收控制指令
 * 控制程序代码，位于 `src/`目录：
 1. `src/bix_example`:机器人控制接口使用示例，实现初始化流程和基础的消息接收和发送
 2. `src/bix_example_py`:机器人强化学习控制示例`python`版,演示如何使用强化学习控制机器人
 3. `remote_controller`:遥控器，使用`xbox`手柄控制机器人移动，可以控制真机和仿真环境
+4. `src/bix_example_py_arm`:机器人上半身控制示例
 
 ## 使用说明
 
@@ -55,6 +57,9 @@
 3. 运行强化学习示例：
 * 运行`ros2 launch bxi_example_py example_launch.py`启动 模拟器 + 控制程序（强化学习版）    
 * 运行`ros2 launch bxi_example_py example_launch_hw.py`启动 真机 + 控制程序 （强化学习版）
+4. 上半身版硬件控制：
+* 运行上半身控制仿真 `ros2 launch bxi_example_py_arm example_launch.py`
+* 运行上半身控制真机 `ros2 launch bxi_example_py_arm example_launch_hw.py`
 
 ### 硬件保护
 硬件节点除了通信超时保护之外还带有扭矩保护，超速保护，位置保护
