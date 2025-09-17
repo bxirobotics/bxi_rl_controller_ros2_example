@@ -213,7 +213,8 @@ void RobotController::inner_loop()
 
         for (size_t i = 0; i < sizeof(joint_name) / sizeof(joint_name[0]); i++)
         {
-            if(i == 3 || i == 4 || i == 5 || i == 6){
+            if(i == 3){
+            // if(i == 3 || i == 4 || i == 5 || i == 6){
                 actuatorCmds.actuators_name.emplace_back(joint_name[i]);
                 actuatorCmds.pos.emplace_back(joint_pos[i] + std::sin(count_lowlevel * dt_ / 2.0 * M_PI * 2.0) * 0.5);
                 actuatorCmds.vel.emplace_back(0);
@@ -222,7 +223,8 @@ void RobotController::inner_loop()
                 actuatorCmds.kp.emplace_back(joint_kp[i]);
                 actuatorCmds.kd.emplace_back(joint_kd[i]);
 
-            }else if(i == 10 || i== 11 || i == 12 || i == 13){
+            }else if(i == 10){
+            // else if(i == 10 || i== 11 || i == 12 || i == 13){
                 actuatorCmds.actuators_name.emplace_back(joint_name[i]);
                 actuatorCmds.pos.emplace_back(joint_pos[i] - std::sin(count_lowlevel * dt_ / 2.0 * M_PI * 2.0) * 0.5);
                 actuatorCmds.vel.emplace_back(0);
