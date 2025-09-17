@@ -58,8 +58,8 @@
 * 运行`ros2 launch bxi_example_py example_launch.py`启动 模拟器 + 控制程序（强化学习版）    
 * 运行`ros2 launch bxi_example_py example_launch_hw.py`启动 真机 + 控制程序 （强化学习版）
 4. 上半身版硬件控制：
-* 运行上半身控制仿真 `ros2 launch bxi_example_py_arm example_launch.py`
-* 运行上半身控制真机 `ros2 launch bxi_example_py_arm example_launch_hw.py`
+* 运行上半身控制仿真 `ros2 launch bxi_example_arm example_launch.py`
+* 运行上半身控制真机 `ros2 launch bxi_example_arm example_launch_hw.py`
 
 ### 硬件保护
 硬件节点除了通信超时保护之外还带有扭矩保护，超速保护，位置保护
