@@ -34,10 +34,18 @@ The binary ROS2 packages of ROS2 environment and mujoco can be find here:[`bxi_r
 4. There is a global odometer topic `odm` in the simulation env, while this topic is not available in `hardware` environment.    
 5. There is `touch_sensor` in the simulation env, while the real foot touch sensor is under developement. Although `hardware` publishes touch forces, they are rough estimates. For higher precision requirements, estimation can be performed using the ground contact state estimation algorithm in quadruped robots.       
 
+<<<<<<< HEAD
 ### System Environment Setup   
 1. `Ubuntu 22.04`，with ROS2 version `humble`. `mujoco` requires `libglfw3-dev`.       
 2. Copy `./script/bxi-dev.rules` to `/etc/udev/rules.d/`
 3. To set up remote controller auto-start, edit `./script/ros_elf_launch.service`, copy to `/etc/systemd/system/`, and used the `systemctl` tool to enable the auto-start service.  
+=======
+### 版本说明
+1. `elf2-trunk`:精灵2原版，以躯干作为`base link`，七月之前发货均为此版本
+2. `elf2-ankle`:脚踝强化版，脚踝扭矩增大到`50Nm`，七月十五号之前发货为此版本
+3. `elf2-foot`:脚掌形状改为非对称，拟人脚掌，七月十五号后均为此版本（已弃用）
+4. `elf2-foot-v4`:继续沿用之前的圆形脚掌，脚掌前后长度改为非对称
+>>>>>>> origin/HEAD
 
 ### Startup Process
 In both simulation and hardware, the motors are in a disabled state when started, and all parameters are uncontrollable. The startup process consists of two steps:
