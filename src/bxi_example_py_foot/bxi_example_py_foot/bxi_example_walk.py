@@ -226,7 +226,7 @@ class BxiExample(Node):
         self.initialize_onnx(self.onnx_file)
         self.action[:] = self.inference_step(policy_input)
 
-        self.vx = 1.0
+        self.vx = 0.1
         self.vy = 0
         self.dyaw = 0
         self.stand_height = 1.
