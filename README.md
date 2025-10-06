@@ -22,8 +22,8 @@ The binary ROS2 packages of ROS2 environment and mujoco can be find here:[`bxi_r
 ### Descripiton Files
 1. `elf2-trunk`:Elf2 v1，`base link` is `trunk`(torso)，elf2-trunk_dof12: only 12 leg joints are free joints. dof25: all joints are free.
 2. `elf2-ankle`:Elf2 v2: ankles torques are increased `50Nm`.
-3. `elf2-foot`: Elf2 v3: sole changed: 1 shaping to human foot for wearing shoes. 2 symmetric soles change to asymmetric, like human feet.
-4. `elf2-footv4`: Elf2 v4: sole change : sole shape change back to regular rectangle with oval ends.    
+3. `elf2-foot`: Elf2 v3: sole changed: 1 shaping to human foot for wearing shoes. 2 symmetric soles change to asymmetric, like human feet.(deprecated)
+4. `elf2-footv4`: Elf2 v4: sole change : sole shape change back to regular rectangle with oval ends. Asymmetric sole.   
 5. `elf2-arm`: arms only.    
 6. `elf3_prev_dof20` : Elf3 preview version with dof20.
 
