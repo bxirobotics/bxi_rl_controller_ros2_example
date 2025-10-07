@@ -10,20 +10,21 @@ using namespace std::chrono_literals;
 using namespace std;
 
 #if 0  //PS4 JS
-#define JS_VELX_AXIS 4
-#define JS_VELX_AXIS_DIR -1
+#define JS_VELX_AXIS 4  // index of joystick data, used for axis contro, vel x
+#define JS_VELX_AXIS_DIR -1  // if it's reverse
 #define JS_VELY_AXIS 0
 #define JS_VELY_AXIS_DIR -1
-#define JS_VELR_AXIS 6
+#define JS_VELR_AXIS 6    // index of joystick data, used for rotation contro, vel of rotation
 #define JS_VELR_AXIS_DIR -1
 
-#define JS_STOP_BT 10
+#define JS_STOP_BT 10    // index of joystick data, used for function contro: stop
 #define JS_GAIT_STAND_BT 0
 #define JS_GAIT_WALK_BT 2
 #define JS_HEIGHT_UPPER_BT  1
 #define JS_HEIGHT_LOWER_BT  3
 #define JS_MODE_BT          5
 #define JS_START_BT 9
+
 #else //XBOX JS
 #define JS_VELX_AXIS 3
 #define JS_VELX_AXIS_DIR -1
@@ -96,8 +97,8 @@ private:
 
     char _js_dev_name[128] = {0};
     int js_fd;
-    double js_axis[20] = {0};   //原始数据
-    double js_bt[20] = {0};
+    double js_axis[20] = {0};   // original data of js axis data
+    double js_bt[20] = {0};    // original data of ja button data
     std::thread js_loop_thread_;
 
     double velxy[2] = {0};      //x y速度
@@ -112,8 +113,9 @@ private:
 
     double vel_offset = 0.0;
 
-    void timer_callback(){
-        auto message = communication::msg::MotionCommands();{
+    // timer_callback to publish messages
+    void timer_callback(){                 
+        auto message = communication::msg::MotionCommands();{    // initialize a ROS2 message
             const std::lock_guard<std::mutex> guard(lock_);
 
             velxy[0] = (js_axis[JS_VELX_AXIS] * JS_VELX_AXIS_DIR) / (double)AXIS_VALUE_MAX;
@@ -181,15 +183,16 @@ private:
         while (1){
             ssize_t len;
             struct js_event event;
-
+            
+            // 读取js端口数据到event
             len = read(js_fd, &event, sizeof(event));
 
             if (len == sizeof(event)){
-                if (event.type & JS_EVENT_AXIS){
+                if (event.type & JS_EVENT_AXIS){  // axis event
                     //printf("Axis: %d -> %d\n", (int)event.number, (int)event.value);
                     js_axis[event.number] = event.value;
                 }
-                else if (event.type & JS_EVENT_BUTTON){
+                else if (event.type & JS_EVENT_BUTTON){ // button event
                     //printf("Button: %d -> %d\n", (int)event.number, (int)event.value);
                     if (event.value){
                         switch (event.number){

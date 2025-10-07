@@ -80,7 +80,7 @@ joint_kd = np.array([  # 指定关节的kd，和joint_name顺序一一对应
     1,1,1,1,0.8,
     1,1,1,1,0.8], dtype=np.float32)
 
-class env_cfg():
+class env_cfg():    
     """
     Configuration class for the XBotL humanoid robot.
     """
@@ -314,12 +314,12 @@ class BxiExample(Node):
         
         # ptyhon 与 rclpy 多线程不太友好，这里使用定时间+简易状态机运行a
         if self.step == 0:
-            self.robot_rest(1, False) # first reset
+            self.robot_reset(1, False) # first reset
             print('robot reset 1!')
             self.step = 1
             return
         elif self.step == 1 and self.loop_count >= (10./self.dt): # 延迟10s
-            self.robot_rest(2, True) # first reset
+            self.robot_reset(2, True) # first reset
             print('robot reset 2!')
             self.loop_count = 0
             self.step = 2
@@ -419,7 +419,8 @@ class BxiExample(Node):
 
         self.loop_count += 1
     
-    def robot_rest(self, reset_step, release):
+    # reset the robot in both hardware or simulation
+    def robot_reset(self, reset_step, release):
         req = bxiSrv.RobotReset.Request()
         req.reset_step = reset_step
         req.release = release
@@ -429,10 +430,11 @@ class BxiExample(Node):
             print('service not available, waiting again...')
             
         self.rest_srv.call_async(req)
-        
-    def sim_robot_rest(self):        
+    
+    # Not used. rest with given pose.   
+    def sim_robot_reset(self):        
         req = bxiSrv.SimulationReset.Request()
-        req.header.frame_id = robot_name
+        req.header.frame_id = robot_name    # has to include robot name
 
         base_pose = Pose()
         base_pose.position.x = 0.0

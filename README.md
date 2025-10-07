@@ -41,8 +41,8 @@ The binary ROS2 packages of ROS2 environment and mujoco can be find here:[`bxi_r
 
 ### Startup Process
 In both simulation and hardware, the motors are in a disabled state when started, and all parameters are uncontrollable. The startup process consists of two steps:
-1. Enable position control of the motors. The motors can implement position control by setting three parameters:`pos kp kd`,    
-2. Enable all control parameters. The motors can be set with `pos vel tor kp kd`,    
+1. Enable position control of the motors. The motors can implement position control by setting three parameters:`pos kp kd`. As of Elf2 hardware, when received the 1st `reset` command, it's joints rotate to zero position and keep it for 10 seconds.              
+2. Enable all control parameters. The motors can be set with `pos vel tor kp kd`. As of Elf2 hardware, when received the 2nd `reset` command, it's joints start taking control input.       
 For startup examples, please refer to src/bxi_example_py.    
 
 ### Running a demo control program 
