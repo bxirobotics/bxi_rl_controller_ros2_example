@@ -69,7 +69,7 @@
 
   <worldbody>
     <!-- <body name="torso_link" pos="0 0 1.0" childclass="elf3"> -->
-    <body name="torso_link" pos="0 0 1.2" childclass="elf3">
+    <body name="torso_link" pos="0 0 1.1" childclass="elf3">
       <light pos="0 0 2" mode="trackcom"/>
       <camera name="tracking" pos="1.734 -1.135 .35" xyaxes="0.552 0.834 -0.000 -0.170 0.112 0.979" mode="trackcom"/>
       <inertial pos="-0.001401 0.00016468 -0.031753" mass="8.0753" fullinertia="0.11153377 0.08644757 0.04682107 -4.02e-06 0.00198616 -9.243e-05"/>
