@@ -53,6 +53,7 @@ setup(
     entry_points={
         'console_scripts': [
             'bxi_example_py_elf3_run = bxi_example_py_elf3.bxi_example_run:main',
+            'bxi_example_py_elf3_mjlab = bxi_example_py_elf3.bxi_example_mjlab:main',
         ],
     },
 )

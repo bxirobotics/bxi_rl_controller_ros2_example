@@ -5,7 +5,7 @@
   
   <default>
     <default class="elf3">
-      <joint frictionloss="0.1" solimplimit="0.97 0.995 0.001" armature="0.01" damping="0.5"/>
+      <joint frictionloss="0.1" solimplimit="0.97 0.995 0.001" armature="0.03" damping="1"/>
       <default class="visual">
         <geom group="2" type="mesh" density="0" material="silver" contype="0" conaffinity="0"/>
       </default>
@@ -183,13 +183,13 @@
                         <joint name="r_ankle_x_joint" pos="0 0 0" axis="1 0 0" range="-0.34907 0.34907" />
                         <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_ankle_x_link" />
                         <site name="rf_tc" pos="0.05 0 -0.05" size="0.01" />
-                        <geom name="r_foot1_collision" class="foot_capsule" fromto="0.12 -0.026 -0.025 -0.05 -0.027 -0.025"/>
-                        <geom name="r_foot2_collision" class="foot_capsule" fromto="-0.068 -0.018 -0.025 0.127 -0.018 -0.025"/>
-                        <geom name="r_foot3_collision" class="foot_capsule" fromto="-0.072 -0.01 -0.025 0.13 -0.01 -0.025"/>
-                        <geom name="r_foot4_collision" class="foot_capsule" fromto="-0.074 0 -0.025 0.132 0 -0.025"/>
-                        <geom name="r_foot5_collision" class="foot_capsule" fromto="-0.072 0.01 -0.025 0.13 0.01 -0.025"/>
-                        <geom name="r_foot6_collision" class="foot_capsule" fromto="-0.068 0.018 -0.025 0.127 0.018 -0.025"/>
-                        <geom name="r_foot7_collision" class="foot_capsule" fromto="0.12 0.026 -0.025 -0.05 0.026 -0.025"/>
+                        <geom name="r_foot1_collision" class="foot_capsule" fromto="-0.06  -0.03 -0.03   0.12  -0.03 -0.03"/>
+                        <geom name="r_foot2_collision" class="foot_capsule" fromto="-0.07  -0.02 -0.03   0.13  -0.02 -0.03"/>
+                        <geom name="r_foot3_collision" class="foot_capsule" fromto="-0.075 -0.01 -0.03   0.135 -0.01 -0.03"/>
+                        <geom name="r_foot4_collision" class="foot_capsule" fromto="-0.08      0 -0.03   0.14      0 -0.03"/>
+                        <geom name="r_foot5_collision" class="foot_capsule" fromto="-0.075  0.01 -0.03   0.135  0.01 -0.03"/>
+                        <geom name="r_foot6_collision" class="foot_capsule" fromto="-0.07   0.02 -0.03   0.13   0.02 -0.03"/>
+                        <geom name="r_foot7_collision" class="foot_capsule" fromto="-0.06   0.03 -0.03   0.12   0.03 -0.03"/>
                       </body>
                     </body>
                   </body>
