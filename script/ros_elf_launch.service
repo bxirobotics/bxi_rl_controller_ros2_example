@@ -10,4 +10,3 @@ WorkingDirectory=/home/bxi
 
 [Install]
 WantedBy=default.target
-~
