@@ -8,7 +8,7 @@ from scipy.spatial.transform import Rotation
 
 dof_num = 29
 
-class RunMotionPolicy:
+class NormalMotionPolicy:
     def __init__(self, model_onnx_path: str):
         """
         Args:
@@ -16,11 +16,10 @@ class RunMotionPolicy:
             
         Usage:
             ##1.初始化模型
-            self.dance_policy = RunMotionPolicy("path/to/model.onnx")
+            self.normal_policy = NormalMotionPolicy("path/to/model.onnx")
                 
             ##2.推理动作
-            if self.dance_policy.timestep < self.dance_policy.motionpos.shape[0]:
-                self.target_dof_pos = self.dance_policy.inference_step(q, dq, quat, omega)
+            self.target_dof_pos = self.infer_step(self, q, dq, quat, omega, cmd):
         """
         self.num_obs = 96
         self.num_action = dof_num
