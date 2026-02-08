@@ -5,7 +5,7 @@
   
   <default>
     <default class="elf3">
-      <joint frictionloss="0.1" solimplimit="0.97 0.995 0.001" armature="0.03" damping="1"/>
+      <joint frictionloss="0.1" solimplimit="0.97 0.995 0.001" armature="0.01"/>
       <default class="visual">
         <geom group="2" type="mesh" density="0" material="silver" contype="0" conaffinity="0"/>
       </default>
@@ -19,7 +19,7 @@
     </default>
   </default>
 
-  <option timestep="0.001" />
+  <!-- <option timestep="0.001" /> -->
 
   <asset>
     <material name="silver" rgba="0.7 0.7 0.7 1"/>
@@ -80,60 +80,65 @@
       <!-- <site name="imu_in_pelvis" size="0.01" pos="0.04525 0 -0.08339"/> -->
        <site name="imu_in_pelvis" size="0.01" pos="0.0 0 0.0"/>
       <!-- fromto="ux uy uz lx ly lz" -->
-      <geom name="torso_collision" class="collision" size="0.1" fromto="0.01 0 0.08 0.0 0 -0.12"/>
+      <geom name="torso_collision" class="collision" size="0.09" fromto="0.0 0 -0.12 0.0 0 0.08"/>
+      <geom name="torso_2_collision" class="collision" size="0.08" fromto="0.0 -0.025 -0.12   0.0 0.025 -0.12"/>
       <!-- <geom name="head_collision" class="collision"  size="0.06" fromto="0.01 0 0.08 0.01 0 0.0"/> -->
 
       <!-- Waist Chain -->
       <body name="waist_y_link" pos="0 0 -0.2265">
         <inertial pos="0 0 0" quat="0 0.707107 0 0.707107" mass="0.0661518" diaginertia="2.799e-05 1.845e-05 1.104e-05"/>
-        <joint name="waist_y_joint" pos="0 0 0" axis="0 1 0" range="-0.5236 0.5236"  damping="5.0"/>
+        <joint name="waist_y_joint" pos="0 0 0" axis="0 1 0" range="-0.5236 0.5236" damping="5.0"/>
+        <!-- <joint name="waist_y_joint" pos="0 0 0" axis="0 1 0" range="-0.5236 0.5236" /> -->
         <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="waist_y_link"/>
         
         <body name="waist_x_link">
           <inertial pos="-0.0105041 6.39183e-08 -0.0167973" quat="0 0.79615 0 0.605099" mass="0.215643" diaginertia="0.000266195 0.00017942 0.000134265"/>
           <joint name="waist_x_joint" pos="0 0 0" axis="1 0 0" range="-0.2618 0.2618" damping="5.0"/>
+          <!-- <joint name="waist_x_joint" pos="0 0 0" axis="1 0 0" range="-0.2618 0.2618" /> -->
           <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="waist_x_link"/>
           
           <body name="waist_z_link">
             <inertial pos="-1.01283e-06 1.1248e-05 -0.126152" quat="1 6.14768e-11 -6.32993e-05 -9.71208e-07" mass="4.95603" diaginertia="0.0210971 0.0159488 0.013672"/>
-            <joint name="waist_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798"  damping="5.0"/>
+            <joint name="waist_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" damping="5.0"/>
             <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="waist_z_link" />
            
             <!-- <geom name="torso_collision1" class="collision" type="capsule" size="0.073" fromto="0.005 -0.032 .22 0.005 0.032 .22"/> -->
             <!-- <geom name="torso_collision2" class="collision" type="capsule" size="0.065" fromto="0.005 -0.02 0.065 0.005 0.02 0.065"/> -->
-            <geom name="waist_collision" class="collision" type="capsule" size="0.05" fromto="0.0 -0.0 -0.16 0.0 0.0 -0.06"/>
+            <geom name="waist_z_1_collision" class="collision" size="0.055" fromto="0 -0.03 -0.156   0 0.03 -0.156"/>
+            <geom name="waist_z_2_collision" class="collision" size="0.055" fromto="0 0 -0.156   0 0 -0.05"/>
             <!-- <geom name="head_collision" class="collision" type="capsule" size="0.06" fromto="0.05 -0.02 0.5 0.05 0.02 0.5"/> -->
 
             <!-- l Leg Chain -->
             <body name="l_hip_y_link" pos="0 0.136 -0.156">
               <inertial pos="-0.021777 -0.00277946 0.000699282" quat="0.796416 0.601232 0.0517671 0.039512" mass="1.70385" diaginertia="0.00281533 0.00218511 0.0019944"/>
-              <joint name="l_hip_y_joint" pos="0 0 0" axis="0 1 0" range="-2.8798 2.8798" />
+              <joint name="l_hip_y_joint" pos="0 0 0" axis="0 1 0" range="-2.8798 2.8798" damping="3.0"/>
               <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_hip_y_link" />
               
               <body name="l_hip_x_link">
                 <inertial pos="0.0163074 1.05982e-08 -0.0384681" quat="0.997755 0 0.066975 0" mass="0.214152" diaginertia="0.000346601 0.00030038 0.000125989"/>
-                <joint name="l_hip_x_joint" pos="0 0 0" axis="1 0 0" range="-0.48869 3.0543" />
+                <joint name="l_hip_x_joint" pos="0 0 0" axis="1 0 0" range="-0.48869 3.0543" damping="3.0"/>
                 <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_hip_x_link" />
-                <geom name="l_hip_x_collision" class="collision" size="0.05" fromto="0.02 0 0 0.02 0 -0.2"/>
+                <geom name="l_hip_x_collision" class="collision" size="0.05" fromto="-0.035 0 0   0.0 0 0"/>
                 <body name="l_hip_z_link">
                   <inertial pos="0.00128858 -0.00894579 -0.233969" quat="0.684622 -0.027855 0.0299671 0.727749" mass="2.84278" diaginertia="0.0321197 0.031121 0.0032734"/>
-                  <joint name="l_hip_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" />
+                  <joint name="l_hip_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" damping="2.0"/>
                   <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_hip_z_link" />
-                  
+                  <geom name="l_hip_z_1_collision" class="collision" size="0.05" fromto="0.0 0 -0.12   0.0 0 -0.32"/>
+                  <geom name="l_hip_z_2_collision" class="collision" size="0.05" fromto="0.0 -0.025 -0.32   0.0 0 -0.32"/>
                   <body name="l_knee_y_link" pos="0 0 -0.32">
                     <inertial pos="0.00743378 0.00339915 -0.143783" quat="0.824886 -0.0250601 0.0341455 0.563709" mass="1.77391" diaginertia="0.00878814 0.00856731 0.00138834"/>
-                    <joint name="l_knee_y_joint" pos="0 0 0" axis="0 1 0" range="-0.087266 2.618" />
+                    <joint name="l_knee_y_joint" pos="0 0 0" axis="0 1 0" range="-0.087266 2.618" damping="2.0"/>
                     <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_knee_y_link" />
-                    <geom name="l_knee_y_collision" class="collision" size="0.04" fromto="0.02 0 0 0.02 0 -0.25"/>
+                    <geom name="l_knee_y_collision" class="collision" size="0.05" fromto="0.0 0 -0.12   0.0 0 -0.26"/>
                     
                     <body name="l_ankle_y_link" pos="0 0 -0.32">
                       <inertial pos="0 0 -4.1832e-09" quat="0.5 0.5 -0.5 0.5" mass="0.0126899" diaginertia="1.55e-06 1.31e-06 5.9e-07"/>
-                      <joint name="l_ankle_y_joint" pos="0 0 0" axis="0 1 0" range="-0.87266 0.7854" />
+                      <joint name="l_ankle_y_joint" pos="0 0 0" axis="0 1 0" range="-0.87266 0.7854" damping="1.0"/>
                       <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_ankle_y_link" />
                       
                       <body name="l_ankle_x_link">
                         <inertial pos="0.0275442 6.46069e-10 -0.0292972" quat="0 0.713286 0 0.700873" mass="0.298065" diaginertia="0.00150765 0.00138193 0.000163046"/>
-                        <joint name="l_ankle_x_joint" pos="0 0 0" axis="1 0 0" range="-0.34907 0.34907" />
+                        <joint name="l_ankle_x_joint" pos="0 0 0" axis="1 0 0" range="-0.34907 0.34907" damping="1.0"/>
                         <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_ankle_x_link" />
                         <site name="lf_tc" pos="0.05 0 -0.05" size="0.01" />
                         <geom name="l_foot1_collision" class="foot_capsule" fromto="0.12 -0.026 -0.025 -0.05 -0.027 -0.025"/>
@@ -153,43 +158,44 @@
             <!-- r Leg Chain -->
             <body name="r_hip_y_link" pos="0 -0.136 -0.156">
               <inertial pos="-0.021777 0.00272279 0.000732" quat="0.602526 0.795307 -0.042061 -0.0517694" mass="1.70385" diaginertia="0.00281648 0.0021855 0.00199374"/>
-              <joint name="r_hip_y_joint" pos="0 0 0" axis="0 1 0" range="-2.8798 2.8798" />
+              <joint name="r_hip_y_joint" pos="0 0 0" axis="0 1 0" range="-2.8798 2.8798" damping="3.0"/>
               <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_hip_y_link" />
               
               <body name="r_hip_x_link">
                 <inertial pos="0.0163074 1.05982e-08 -0.0384681" quat="0.997755 0 0.066975 0" mass="0.214152" diaginertia="0.000346601 0.00030038 0.000125989"/>
-                <joint name="r_hip_x_joint" pos="0 0 0" axis="1 0 0" range="-3.0543 0.48869" />
+                <joint name="r_hip_x_joint" pos="0 0 0" axis="1 0 0" range="-3.0543 0.48869" damping="3.0"/>
                 <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_hip_x_link" />
-                <geom name="r_hip_x_collision" class="collision" size="0.05" fromto="0.02 0 0 0.02 0 -0.2"/>
+                <geom name="r_hip_x_collision" class="collision" size="0.05" fromto="-0.035 0 0   0.0 0 0"/>
                 
                 <body name="r_hip_z_link">
                   <inertial pos="0.00128913 0.00895213 -0.233968" quat="0.727741 0.0299428 -0.0278367 0.684632" mass="2.84278" diaginertia="0.0321189 0.0311203 0.00327334"/>
-                  <joint name="r_hip_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" />
+                  <joint name="r_hip_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" damping="2.0"/>
                   <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_hip_z_link" />
-                  
+                  <geom name="r_hip_z_1_collision" class="collision" size="0.05" fromto="0.0 0 -0.12   0.0 0 -0.32"/>
+                  <geom name="r_hip_z_2_collision" class="collision" size="0.05" fromto="0.0 0.025 -0.32   0.0 0 -0.32"/>
                   <body name="r_knee_y_link" pos="0 0 -0.32">
                     <inertial pos="0.00743378 -0.00337367 -0.143783" quat="0.561231 0.034056 -0.025158 0.826576" mass="1.77391" diaginertia="0.00878933 0.00856646 0.00138868"/>
-                    <joint name="r_knee_y_joint" pos="0 0 0" axis="0 1 0" range="-0.087266 2.618" />
+                    <joint name="r_knee_y_joint" pos="0 0 0" axis="0 1 0" range="-0.087266 2.618" damping="2.0"/>
                     <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_knee_y_link" />
-                    <geom name="r_knee_y_collision" class="collision" size="0.04" fromto="0.02 0 0 0.02 0 -0.25"/>
+                    <geom name="r_knee_y_collision" class="collision" size="0.05" fromto="0.0 0 -0.12   0.0 0 -0.26"/>
                     
                     <body name="r_ankle_y_link" pos="0 0 -0.32">
                       <inertial pos="0 0 -4.18322e-09" quat="0.5 0.5 -0.5 0.5" mass="0.0126899" diaginertia="1.55e-06 1.31e-06 5.9e-07"/>
-                      <joint name="r_ankle_y_joint" pos="0 0 0" axis="0 1 0" range="-0.87266 0.7854" />
+                      <joint name="r_ankle_y_joint" pos="0 0 0" axis="0 1 0" range="-0.87266 0.7854" damping="1.0"/>
                       <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_ankle_y_link" />
                       
                       <body name="r_ankle_x_link">
                         <inertial pos="0.0275442 6.46053e-10 -0.0292972" quat="0 0.713286 0 0.700873" mass="0.298065" diaginertia="0.00150765 0.00138193 0.000163046"/>
-                        <joint name="r_ankle_x_joint" pos="0 0 0" axis="1 0 0" range="-0.34907 0.34907" />
+                        <joint name="r_ankle_x_joint" pos="0 0 0" axis="1 0 0" range="-0.34907 0.34907" damping="1.0"/>
                         <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_ankle_x_link" />
                         <site name="rf_tc" pos="0.05 0 -0.05" size="0.01" />
-                        <geom name="r_foot1_collision" class="foot_capsule" fromto="-0.06  -0.03 -0.03   0.12  -0.03 -0.03"/>
-                        <geom name="r_foot2_collision" class="foot_capsule" fromto="-0.07  -0.02 -0.03   0.13  -0.02 -0.03"/>
-                        <geom name="r_foot3_collision" class="foot_capsule" fromto="-0.075 -0.01 -0.03   0.135 -0.01 -0.03"/>
-                        <geom name="r_foot4_collision" class="foot_capsule" fromto="-0.08      0 -0.03   0.14      0 -0.03"/>
-                        <geom name="r_foot5_collision" class="foot_capsule" fromto="-0.075  0.01 -0.03   0.135  0.01 -0.03"/>
-                        <geom name="r_foot6_collision" class="foot_capsule" fromto="-0.07   0.02 -0.03   0.13   0.02 -0.03"/>
-                        <geom name="r_foot7_collision" class="foot_capsule" fromto="-0.06   0.03 -0.03   0.12   0.03 -0.03"/>
+                        <geom name="r_foot1_collision" class="foot_capsule" fromto="0.12 -0.026 -0.025 -0.05 -0.027 -0.025"/>
+                        <geom name="r_foot2_collision" class="foot_capsule" fromto="-0.068 -0.018 -0.025 0.127 -0.018 -0.025"/>
+                        <geom name="r_foot3_collision" class="foot_capsule" fromto="-0.072 -0.01 -0.025 0.13 -0.01 -0.025"/>
+                        <geom name="r_foot4_collision" class="foot_capsule" fromto="-0.074 0 -0.025 0.132 0 -0.025"/>
+                        <geom name="r_foot5_collision" class="foot_capsule" fromto="-0.072 0.01 -0.025 0.13 0.01 -0.025"/>
+                        <geom name="r_foot6_collision" class="foot_capsule" fromto="-0.068 0.018 -0.025 0.127 0.018 -0.025"/>
+                        <geom name="r_foot7_collision" class="foot_capsule" fromto="0.12 0.026 -0.025 -0.05 0.026 -0.025"/>
                       </body>
                     </body>
                   </body>
@@ -203,41 +209,42 @@
       <!-- l Arm Chain -->
       <body name="l_shoulder_y_link" pos="0 0.178 0.087">
         <inertial pos="-0.0194828 -0.00304252 0.000461368" quat="0.751186 0.652944 0.0750571 0.0612398" mass="0.938483" diaginertia="0.00102195 0.000817739 0.000721669"/>
-        <joint name="l_shoulder_y_joint" pos="0 0 0" axis="0 1 0" range="-2.8798 2.8798" />
+        <joint name="l_shoulder_y_joint" pos="0 0 0" axis="0 1 0" range="-2.8798 2.8798" damping="2.0"/>
         <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_shoulder_y_link" />
         
         <body name="l_shoulder_x_link">
           <inertial pos="0.00939873 1.86326e-09 -0.0272171" quat="0.994844 0 0.101416 0" mass="0.130651" diaginertia="0.000139965 0.00011597 5.88054e-05"/>
-          <joint name="l_shoulder_x_joint" pos="0 0 0" axis="1 0 0" range="-0.34907 3.0543" />
+          <joint name="l_shoulder_x_joint" pos="0 0 0" axis="1 0 0" range="-0.34907 3.0543" damping="2.0"/>
           <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_shoulder_x_link" />
-          
+          <geom name="l_shoulder_x_collision" class="collision" size="0.04" fromto="-0.03 0 0   0.0 0 0"/>
           <body name="l_shoulder_z_link">
             <inertial pos="-0.000948901 -0.00269014 -0.207899" quat="0.734549 -0.0171253 0.014469 0.678185" mass="1.29694" diaginertia="0.00804984 0.00776246 0.000985623"/>
-            <joint name="l_shoulder_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" />
+            <joint name="l_shoulder_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" damping="1.5"/>
             <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_shoulder_z_link" />
-            <geom name="l_shoulder_yaw_collision" class="collision" type="capsule" size="0.035" fromto="0 0 -0.15 0 0 0.0"/>
+            <geom name="l_shoulder_z_1_collision" class="collision" size="0.035" fromto="0 0 -0.08   0 0 -0.27"/>
+            <geom name="l_shoulder_z_2_collision" class="collision" size="0.04" fromto="0 -0.015 -0.256   0 0.01 -0.256"/>
             
             <body name="l_elbow_y_link" pos="0 0 -0.256">
               <inertial pos="0.0294656 0.0164098 -3.34e-10" quat="0.5 0.5 0.5 0.5" mass="0.0938669" diaginertia="8.534e-05 8.443e-05 4.361e-05"/>
-              <joint name="l_elbow_y_joint" pos="0 0 0" axis="0 1 0" range="-0.95993 1.6581" />
+              <joint name="l_elbow_y_joint" pos="0 0 0" axis="0 1 0" range="-0.95993 1.6581" damping="1.0"/>
               <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_elbow_y_link" />
-              <geom name="l_elbow_yaw_collision" class="collision" type="capsule" size="0.035" fromto="-0.01 0 -0.01 0.18 0 -0.01"/>
+              <geom name="l_elbow_y_collision" class="collision" size="0.04" fromto="0.08 0 0   0.2 0 0"/>
               
               <body name="l_wrist_x_link" pos="0.256 0 0">
                 <inertial pos="-0.124483 -0.00110033 3.42813e-05" quat="0.5 0.5 0.5 0.5" mass="0.658675" diaginertia="0.00208306 0.001834 0.00054605"/>
-                <joint name="l_wrist_x_joint" pos="0 0 0" axis="1 0 0" range="-2.8798 2.8798" />
+                <joint name="l_wrist_x_joint" pos="0 0 0" axis="1 0 0" range="-2.8798 2.8798" damping="0.5"/>
                 <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_wrist_x_link"/>
                 
                 <body name="l_wrist_y_link">
                   <inertial pos="-1.24357e-05 -0.000129932 -0.00298556" quat="0.707107 0 0 0.707107" mass="0.243805" diaginertia="0.00018676 0.00018369 0.00014174"/>
-                  <joint name="l_wrist_y_joint" pos="0 0 0" axis="0 1 0" range="-1.309 1.309" />
+                  <joint name="l_wrist_y_joint" pos="0 0 0" axis="0 1 0" range="-1.309 1.309" damping="0.5"/>
                   <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_wrist_y_link"/>
                   
                   <body name="l_wrist_z_link">
                     <inertial pos="0.0308695 1.39176e-09 0.0141752" quat="0.92388 0 0.382683 0" mass="0.106561" diaginertia="8.685e-05 7.12e-05 7.068e-05"/>
-                    <joint name="l_wrist_z_joint" pos="0 0 0" axis="0 0 1" range="-0.7854 0.7854" />
+                    <joint name="l_wrist_z_joint" pos="0 0 0" axis="0 0 1" range="-0.7854 0.7854" damping="0.5"/>
                     <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="l_wrist_z_link"/>
-                    <geom name="l_hand_collision" class="collision" type="capsule" size="0.05" fromto="0.02 0 0 0.1 0 0"/>
+                    <geom name="l_wrist_z_collision" class="collision" type="sphere" size="0.03" pos="0.04 0 0"/>
                   </body>
                 </body>
               </body>
@@ -249,41 +256,42 @@
       <!-- r Arm Chain -->
       <body name="r_shoulder_y_link" pos="0 -0.178 0.087">
         <inertial pos="-0.0194828 0.00304195 0.00046038" quat="0.652921 0.751201 -0.0612164 -0.0751263" mass="0.938483" diaginertia="0.00102196 0.000817748 0.00072166"/>
-        <joint name="r_shoulder_y_joint" pos="0 0 0" axis="0 1 0" range="-2.8798 2.8798" />
+        <joint name="r_shoulder_y_joint" pos="0 0 0" axis="0 1 0" range="-2.8798 2.8798" damping="2.0"/>
         <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_shoulder_y_link" />
         
         <body name="r_shoulder_x_link">
           <inertial pos="0.00939873 1.86336e-09 -0.0272171" quat="0.994844 0 0.101416 0" mass="0.130651" diaginertia="0.000139965 0.00011597 5.88054e-05"/>
-          <joint name="r_shoulder_x_joint" pos="0 0 0" axis="1 0 0" range="-3.0543 0.34907" />
+          <joint name="r_shoulder_x_joint" pos="0 0 0" axis="1 0 0" range="-3.0543 0.34907" damping="2.0"/>
           <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_shoulder_x_link" />
-          
+          <geom name="r_shoulder_x_collision" class="collision" size="0.04" fromto="-0.03 0 0   0.0 0 0"/>
           <body name="r_shoulder_z_link">
             <inertial pos="-0.000936876 0.00267273 -0.207892" quat="0.677531 0.014495 -0.0172678 0.735148" mass="1.29694" diaginertia="0.00804923 0.00776163 0.000985616"/>
-            <joint name="r_shoulder_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" />
+            <joint name="r_shoulder_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" damping="1.5"/>
             <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_shoulder_z_link" />
-            <geom name="r_shoulder_yaw_collision" class="collision" type="capsule" size="0.035" fromto="0 0 -0.15 0 0 0.0"/>
+            <geom name="r_shoulder_z_1_collision" class="collision" size="0.035" fromto="0 0 -0.08   0 0 -0.27"/>
+            <geom name="r_shoulder_z_2_collision" class="collision" size="0.04" fromto="0 0.015 -0.256   0 -0.01 -0.256"/>
             
             <body name="r_elbow_y_link" pos="0 0 -0.256">
               <inertial pos="0.0294656 -0.0164098 -6.94346e-10" quat="0.5 0.5 0.5 0.5" mass="0.0938669" diaginertia="8.534e-05 8.443e-05 4.361e-05"/>
-              <joint name="r_elbow_y_joint" pos="0 0 0" axis="0 1 0" range="-0.95993 1.6581" />
+              <joint name="r_elbow_y_joint" pos="0 0 0" axis="0 1 0" range="-0.95993 1.6581" damping="1.0"/>
               <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_elbow_y_link" />
-              <geom name="r_elbow_yaw_collision" class="collision" type="capsule" size="0.035" fromto="-0.01 0 -0.01 0.18 0 -0.01"/>
+              <geom name="r_elbow_y_collision" class="collision" size="0.04" fromto="0.08 0 0   0.2 0 0"/>
               
               <body name="r_wrist_x_link" pos="0.256 0 0">
                 <inertial pos="-0.124486 0.00109279 3.42822e-05" quat="0.5 0.5 0.5 0.5" mass="0.658675" diaginertia="0.0020829 0.00183383 0.00054606"/>
-                <joint name="r_wrist_x_joint" pos="0 0 0" axis="1 0 0" range="-2.8798 2.8798" />
+                <joint name="r_wrist_x_joint" pos="0 0 0" axis="1 0 0" range="-2.8798 2.8798" damping="0.5"/>
                 <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_wrist_x_link"/>
                 
                 <body name="r_wrist_y_link">
                   <inertial pos="-7.9397e-06 3.73154e-05 -0.00298556" quat="0.707107 0 0 0.707107" mass="0.243805" diaginertia="0.00018676 0.00018369 0.00014174"/>
-                  <joint name="r_wrist_y_joint" pos="0 0 0" axis="0 1 0" range="-1.309 1.309" />
+                  <joint name="r_wrist_y_joint" pos="0 0 0" axis="0 1 0" range="-1.309 1.309" damping="0.5"/>
                   <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_wrist_y_link"/>
                   
                   <body name="r_wrist_z_link">
                     <inertial pos="0.0308695 1.11972e-09 0.0141752" quat="0.92388 0 0.382683 0" mass="0.106561" diaginertia="8.685e-05 7.12e-05 7.068e-05"/>
-                    <joint name="r_wrist_z_joint" pos="0 0 0" axis="0 0 1" range="-0.7854 0.7854" />
+                    <joint name="r_wrist_z_joint" pos="0 0 0" axis="0 0 1" range="-0.7854 0.7854" damping="0.5"/>
                     <geom class="visual" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="r_wrist_z_link"/>
-                    <geom name="r_hand_collision" class="collision" type="capsule" size="0.05" fromto="0.02 0 0 0.1 0 0"/>
+                    <geom name="r_wrist_z_collision" class="collision" type="sphere" size="0.03" pos="0.04 0 0"/>
                 
                   </body>
                 </body>

@@ -33,15 +33,21 @@ using namespace std;
 #define JS_VELR_AXIS 6
 #define JS_VELR_AXIS_DIR -1
 
-#define JS_STOP_BT 11
-#define JS_GAIT_STAND_BT 0
-#define JS_GAIT_WALK_BT 4
-#define JS_HEIGHT_UPPER_BT  1
-#define JS_HEIGHT_LOWER_BT  3
-#define JS_LEFT_ARM_BT      6
-#define JS_MODE_BT          7
-#define JS_START_BT 13
-#define JS_START2_BT 14
+#define JS_STOP_BT          11      // 终止程序
+#define JS_START_BT         14      // 启动程序
+#define JS_SHIFT_1_BT       6       // SHIFT_1功能
+#define JS_SHIFT_2_BT       7       // SHIFT_2功能
+
+#define JS_SWITCH_X         3       // 暂停或继续跳舞
+                                    // 组合SHIFT_1：跳舞
+                                    // 组合SHIFT_2：正常模式，走路站立跑步
+#define JS_SWITCH_A         0       // 组合SHIFT_1：HOST起身
+                                    // 组合SHIFT_2：零力
+#define JS_SWITCH_B         1       //
+                                    // 组合SHIFT_2：
+#define JS_SWITCH_Y         4       // 
+
+#define JS_START2_BT        14
 #endif
 
 #define AXIS_DEAD_ZONE  1000
@@ -107,9 +113,21 @@ private:
     double height_filt = STAND_HEIGHT;
     double velr = 0;    //旋转速度
     double velr_filt = 0;
-    int mode = 0;
-    bool left_arm_toggle = false;   // 左手挥舞切换状态
-    bool right_arm_toggle = false;  // 右手握手切换状态
+
+    bool launch_lock = false;           // 防止多次启动程序，True时不允许启动程序。
+
+    bool shift_1_press = false;         // 长按改变状态，弹起恢复
+    bool shift_2_press = false;         // 长按改变状态，弹起恢复
+    // 按下shift2的变量
+    bool normal_mode = false;           // 按下改变状态，切换为普通模式，站立走路跑步
+    bool zero_torque_mode = false;      // 按下改变状态，切换为零力模式
+    bool pd_brake_mode = false;         // 按下改变状态，切换为pd抱死模式
+    bool initial_pos_mode = false;     // 按下改变状态，切换为初始位置模式
+    // 按下shift1的变量
+    bool host_mode = false;             // 按下改变状态，切换为host起身模式
+    bool dance_mode = false;            // 按下改变状态，切换为跳舞模式
+
+    bool dance_flag = false;            // 按下改变状态，暂停或继续跳舞
 
     double vel_offset = 0.0;
 
@@ -156,11 +174,25 @@ private:
             message.vel_des.x = velxy_filt[0] + vel_offset;
             message.vel_des.y = velxy_filt[1];
             message.yawdot_des = velr_filt;
-            message.mode = mode;
+            // message.mode = mode;
 
-            // 设置手臂控制标志
-            message.btn_6 = left_arm_toggle ? 1 : 0;    // BT6控制左手挥舞
-            message.btn_7 = right_arm_toggle ? 1 : 0;   // BT7控制右手握手
+            // shift2组合键
+            message.btn_1 = normal_mode ? 1 : 0;
+            message.btn_2 = zero_torque_mode ? 1 : 0;
+            message.btn_3 = pd_brake_mode ? 1 : 0;
+            message.btn_4 = initial_pos_mode ? 1 : 0;
+
+            // shift1组合键
+            message.btn_5 = dance_mode ? 1 : 0;
+            message.btn_6 = host_mode ? 1 : 0; 
+            // message.btn_7 = 
+            // message.btn_8 =  
+
+            // 纯按键
+            message.btn_9 = dance_flag ? 1 : 0;
+            // message.btn_10 =
+            // message.btn_11 = 
+            // message.btn_12 = 
 
             height_filt = height_filt * 0.9 + stand_height * 0.1;
             message.height_des = height_filt;
@@ -197,81 +229,136 @@ private:
                     if (event.value){
                         switch (event.number){
                         case JS_STOP_BT:{
-                            system("killall -SIGINT robot_controller");
-                            system("killall -SIGINT pt_main_thread");
-                            system("killall -SIGINT bxi_example_py");
-                            system("killall -SIGINT bxi_example_py_trunk");
-                            system("killall -SIGINT bxi_example_py_ankle");
-                            system("killall -SIGINT bxi_example_py_foot");
-                            system("killall -SIGINT hardware");
-                            system("killall -SIGINT hardware_trunk");
-                            system("killall -SIGINT hardware_trunk_neck");
-                            system("killall -SIGINT hardware_ankle");
-                            printf("kill robot_controller\n");//robot_controller
+                            int pid;
+                            FILE *fp = fopen("/tmp/ros2_launch.pid", "r");
+                            if (fp) {
+                                fscanf(fp, "%d", &pid);
+                                fclose(fp);
+                                printf("ros_pid:%d\n", pid);
+                                if (kill(pid, 9) == 0) {
+                                    printf("DEBUG: SIGINT sent successfully\n");
+                                } else {
+                                    perror("DEBUG: Failed to send SIGINT");
+                                }
+                            }
+                            // system("killall -SIGINT robot_controller");
+                            // system("killall -SIGINT pt_main_thread");
+                            // system("killall -SIGINT bxi_example_py");
+                            // system("killall -SIGINT bxi_example_py_trunk");
+                            // system("killall -SIGINT bxi_example_py_ankle");
+                            // system("killall -SIGINT bxi_example_py_foot");
+                            // system("killall -SIGINT hardware");
+                            // system("killall -SIGINT hardware_trunk");
+                            // system("killall -SIGINT hardware_trunk_neck");
+                            // system("killall -SIGINT hardware_ankle");
+                            // printf("kill robot_controller\n");//robot_controller
+
+                            launch_lock = false;
 
                             reset_value();
-                        }
-                        break;
+                        }break;
+
                         case JS_START_BT:{
-                            system("mkdir -p /var/log/bxi_log");
-                            system("ros2 launch bxi_example_py_foot example_launch_walk_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
-                            printf("run robot\n");//robot_controller
+                            if(launch_lock == false){
+                                system("mkdir -p /var/log/bxi_log");
+                                // system("ros2 launch bxi_example_py_elf3 example_launch_demo.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                                system("ros2 launch bxi_example_py_elf3 example_launch_demo.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log 2>&1 & echo $! > /tmp/ros2_launch.pid");
+                                // system("ros2 launch bxi_example_py_elf3 example_launch_demo_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                                printf("run robot\n");//robot_controller
+                            
+                                reset_value();
 
-                            reset_value();
-                        }
-                        break;
-                        case JS_START2_BT:{
-                            system("mkdir -p /var/log/bxi_log");
-                            system("ros2 launch bxi_example_py_foot example_launch_run_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
-                            printf("run robot\n");//robot_controller
+                                launch_lock = true;
+                            }else{
+                                printf("\nprograme already exist! stop launch!!\n\n");
+                            }
+                        }break;
 
-                            reset_value();
-                        }
-                        break;
-                        case JS_HEIGHT_UPPER_BT:{
+                        case JS_SHIFT_1_BT:{
                             const std::lock_guard<std::mutex> guard(lock_);
-                            stand_height += 0.2;
-                            if (stand_height > STAND_HEIGHT_MAX)
-                            {
-                                stand_height = STAND_HEIGHT_MAX;
+                            shift_1_press = true;
+                        }break;
+
+                        case JS_SHIFT_2_BT:{
+                            const std::lock_guard<std::mutex> guard(lock_);
+                            shift_2_press = true;
+                        }break;
+
+                        case JS_SWITCH_X:{
+                            if(shift_1_press){
+                                const std::lock_guard<std::mutex> guard(lock_);
+                                dance_mode = !dance_mode;
+                                printf("dance_mode: %d\n", dance_mode);
+                            }else if(shift_2_press){
+                                const std::lock_guard<std::mutex> guard(lock_);
+                                normal_mode = !normal_mode;
+                                printf("normal mode: %d\n", normal_mode);
+                            }else{
+                                const std::lock_guard<std::mutex> guard(lock_);
+                                dance_flag = !dance_flag;
+                                printf("dance_flag: %d\n", dance_flag);
                             }
-                            printf("stand_height: %f\n", stand_height);
-                        }
-                        break;
-                        case JS_HEIGHT_LOWER_BT:{
-                            const std::lock_guard<std::mutex> guard(lock_);
-                            stand_height -= 0.2;
-                            if (stand_height < STAND_HEIGHT_MIN)
-                            {
-                                stand_height = STAND_HEIGHT_MIN;
+                        }break;
+
+                        case JS_SWITCH_Y:{
+                            if(shift_1_press){
+                                const std::lock_guard<std::mutex> guard(lock_);
+                                printf("JS_SHIFT1 + Y\n");
+                            }else if(shift_2_press){
+                                const std::lock_guard<std::mutex> guard(lock_);
+                                initial_pos_mode = !initial_pos_mode;
+                                printf("initial_pos_mode: %d\n", initial_pos_mode);
+                            }else{
+                                const std::lock_guard<std::mutex> guard(lock_);
+                                printf("Y\n");
                             }
-                            printf("stand_height: %f\n", stand_height);
+                        }break;
+
+                        case JS_SWITCH_A:{
+                            if(shift_1_press){
+                                const std::lock_guard<std::mutex> guard(lock_);
+                                host_mode = !host_mode;
+                                printf("host mode:%d\n", host_mode);
+                            }else if(shift_2_press){
+                                const std::lock_guard<std::mutex> guard(lock_);
+                                zero_torque_mode = !zero_torque_mode;
+                                printf("zero torque mode:%d\n", zero_torque_mode);
+                            }else{
+                                const std::lock_guard<std::mutex> guard(lock_);
+                                printf("A\n");
+                            }
+                        }break;
+
+                        case JS_SWITCH_B:{
+                            if(shift_1_press){
+                                const std::lock_guard<std::mutex> guard(lock_);
+                                printf("JS_SHIFT1 + B\n");
+                            }else if(shift_2_press){
+                                const std::lock_guard<std::mutex> guard(lock_);
+                                pd_brake_mode = !pd_brake_mode;
+                                printf("pd brake mode:%d\n", pd_brake_mode);
+                            }else{
+                                const std::lock_guard<std::mutex> guard(lock_);
+                                printf("B\n");
+                            }
+                        }break;
+
+                        default:
+                            break;
                         }
-                        break;
-                        case JS_GAIT_STAND_BT:{
+                    }
+                    else if(!event.value){
+                        switch(event.number){
+                        case JS_SHIFT_1_BT:{
                             const std::lock_guard<std::mutex> guard(lock_);
-                            vel_offset = 0.0;
-                            printf("change to stand\n");
-                        }
-                        break;
-                        case JS_GAIT_WALK_BT:{
+                            shift_1_press = false;
+                        }break;
+
+                        case JS_SHIFT_2_BT:{
                             const std::lock_guard<std::mutex> guard(lock_);
-                            vel_offset = 0.0011;
-                            printf("change to walk\n");
-                        }
-                        break;
-                        case JS_LEFT_ARM_BT:{
-                            const std::lock_guard<std::mutex> guard(lock_);
-                            left_arm_toggle = !left_arm_toggle;
-                            printf("Left arm waving toggle: %s\n", left_arm_toggle ? "ON" : "OFF");
-                        }
-                        break;
-                        case JS_MODE_BT:{
-                            const std::lock_guard<std::mutex> guard(lock_);
-                            right_arm_toggle = !right_arm_toggle;
-                            printf("Right arm handshake toggle: %s\n", right_arm_toggle ? "ON" : "OFF");
-                        }
-                        break;
+                            shift_2_press = false;
+                        }break;
+                        
                         default:
                             break;
                         }
