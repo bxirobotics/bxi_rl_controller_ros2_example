@@ -15,7 +15,7 @@ def generate_launch_description():
         "dance": "data/dance.npz",
     }  
     onnx_file_dict = {
-        "normal": "data/model_normal.onnx",
+        "normal": "data/model_normal.onnxh",
         "host": "data/host.onnx",
         "dance": "data/dance.onnx",
     }
@@ -28,12 +28,11 @@ def generate_launch_description():
     return LaunchDescription(
         [
             Node(
-                package="mujoco",
-                executable="simulation",
-                name="simulation_mujoco",
+                package="hardware_elf3",
+                executable="hardware_elf3",
+                name="hardware_elf3",
                 output="screen",
                 parameters=[
-                    {"simulation/model_file": xml_file},
                 ],
                 emulate_tty=True,
                 arguments=[("__log_level:=debug")],
@@ -45,7 +44,7 @@ def generate_launch_description():
                 name="bxi_example_py_elf3_demo",
                 output="screen",
                 parameters=[
-                    {"/topic_prefix": "simulation/"},
+                    {"/topic_prefix": "hardware/"},
                     {"/npz_file_dict": json.dumps(npz_file_dict)},
                     {"/onnx_file_dict": json.dumps(onnx_file_dict)},
                 ],

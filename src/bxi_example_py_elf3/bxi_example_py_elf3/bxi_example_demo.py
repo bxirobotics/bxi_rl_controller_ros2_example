@@ -23,11 +23,13 @@ from sensor_msgs.msg import JointState
 
 from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicy
 from bxi_example_py_elf3.inference.host import TumbleRecoverPolicy
-from bxi_example_py_elf3.inference.run import RunMotionPolicy
+from bxi_example_py_elf3.inference.normal import NormalMotionPolicy
 
 robot_name = "elf3"
 
 dof_num = 29
+
+real = 1                        # 1 for real; 0 for sim
 
 joint_name = (
     "waist_y_joint",
@@ -114,8 +116,6 @@ class robotState:
     dance       = 4
     host        = 5
 
-    run         = 6
-
 def quaternion_to_euler_array(quat):
     # Ensure quaternion is in the correct format [x, y, z, w]
     x, y, z, w = quat
@@ -147,13 +147,12 @@ class BxiExample(Node):
         self.load_files()
 
         # 加载模型
-        self.normal = RunMotionPolicy(self.onnx_file_dict["normal"]) 
-        self.run = RunMotionPolicy(self.onnx_file_dict["run"]) 
+        self.normal = NormalMotionPolicy(self.onnx_file_dict["normal"]) 
         self.host = TumbleRecoverPolicy(self.onnx_file_dict["host"])
         self.dance = DanceMotionPolicy(self.npz_file_dict["dance"], self.onnx_file_dict["dance"])   
 
         self.initial_pos = np.zeros(dof_num, dtype=np.double)
-        self.pd_pos = self.run.default_joint_pos
+        self.pd_pos = self.normal.default_joint_pos
 
         # 订阅发布ros主题
         self.init_pub_sub()
@@ -178,7 +177,20 @@ class BxiExample(Node):
         self.next_state = self.state 
         self.last_state = self.state
         self.change_state = 1
-        self.change_time = 0.1
+
+        if(self.topic_prefix == "hardware/"):
+            real = 1
+            print("real == 1")
+        else:
+            real = 0
+            print("real == 0")
+
+        if(not real):
+            # sim 
+            self.change_time = 0.1
+        else:
+            # real
+            self.change_time = 0.3
 
         # 遥控器参数
         self.normal_mode_prev = False
@@ -186,7 +198,6 @@ class BxiExample(Node):
         self.pd_brake_prev = False
         self.initial_pos_prev = False
 
-        self.run_mode_prev = False
         self.dance_mode_prev = False
         self.host_mode_prev = False
 
@@ -211,24 +222,17 @@ class BxiExample(Node):
         self.start_frame_pos = self.dance.motioninputpos[self.start_frame_dance,:] # 跳过前150帧准备动作
 
     def load_files(self):
-        
+        # 加载模型
         self.declare_parameter('/topic_prefix', 'default_value')
         self.topic_prefix = self.get_parameter('/topic_prefix').get_parameter_value().string_value
-        # print('topic_prefix:', self.topic_prefix)
         
         self.declare_parameter('/npz_file_dict', json.dumps({}))
         npz_file_json = self.get_parameter('/npz_file_dict').value
         self.npz_file_dict = json.loads(npz_file_json)
-        # print('npz_file:')
-        # for key,value in self.npz_file_dict.items():
-        #     print("Load motion from ",key,": ",value)
             
         self.declare_parameter('/onnx_file_dict', json.dumps({}))
         onnx_file_json = self.get_parameter('/onnx_file_dict').value
         self.onnx_file_dict = json.loads(onnx_file_json)
-        # print('onnx_file:')
-        # for key,value in self.onnx_file_dict.items():
-        #     print("Load model from ",key,": ",value)
 
     def init_pub_sub(self):
         # 订阅和发布主题
@@ -309,8 +313,6 @@ class BxiExample(Node):
                 x_vel_cmd = self.vx
                 y_vel_cmd = self.vy
                 yaw_vel_cmd = self.dyaw
-            
-            # count_lowlevel = self.loop_count
         
             if(self.next_state != self.state):
                 self.exit_state()
@@ -326,12 +328,15 @@ class BxiExample(Node):
                         soft_start = 1
                         
                     qpos = self.pos_last_state + (self.normal.default_joint_pos - self.pos_last_state) * soft_start
-                    # sim
-                    kp = self.kp_last_state + (self.normal.joint_stiffness*0.9 - self.kp_last_state) * soft_start
-                    kd = self.kd_last_state + (self.normal.joint_damping*0.2 - self.kd_last_state) * soft_start
-                    # real
-                    # kp = self.kp_last_state + (self.normal.joint_stiffness - self.kp_last_state) * soft_start
-                    # kd = self.kd_last_state + (self.normal.joint_damping - self.kd_last_state) * soft_start
+
+                    if(not real):
+                        # sim
+                        kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9 - self.kp_last_state) * soft_start
+                        kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
+                    else:
+                        # real
+                        kp = self.kp_last_state + (self.normal.joint_stiffness - self.kp_last_state) * soft_start
+                        kd = self.kd_last_state + (self.normal.joint_damping - self.kd_last_state) * soft_start
                 else:
                     eu_ang = quaternion_to_euler_array(quat)
                     eu_ang[eu_ang > math.pi] -= 2 * math.pi
@@ -346,12 +351,14 @@ class BxiExample(Node):
                     cmd = [x_vel_cmd, y_vel_cmd, yaw_vel_cmd]
                     qpos = self.normal.infer_step(q, dq, quat, omega, cmd)
 
-                    # # sim
-                    kp = self.normal.joint_stiffness * 0.9
-                    kd = self.normal.joint_damping * 0.2
-                    # real
-                    # kp = self.normal.joint_stiffness
-                    # kd = self.normal.joint_damping
+                    if(not real):
+                        # sim
+                        kp = self.normal.joint_stiffness * 0.9
+                        kd = self.normal.joint_damping * 0.2
+                    else:
+                        # real
+                        kp = self.normal.joint_stiffness
+                        kd = self.normal.joint_damping
 
             elif self.state == robotState.zero_torque:      # kp,kd 均给0
                 qpos = joint_nominal_pos
@@ -364,12 +371,15 @@ class BxiExample(Node):
                     soft_start = 1
                     
                 qpos = self.pos_last_state + (self.pd_pos - self.pos_last_state) * soft_start
-                # sim
-                kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
-                kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
-                # real
-                # kp = self.kp_last + (self.run.joint_stiffness  - self.kp_last) * soft_start
-                # kd = self.kd_last + (self.run.joint_damping - self.kd_last) * soft_start
+
+                if(not real):
+                    # sim
+                    kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
+                    kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
+                else:
+                    # real
+                    kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
+                    kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
 
             elif self.state == robotState.initial_pos:
                 soft_start = self.loop_count/(2./self.dt) # 1秒关节缓启动
@@ -377,12 +387,15 @@ class BxiExample(Node):
                     soft_start = 1
                     
                 qpos = self.pos_last_state + (self.initial_pos- self.pos_last_state) * soft_start
-                # sim
-                kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
-                kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
-                # real
-                # kp = self.kp_last + (self.run.joint_stiffness  - self.kp_last) * soft_start
-                # kd = self.kd_last + (self.run.joint_damping - self.kd_last) * soft_start
+
+                if(not real):
+                    # sim
+                    kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
+                    kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
+                else:
+                    # real
+                    kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
+                    kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
             
             elif self.state == robotState.dance:
                 if(self.loop_count * self.dt < self.change_time):
@@ -391,12 +404,15 @@ class BxiExample(Node):
                         soft_start = 1
                         
                     qpos = self.pos_last_state + (self.normal.default_joint_pos - self.pos_last_state) * soft_start
-                    # sim
-                    kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
-                    kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
-                    # real
-                    # kp = self.kp_last + (self.run.joint_stiffness  - self.kp_last) * soft_start
-                    # kd = self.kd_last + (self.run.joint_damping - self.kd_last) * soft_start
+
+                    if(not real):
+                        # sim
+                        kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
+                        kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
+                    else:
+                        # real
+                        kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
+                        kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
                 else:
                     if self.dance.timestep < self.dance.motionpos.shape[0]:
                         eu_ang = quaternion_to_euler_array(quat)
@@ -411,12 +427,14 @@ class BxiExample(Node):
                         
                         qpos = self.dance.inference_step(q, dq, quat_wxyz, omega)
 
-                        # sim
-                        kp = self.dance.stiffness_array
-                        kd = self.dance.damping_array * 0.2
-                        # #real
-                        # kp = self.dance.stiffness_array
-                        # kd = self.dance.damping_array
+                        if(not real):
+                            # sim
+                            kp = self.dance.stiffness_array
+                            kd = self.dance.damping_array * 0.2
+                        else:
+                            # real
+                            kp = self.dance.stiffness_array
+                            kd = self.dance.damping_array
 
                     if self.dance_mode_changed == True:
                         self.dance.timestep += 1
@@ -428,7 +446,6 @@ class BxiExample(Node):
                         self.next_state = robotState.normal
 
             elif self.state == robotState.host:
-                # if((self.loop_count * self.dt > 5.0) and (np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0))):
                 if((self.loop_count * self.dt > 5.0)):
                     eu_ang = quaternion_to_euler_array(quat)
                     eu_ang[eu_ang > math.pi] -= 2 * math.pi
@@ -446,7 +463,6 @@ class BxiExample(Node):
             self.pos_last = qpos
             self.kp_last = kp
             self.kd_last = kd
-
             self.send_to_motor(qpos, kp, kd)
 
         self.loop_count += 1
@@ -509,8 +525,6 @@ class BxiExample(Node):
         with self.lock_in:
             self.qpos[:] = np.array(joint_pos[:])
             self.qvel[:] = np.array(joint_vel[:])
-            # self.qpos = np.array(joint_pos)
-            # self.qvel = np.array(joint_vel)
 
     def joy_callback(self, msg):
         with self.lock_in:
@@ -626,7 +640,6 @@ class BxiExample(Node):
 
                 if dance_flag != self.dance_flag_prev:
                     self.dance_mode_changed = not self.dance_mode_changed
-                # self.dance_mode_changed = (dance_flag != self.dance_flag_prev)
             
             case robotState.host:
                 if normal_mode != self.normal_mode_prev:

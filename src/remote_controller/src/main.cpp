@@ -122,7 +122,7 @@ private:
     bool normal_mode = false;           // 按下改变状态，切换为普通模式，站立走路跑步
     bool zero_torque_mode = false;      // 按下改变状态，切换为零力模式
     bool pd_brake_mode = false;         // 按下改变状态，切换为pd抱死模式
-    bool initial_pos_mode = false;     // 按下改变状态，切换为初始位置模式
+    bool initial_pos_mode = false;      // 按下改变状态，切换为初始位置模式
     // 按下shift1的变量
     bool host_mode = false;             // 按下改变状态，切换为host起身模式
     bool dance_mode = false;            // 按下改变状态，切换为跳舞模式
@@ -229,29 +229,17 @@ private:
                     if (event.value){
                         switch (event.number){
                         case JS_STOP_BT:{
-                            int pid;
-                            FILE *fp = fopen("/tmp/ros2_launch.pid", "r");
-                            if (fp) {
-                                fscanf(fp, "%d", &pid);
-                                fclose(fp);
-                                printf("ros_pid:%d\n", pid);
-                                if (kill(pid, 9) == 0) {
-                                    printf("DEBUG: SIGINT sent successfully\n");
-                                } else {
-                                    perror("DEBUG: Failed to send SIGINT");
-                                }
-                            }
-                            // system("killall -SIGINT robot_controller");
-                            // system("killall -SIGINT pt_main_thread");
-                            // system("killall -SIGINT bxi_example_py");
-                            // system("killall -SIGINT bxi_example_py_trunk");
-                            // system("killall -SIGINT bxi_example_py_ankle");
-                            // system("killall -SIGINT bxi_example_py_foot");
-                            // system("killall -SIGINT hardware");
-                            // system("killall -SIGINT hardware_trunk");
-                            // system("killall -SIGINT hardware_trunk_neck");
-                            // system("killall -SIGINT hardware_ankle");
-                            // printf("kill robot_controller\n");//robot_controller
+                            system("killall -SIGINT robot_controller");
+                            system("killall -SIGINT pt_main_thread");
+                            system("killall -SIGINT bxi_example_py");
+                            system("killall -SIGINT bxi_example_py_trunk");
+                            system("killall -SIGINT bxi_example_py_ankle");
+                            system("killall -SIGINT bxi_example_py_foot");
+                            system("killall -SIGINT hardware");
+                            system("killall -SIGINT hardware_trunk");
+                            system("killall -SIGINT hardware_trunk_neck");
+                            system("killall -SIGINT hardware_ankle");
+                            printf("kill robot_controller\n");//robot_controller
 
                             launch_lock = false;
 
@@ -261,9 +249,10 @@ private:
                         case JS_START_BT:{
                             if(launch_lock == false){
                                 system("mkdir -p /var/log/bxi_log");
+                                // // sim
                                 // system("ros2 launch bxi_example_py_elf3 example_launch_demo.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
-                                system("ros2 launch bxi_example_py_elf3 example_launch_demo.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log 2>&1 & echo $! > /tmp/ros2_launch.pid");
-                                // system("ros2 launch bxi_example_py_elf3 example_launch_demo_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                                // // real
+                                system("ros2 launch bxi_example_py_elf3 example_launch_demo_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
                                 printf("run robot\n");//robot_controller
                             
                                 reset_value();
