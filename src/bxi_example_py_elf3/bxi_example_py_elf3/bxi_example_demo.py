@@ -29,6 +29,8 @@ robot_name = "elf3"
 
 dof_num = 29
 
+real = 1                        # 1 for real; 0 for sim
+
 joint_name = (
     "waist_y_joint",
     "waist_x_joint",
@@ -175,7 +177,20 @@ class BxiExample(Node):
         self.next_state = self.state 
         self.last_state = self.state
         self.change_state = 1
-        self.change_time = 0.1
+
+        if(self.topic_prefix == "hardware/"):
+            real = 1
+            print("real == 1")
+        else:
+            real = 0
+            print("real == 0")
+
+        if(not real):
+            # sim 
+            self.change_time = 0.1
+        else:
+            # real
+            self.change_time = 0.3
 
         # 遥控器参数
         self.normal_mode_prev = False
@@ -313,12 +328,15 @@ class BxiExample(Node):
                         soft_start = 1
                         
                     qpos = self.pos_last_state + (self.normal.default_joint_pos - self.pos_last_state) * soft_start
-                    # sim
-                    kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9 - self.kp_last_state) * soft_start
-                    kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
-                    # real
-                    # kp = self.kp_last_state + (self.normal.joint_stiffness - self.kp_last_state) * soft_start
-                    # kd = self.kd_last_state + (self.normal.joint_damping - self.kd_last_state) * soft_start
+
+                    if(not real):
+                        # sim
+                        kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9 - self.kp_last_state) * soft_start
+                        kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
+                    else:
+                        # real
+                        kp = self.kp_last_state + (self.normal.joint_stiffness - self.kp_last_state) * soft_start
+                        kd = self.kd_last_state + (self.normal.joint_damping - self.kd_last_state) * soft_start
                 else:
                     eu_ang = quaternion_to_euler_array(quat)
                     eu_ang[eu_ang > math.pi] -= 2 * math.pi
@@ -333,12 +351,14 @@ class BxiExample(Node):
                     cmd = [x_vel_cmd, y_vel_cmd, yaw_vel_cmd]
                     qpos = self.normal.infer_step(q, dq, quat, omega, cmd)
 
-                    # # sim
-                    kp = self.normal.joint_stiffness * 0.9
-                    kd = self.normal.joint_damping * 0.2
-                    # real
-                    # kp = self.normal.joint_stiffness
-                    # kd = self.normal.joint_damping
+                    if(not real):
+                        # sim
+                        kp = self.normal.joint_stiffness * 0.9
+                        kd = self.normal.joint_damping * 0.2
+                    else:
+                        # real
+                        kp = self.normal.joint_stiffness
+                        kd = self.normal.joint_damping
 
             elif self.state == robotState.zero_torque:      # kp,kd 均给0
                 qpos = joint_nominal_pos
@@ -351,12 +371,15 @@ class BxiExample(Node):
                     soft_start = 1
                     
                 qpos = self.pos_last_state + (self.pd_pos - self.pos_last_state) * soft_start
-                # sim
-                kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
-                kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
-                # real
-                # kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
-                # kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
+
+                if(not real):
+                    # sim
+                    kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
+                    kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
+                else:
+                    # real
+                    kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
+                    kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
 
             elif self.state == robotState.initial_pos:
                 soft_start = self.loop_count/(2./self.dt) # 1秒关节缓启动
@@ -364,12 +387,15 @@ class BxiExample(Node):
                     soft_start = 1
                     
                 qpos = self.pos_last_state + (self.initial_pos- self.pos_last_state) * soft_start
-                # sim
-                kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
-                kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
-                # real
-                # kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
-                # kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
+
+                if(not real):
+                    # sim
+                    kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
+                    kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
+                else:
+                    # real
+                    kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
+                    kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
             
             elif self.state == robotState.dance:
                 if(self.loop_count * self.dt < self.change_time):
@@ -378,12 +404,15 @@ class BxiExample(Node):
                         soft_start = 1
                         
                     qpos = self.pos_last_state + (self.normal.default_joint_pos - self.pos_last_state) * soft_start
-                    # sim
-                    kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
-                    kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
-                    # real
-                    # kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
-                    # kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
+
+                    if(not real):
+                        # sim
+                        kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
+                        kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
+                    else:
+                        # real
+                        kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
+                        kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
                 else:
                     if self.dance.timestep < self.dance.motionpos.shape[0]:
                         eu_ang = quaternion_to_euler_array(quat)
@@ -398,12 +427,14 @@ class BxiExample(Node):
                         
                         qpos = self.dance.inference_step(q, dq, quat_wxyz, omega)
 
-                        # sim
-                        kp = self.dance.stiffness_array
-                        kd = self.dance.damping_array * 0.2
-                        # #real
-                        # kp = self.dance.stiffness_array
-                        # kd = self.dance.damping_array
+                        if(not real):
+                            # sim
+                            kp = self.dance.stiffness_array
+                            kd = self.dance.damping_array * 0.2
+                        else:
+                            # real
+                            kp = self.dance.stiffness_array
+                            kd = self.dance.damping_array
 
                     if self.dance_mode_changed == True:
                         self.dance.timestep += 1
