@@ -153,6 +153,7 @@ class BxiExample(Node):
         self.joint_damping = np.array(ast.literal_eval(metadata["joint_damping"]), dtype=np.float32)
         self.action_scale = np.array(ast.literal_eval(metadata["action_scale"]), dtype=np.float32)
         self.default_joint_pos = np.array(ast.literal_eval(metadata["default_joint_pos"]), dtype=np.float32)
+        # self.default_joint_pos[[7,13]] += 0.05
         # exit()
 
         self.lock_in = Lock()
@@ -276,9 +277,9 @@ class BxiExample(Node):
             projected_gravity = projected_gravity_from_quat(quat, np.array([0, 0, -1]))
             
             #check safe
-            # if (np.abs(eu_ang[0]) > (math.pi/4.0)) or (np.abs(eu_ang[1]) > (math.pi/4.0)):
-            #     print("check safe error, exit!")
-            #     os._exit()
+            if (np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0)):
+                print("check safe error, exit!")
+                os._exit()
 
             obs[0, :3] = omega
             obs[0, 3:6] = projected_gravity
@@ -371,10 +372,10 @@ class BxiExample(Node):
 
     def joy_callback(self, msg):
         with self.lock_in:
-            self.vx = msg.vel_des.x * 2
-            self.vx = np.clip(self.vx, -1.0, 2.0)
-            self.vy = msg.vel_des.y
-            self.dyaw = msg.yawdot_des
+            self.vx = msg.vel_des.x * 3
+            self.vx = np.clip(self.vx, -2.0, 3.0)
+            self.vy = msg.vel_des.y * 2
+            self.dyaw = msg.yawdot_des * 2
         
     def imu_callback(self, msg):
         quat = msg.orientation

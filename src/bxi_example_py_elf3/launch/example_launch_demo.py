@@ -4,17 +4,26 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+import json
 
 def generate_launch_description():
 
-    xml_file_name = "model/xml/elf2-ankle/elf2_ankle_dof25.xml"
-    xml_file = os.path.join(get_package_share_path("description"), xml_file_name)
+    xml_file_name = "data/elf3.xml"
+    xml_file = os.path.join(get_package_share_path("bxi_example_py_elf3"), xml_file_name)
 
-    policy_file_name = "policy/policy.jit"
-    policy_file = os.path.join(get_package_share_path("bxi_example_py_ankle"), policy_file_name)
+    npz_file_dict = {
+        "dance": "data/dance.npz",
+    }  
+    onnx_file_dict = {
+        "normal": "data/model_normal.onnx",
+        "host": "data/host.onnx",
+        "dance": "data/dance.onnx",
+    }
 
-    onnx_file_name = "policy/model.onnx"
-    onnx_file = os.path.join(get_package_share_path("bxi_example_py_ankle"), onnx_file_name)
+    for key, value in npz_file_dict.items():
+        npz_file_dict[key] = os.path.join(get_package_share_path("bxi_example_py_elf3"), value)
+    for key, value in onnx_file_dict.items():
+        onnx_file_dict[key] = os.path.join(get_package_share_path("bxi_example_py_elf3"), value)
 
     return LaunchDescription(
         [
@@ -31,14 +40,14 @@ def generate_launch_description():
             ),
 
             Node(
-                package="bxi_example_py_ankle",
-                executable="bxi_example_py_ankle",
-                name="bxi_example_py_ankle",
+                package="bxi_example_py_elf3",
+                executable="bxi_example_py_elf3_demo",
+                name="bxi_example_py_elf3_demo",
                 output="screen",
                 parameters=[
                     {"/topic_prefix": "simulation/"},
-                    {"/policy_file": policy_file},
-                    {"/onnx_file": onnx_file},
+                    {"/npz_file_dict": json.dumps(npz_file_dict)},
+                    {"/onnx_file_dict": json.dumps(onnx_file_dict)},
                 ],
                 emulate_tty=True,
                 arguments=[("__log_level:=debug")],
