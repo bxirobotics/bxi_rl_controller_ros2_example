@@ -91,7 +91,7 @@ joint_kd = np.array([  # 指定关节的kd，和joint_name顺序一一对应
     2,2,2,2, 1,1,1], 
     dtype=np.float32)
 
-kp_host = np.array([     # 跌到起身腰部手部pd加大
+kp_host = np.array([     # 跌到起身腰部手部pd加大(add pd for hands and waist)
     500,500,300, 
     150, 150, 150, 200, 50, 50, 
     150, 150, 150, 200, 50, 50,
@@ -99,7 +99,7 @@ kp_host = np.array([     # 跌到起身腰部手部pd加大
     80, 80, 80, 60, 20, 50, 50,], 
     dtype=np.float32)
 
-kd_host = np.array([  # 跌到起身腰部手部pd加大
+kd_host = np.array([  # 跌到起身腰部手部pd加大(add pd for hands and waist)
     5,3,3,
     2,2,2,2,1,1,
     2,2,2,2,1,1,
@@ -108,10 +108,10 @@ kd_host = np.array([  # 跌到起身腰部手部pd加大
     dtype=np.float32)
 
 class robotState:
-    normal      = 0     # 站、走、跑
-    zero_torque = 1     # 零力模式
-    pd_brake    = 2     # 抱死模式
-    initial_pos = 3     # 初始模式
+    normal      = 0     # 站、走、跑(stand walk run)
+    zero_torque = 1     # 零力模式(zero torque mode)
+    pd_brake    = 2     # pd模式(pd mode)
+    initial_pos = 3     # 初始模式(zero position mode)
 
     dance       = 4
     host        = 5
@@ -157,7 +157,7 @@ class BxiExample(Node):
         # 订阅发布ros主题
         self.init_pub_sub()
 
-        # 机器人状态变量
+        # 机器人状态变量(robot states)
         self.qpos = np.zeros(dof_num, dtype=np.double)
         self.qvel = np.zeros(dof_num, dtype=np.double)
         self.omega = np.zeros(3,dtype=np.double)
@@ -203,7 +203,7 @@ class BxiExample(Node):
 
         self.dance_flag_prev = False
 
-        self.dance_mode_changed = True  # False: 暂停跳舞  True： 继续跳舞
+        self.dance_mode_changed = True  # False: 暂停跳舞(stop dancing)  True： 继续跳舞(continue dancing)
 
         # 运动命令变量
         self.vx = 0.0
@@ -382,7 +382,7 @@ class BxiExample(Node):
                     kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
 
             elif self.state == robotState.initial_pos:
-                soft_start = self.loop_count/(2./self.dt) # 1秒关节缓启动
+                soft_start = self.loop_count/(2./self.dt)
                 if soft_start > 1:
                     soft_start = 1
                     
@@ -533,13 +533,13 @@ class BxiExample(Node):
             self.vy = msg.vel_des.y * 2
             self.dyaw = msg.yawdot_des * 2
 
-            normal_mode = msg.btn_1             # 切换为普通模式
-            zero_torque_mode = msg.btn_2        # 切换为零力模式
-            pd_brake_mode = msg.btn_3           # 切换为抱死模式
-            initial_pos_mode = msg.btn_4        # 切换为初始状态
+            normal_mode = msg.btn_1             # RB+X 切换为普通模式
+            zero_torque_mode = msg.btn_2        # RB+A 切换为零力模式
+            pd_brake_mode = msg.btn_3           # RB+B 切换为pd模式
+            initial_pos_mode = msg.btn_4        # RB+Y 切换为初始状态
 
-            dance_mode = msg.btn_5              # shift+X 切换为跳舞模式
-            host_mode = msg.btn_6               # shift+A 切换为host模式
+            dance_mode = msg.btn_5              # LB+X 切换为跳舞模式
+            host_mode = msg.btn_6               # RB+A 切换为host模式
             # = msg.btn_7
             # = msg.btn_8
 
