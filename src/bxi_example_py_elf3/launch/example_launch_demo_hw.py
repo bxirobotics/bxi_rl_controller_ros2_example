@@ -15,7 +15,7 @@ def generate_launch_description():
         "dance": "data/dance.npz",
     }  
     onnx_file_dict = {
-        "normal": "data/model_normal.onnxh",
+        "normal": "data/model_normal.onnx",
         "host": "data/host.onnx",
         "dance": "data/dance.onnx",
     }

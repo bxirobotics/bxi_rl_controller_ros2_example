@@ -229,17 +229,8 @@ private:
                     if (event.value){
                         switch (event.number){
                         case JS_STOP_BT:{
-                            system("killall -SIGINT robot_controller");
-                            system("killall -SIGINT pt_main_thread");
-                            system("killall -SIGINT bxi_example_py");
-                            system("killall -SIGINT bxi_example_py_trunk");
-                            system("killall -SIGINT bxi_example_py_ankle");
-                            system("killall -SIGINT bxi_example_py_foot");
-                            system("killall -SIGINT hardware");
-                            system("killall -SIGINT hardware_trunk");
-                            system("killall -SIGINT hardware_trunk_neck");
-                            system("killall -SIGINT hardware_ankle");
-                            printf("kill robot_controller\n");//robot_controller
+                            system("killall -SIGINT bxi_example_py_elf3");
+                            system("killall -SIGINT bxi_example_py_elf3_demo");
 
                             launch_lock = false;
 
