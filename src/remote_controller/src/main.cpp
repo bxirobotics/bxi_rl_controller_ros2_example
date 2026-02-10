@@ -229,6 +229,7 @@ private:
                     if (event.value){
                         switch (event.number){
                         case JS_STOP_BT:{
+                            system("killall -SIGINT hardware_elf3");
                             system("killall -SIGINT bxi_example_py_elf3");
                             system("killall -SIGINT bxi_example_py_elf3_demo");
 
