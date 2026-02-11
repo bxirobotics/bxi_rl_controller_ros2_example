@@ -342,7 +342,7 @@ class BxiExample(Node):
                     eu_ang[eu_ang > math.pi] -= 2 * math.pi
 
                     #check safe
-                    if (np.abs(eu_ang[0]) > (math.pi/6.0)) or (np.abs(eu_ang[1]) > (math.pi/6.0)):
+                    if (np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0)):
                         print("check safe error, zero_torque!")
 
                         self.next_state = robotState.zero_torque
