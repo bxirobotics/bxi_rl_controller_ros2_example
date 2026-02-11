@@ -37,7 +37,7 @@ The binary ROS2 packages of ROS2 environment and mujoco can be find here:[`bxi_r
 ### System Environment Setup   
 1. `Ubuntu 22.04`，with ROS2 version `humble`. `mujoco` requires `libglfw3-dev`.       
 2. Copy `./script/bxi-dev.rules` to `/etc/udev/rules.d/`
-3. To set up remote controller auto-start, edit `./script/ros_elf_launch.service`, copy to `/etc/systemd/system/`, and used the `systemctl` tool to enable the auto-start service.  
+3. To set up remote controller auto-start, edit `./script/bxi_ros2.service`, copy to `/etc/systemd/system/`, and used the `systemctl` tool to enable the auto-start service.  
 
 ### Startup Process
 In both simulation and hardware, the motors are in a disabled state when started, and all parameters are uncontrollable. The startup process consists of two steps:
@@ -50,13 +50,13 @@ For startup examples, please refer to src/bxi_example_py.
    `source /opt/bxi/bxi_ros2_pkg/setup.bash` . Run it as `root` on robot hardware.         
 2. In bxi_rl_controller_ros2_example directory, run `colcon build` to compile all sources in `./src` director. When compilation is done，run `source ./install/setup.bash` to activate the environment of current packages.        
 3. Run whole body demos：
-* `ros2 launch bxi_example_py example_launch.py` : start simulation + controller program(learning based)        
-* `ros2 launch bxi_example_py example_launch_hw.py` start robot hardware + control policy 
+* `ros2 launch bxi_example_py example.launch.py` : start simulation + controller program(learning based)        
+* `ros2 launch bxi_example_py example_hw.launch.py` start robot hardware + control policy 
 4. Run upper body control demos：
-* `ros2 launch bxi_example_arm example_launch.py`: start simulation + upper body controller program(C++ version) 
-* `ros2 launch bxi_example_arm example_launch_hw.py`: start robot hardware + upper body controller program(C++ version) 
-* `ros2 launch bxi_example_py_arm example_launch.py`: start simulation + upper body controller program(python version) 
-* `ros2 launch bxi_example_py_arm example_launch_hw.py`: start robot hardware + upper body controller program(python version)     
+* `ros2 launch bxi_example_arm example.launch.py`: start simulation + upper body controller program(C++ version) 
+* `ros2 launch bxi_example_arm example_hw.launch.py`: start robot hardware + upper body controller program(C++ version) 
+* `ros2 launch bxi_example_py_arm example.launch.py`: start simulation + upper body controller program(python version) 
+* `ros2 launch bxi_example_py_arm example_hw.launch.py`: start robot hardware + upper body controller program(python version)     
 
 ### Tips for control program
 1. The control commands in the topic must be sent in the specified joint order. The order of joints refer to the example `src/bix_example`    

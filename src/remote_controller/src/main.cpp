@@ -242,9 +242,9 @@ private:
                             if(launch_lock == false){
                                 system("mkdir -p /var/log/bxi_log");
                                 // // sim
-                                // system("ros2 launch bxi_example_py_elf3 example_launch_demo.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                                // system("ros2 launch bxi_example_py_elf3 example_demo.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
                                 // // real
-                                system("ros2 launch bxi_example_py_elf3 example_launch_demo_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                                system("ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
                                 printf("run robot\n");//robot_controller
                             
                                 reset_value();
