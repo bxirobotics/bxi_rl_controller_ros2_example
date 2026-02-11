@@ -2,9 +2,9 @@
 <robot name="elf3">
   <link name="torso_link">
     <inertial>
-      <origin xyz="-0.001401 0.00016468 -0.031753" rpy="0 0 0"/>
-      <mass value="8.0753"/>
-      <inertia ixx="0.11153377" ixy="-4.02e-06" ixz="0.00198616" iyy="0.08644757" iyz="-9.243e-05" izz="0.04682107"/>
+      <origin xyz="0.001601 0.000219 0.023250" rpy="0 0 0"/>
+      <mass value="12.004"/>
+      <inertia ixx="0.2931669" ixy="-0.00014022" ixz="0.00019310" iyy="0.26589586" iyz="-0.00056456" izz="0.06116338"/>
     </inertial>
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
