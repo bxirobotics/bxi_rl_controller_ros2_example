@@ -242,8 +242,8 @@ class BxiExample(Node):
             if soft_start > 1:
                 soft_start = 1
                 
-            soft_joint_kp = self.joint_stiffness * soft_start * 0.2
-            soft_joint_kd = self.joint_damping * 0.2
+            soft_joint_kp = self.joint_stiffness * soft_start #* 0.2
+            soft_joint_kd = self.joint_damping #* 0.2
                 
             msg = bxiMsg.ActuatorCmds()
             msg.header.frame_id = robot_name
@@ -306,8 +306,8 @@ class BxiExample(Node):
             qpos = self.default_joint_pos.copy()
             qpos[:] += self.target_q[:]
             
-            kp = self.joint_stiffness * 0.9
-            kd = self.joint_damping * 0.2
+            kp = self.joint_stiffness #* 0.9
+            kd = self.joint_damping #* 0.2
             
             msg = bxiMsg.ActuatorCmds()
             msg.header.frame_id = robot_name
