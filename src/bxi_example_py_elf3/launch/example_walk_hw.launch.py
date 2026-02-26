@@ -7,21 +7,17 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
 
-    xml_file_name = "data/elf3.xml"
-    xml_file = os.path.join(get_package_share_path("bxi_example_py_elf3"), xml_file_name)
-
-    onnx_file_name = "data/model_mjlab.onnx"
+    onnx_file_name = "data/model_normal.onnx"
     onnx_file = os.path.join(get_package_share_path("bxi_example_py_elf3"), onnx_file_name)
 
     return LaunchDescription(
         [
             Node(
-                package="mujoco",
-                executable="simulation",
-                name="simulation_mujoco",
+                package="hardware_elf3",
+                executable="hardware_elf3",
+                name="hardware_elf3",
                 output="screen",
                 parameters=[
-                    {"simulation/model_file": xml_file},
                 ],
                 emulate_tty=True,
                 arguments=[("__log_level:=debug")],
@@ -33,7 +29,7 @@ def generate_launch_description():
                 name="bxi_example_py_elf3_mjlab",
                 output="screen",
                 parameters=[
-                    {"/topic_prefix": "simulation/"},
+                    {"/topic_prefix": "hardware/"},
                     {"/onnx_file": onnx_file},
                 ],
                 emulate_tty=True,
