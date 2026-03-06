@@ -24,7 +24,7 @@ class HumanoidGaitPolicyLite:
         
         self.model_onnx_path = model_onnx_path
 
-        self.action_scale = np.array([+++++++++++
+        self.action_scale = np.array([
             0.231, 0.231, 0.231,
             0.231, 0.231, 0.154,
             0.373, 0.373, 0.213,
