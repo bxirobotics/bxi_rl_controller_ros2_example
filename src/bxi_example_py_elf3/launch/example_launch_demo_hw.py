@@ -18,6 +18,8 @@ def generate_launch_description():
         "normal": "data/model_normal.onnx",
         "host": "data/host.onnx",
         "dance": "data/dance.onnx",
+        "amp_walk": "data/amp_walk.onnx",
+        "amp_terrain": "data/amp_terrain.onnx"
     }
 
     for key, value in npz_file_dict.items():
