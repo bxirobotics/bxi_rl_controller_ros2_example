@@ -24,7 +24,7 @@ from sensor_msgs.msg import JointState
 from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicy
 from bxi_example_py_elf3.inference.host import TumbleRecoverPolicy
 from bxi_example_py_elf3.inference.normal import NormalMotionPolicy
-from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicy , HumanoidGaitPolicyLite
+from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicyLite
 
 robot_name = "elf3"
 
