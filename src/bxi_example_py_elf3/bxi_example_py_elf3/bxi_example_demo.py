@@ -24,6 +24,7 @@ from sensor_msgs.msg import JointState
 from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicy
 from bxi_example_py_elf3.inference.host import TumbleRecoverPolicy
 from bxi_example_py_elf3.inference.normal import NormalMotionPolicy
+from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicy , HumanoidGaitPolicyLite
 
 robot_name = "elf3"
 
@@ -116,6 +117,9 @@ class robotState:
     dance       = 4
     host        = 5
 
+    amp_walk    = 6
+    amp_terrain = 7
+
 def quaternion_to_euler_array(quat):
     # Ensure quaternion is in the correct format [x, y, z, w]
     x, y, z, w = quat
@@ -149,7 +153,9 @@ class BxiExample(Node):
         # 加载模型
         self.normal = NormalMotionPolicy(self.onnx_file_dict["normal"]) 
         self.host = TumbleRecoverPolicy(self.onnx_file_dict["host"])
-        self.dance = DanceMotionPolicy(self.npz_file_dict["dance"], self.onnx_file_dict["dance"])   
+        self.dance = DanceMotionPolicy(self.npz_file_dict["dance"], self.onnx_file_dict["dance"])  
+        self.amp_walk = HumanoidGaitPolicyLite(self.onnx_file_dict["amp_walk"])  
+        self.amp_terrain = HumanoidGaitPolicyLite(self.onnx_file_dict["amp_terrain"])
 
         self.initial_pos = np.zeros(dof_num, dtype=np.double)
         self.pd_pos = self.normal.default_joint_pos
@@ -200,6 +206,8 @@ class BxiExample(Node):
 
         self.dance_mode_prev = False
         self.host_mode_prev = False
+        self.amp_walk_mode_prev = False
+        self.amp_terrain_mode_prev = False
 
         self.dance_flag_prev = False
 
@@ -270,6 +278,14 @@ class BxiExample(Node):
                 self.loop_count = 0
                 return
             
+            case robotState.amp_terrain:
+                self.loop_count = 0
+                return
+
+            case robotState.amp_walk:
+                self.loop_count = 0
+                return
+
             case robotState.dance:
                 self.loop_count = 0
                 self.dance_mode_changed = True
@@ -310,9 +326,10 @@ class BxiExample(Node):
                 quat_wxyz = self.quat_wxyz
                 omega = self.omega
                 
-                x_vel_cmd = self.vx
-                y_vel_cmd = self.vy
-                yaw_vel_cmd = self.dyaw
+                # x_vel_cmd = self.vx
+                # y_vel_cmd = self.vy
+                # yaw_vel_cmd = self.dyaw
+                cmd_vel = np.array([self.vx, self.vy, self.dyaw])
         
             if(self.next_state != self.state):
                 self.exit_state()
@@ -348,8 +365,8 @@ class BxiExample(Node):
                         self.next_state = robotState.zero_torque
                         return
                     
-                    cmd = [x_vel_cmd, y_vel_cmd, yaw_vel_cmd]
-                    qpos = self.normal.infer_step(q, dq, quat, omega, cmd)
+                    # cmd = [x_vel_cmd, y_vel_cmd, yaw_vel_cmd]
+                    qpos = self.normal.infer_step(q, dq, quat, omega, cmd_vel)
 
                     if(not real):
                         # sim
@@ -396,7 +413,83 @@ class BxiExample(Node):
                     # real
                     kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
                     kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
-            
+
+            elif self.state == robotState.amp_walk:
+                if(self.loop_count * self.dt < self.change_time):
+                    soft_start = self.loop_count/(self.change_time/self.dt)
+                    if soft_start > 1:
+                        soft_start = 1
+                        
+                    qpos = self.pos_last_state + (self.amp_walk.default_dof_pos - self.pos_last_state) * soft_start
+
+                    if(not real):
+                        # sim
+                        kp = self.kp_last_state + (self.amp_walk.kps - self.kp_last_state) * soft_start
+                        kd = self.kd_last_state + (self.amp_walk.kds * 0.1 - self.kd_last_state) * soft_start
+                    else:
+                        # real
+                        kp = self.kp_last_state + (self.amp_walk.kps - self.kp_last_state) * soft_start
+                        kd = self.kd_last_state + (self.amp_walk.kds - self.kd_last_state) * soft_start
+                else:
+                    eu_ang = quaternion_to_euler_array(quat)
+                    eu_ang[eu_ang > math.pi] -= 2 * math.pi
+
+                    #check safe
+                    if (np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0)):
+                        print("check safe error, zero_torque!")
+
+                        self.next_state = robotState.zero_torque
+                        return
+
+                    qpos = self.amp_walk.inference_step(q, dq, quat_wxyz, omega, cmd_vel)
+
+                    if(not real):
+                        # sim
+                        kp = self.amp_walk.kps
+                        kd = self.amp_walk.kds * 0.1
+                    else:
+                        # real
+                        kp = self.amp_walk.kps
+                        kd = self.amp_walk.kds
+
+            elif self.state == robotState.amp_terrain:
+                if(self.loop_count * self.dt < self.change_time):
+                    soft_start = self.loop_count/(self.change_time/self.dt)
+                    if soft_start > 1:
+                        soft_start = 1
+                        
+                    qpos = self.pos_last_state + (self.amp_terrain.default_dof_pos - self.pos_last_state) * soft_start
+
+                    if(not real):
+                        # sim
+                        kp = self.kp_last_state + (self.amp_terrain.kps - self.kp_last_state) * soft_start
+                        kd = self.kd_last_state + (self.amp_terrain.kds  * 0.1 - self.kd_last_state) * soft_start
+                    else:
+                        # real
+                        kp = self.kp_last_state + (self.amp_terrain.kps - self.kp_last_state) * soft_start
+                        kd = self.kd_last_state + (self.amp_terrain.kds - self.kd_last_state) * soft_start
+                else:
+                    eu_ang = quaternion_to_euler_array(quat)
+                    eu_ang[eu_ang > math.pi] -= 2 * math.pi
+
+                    #check safe
+                    if (np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0)):
+                        print("check safe error, zero_torque!")
+
+                        self.next_state = robotState.zero_torque
+                        return
+
+                    qpos = self.amp_terrain.inference_step(q, dq, quat_wxyz, omega, cmd_vel)
+
+                    if(not real):
+                        # sim
+                        kp = self.amp_terrain.kps
+                        kd = self.amp_terrain.kds * 0.1
+                    else:
+                        # real
+                        kp = self.amp_terrain.kps
+                        kd = self.amp_terrain.kds
+
             elif self.state == robotState.dance:
                 if(self.loop_count * self.dt < self.change_time):
                     soft_start = self.loop_count/(self.change_time/self.dt)
@@ -528,10 +621,23 @@ class BxiExample(Node):
 
     def joy_callback(self, msg):
         with self.lock_in:
-            self.vx = msg.vel_des.x * 2                 # * 3
-            self.vx = np.clip(self.vx, -1.5, 2.0)       # -2.0  3.0
-            self.vy = msg.vel_des.y * 2
-            self.dyaw = msg.yawdot_des * 2
+            if self.state == robotState.normal:
+                self.vx = msg.vel_des.x * 2                 # * 3
+                self.vx = np.clip(self.vx, -1.5, 2.0)       # -2.0  3.0
+                self.vy = msg.vel_des.y * 2
+                self.dyaw = msg.yawdot_des * 2
+
+            elif self.state == robotState.amp_terrain:
+                self.vx = msg.vel_des.x *  1
+                self.vx = np.clip(self.vx, -1.0, 1.0)
+                self.vy = msg.vel_des.y * 1
+                self.dyaw = msg.yawdot_des * 1.6
+
+            elif self.state == robotState.amp_walk:
+                self.vx = msg.vel_des.x *  5
+                self.vx = np.clip(self.vx, -3.0, 5.0)
+                self.vy = msg.vel_des.y * 2
+                self.dyaw = msg.yawdot_des * 1.6
 
             normal_mode = msg.btn_1             # RB+X 切换为普通模式
             zero_torque_mode = msg.btn_2        # RB+A 切换为零力模式
@@ -539,9 +645,9 @@ class BxiExample(Node):
             initial_pos_mode = msg.btn_4        # RB+Y 切换为初始状态
 
             dance_mode = msg.btn_5              # LB+X 切换为跳舞模式
-            host_mode = msg.btn_6               # RB+A 切换为host模式
-            # = msg.btn_7
-            # = msg.btn_8
+            host_mode = msg.btn_6               # LB+A 切换为host模式
+            amp_terrain_mode = msg.btn_7        # LB+B 切换为避障模式
+            amp_walk_mode = msg.btn_8           # LB+Y 切换为高速跑步
 
             dance_flag = msg.btn_9              # X 暂停或继续跳舞
             # = msg.btn_10
@@ -556,6 +662,8 @@ class BxiExample(Node):
 
             self.dance_mode_prev = dance_mode
             self.host_mode_prev = host_mode
+            self.amp_walk_mode_prev = amp_walk_mode
+            self.amp_terrain_mode_prev = amp_terrain_mode
             
             self.dance_flag_prev = dance_flag
 
@@ -573,6 +681,14 @@ class BxiExample(Node):
                 elif initial_pos_mode != self.initial_pos_prev:
                     self.next_state = robotState.initial_pos
                     print("switch to initial")
+
+                elif amp_terrain_mode != self.amp_terrain_mode_prev:
+                    self.next_state = robotState.amp_terrain
+                    print("switch to amp_terrain")
+
+                elif amp_walk_mode != self.amp_walk_mode_prev:
+                    self.next_state = robotState.amp_walk
+                    print("switch to amp_walk")
 
                 elif dance_mode != self.dance_mode_prev:
                     self.next_state = robotState.dance
@@ -640,6 +756,16 @@ class BxiExample(Node):
 
                 if dance_flag != self.dance_flag_prev:
                     self.dance_mode_changed = not self.dance_mode_changed
+
+            case robotState.amp_terrain:
+                if normal_mode != self.normal_mode_prev:
+                    self.next_state = robotState.normal
+                    print("switch to normal")
+
+            case robotState.amp_walk:
+                if normal_mode != self.normal_mode_prev:
+                    self.next_state = robotState.normal
+                    print("switch to normal")
             
             case robotState.host:
                 if normal_mode != self.normal_mode_prev:
@@ -665,6 +791,8 @@ class BxiExample(Node):
 
         self.dance_mode_prev = dance_mode
         self.host_mode_prev = host_mode
+        self.amp_terrain_mode_prev = amp_terrain_mode
+        self.amp_walk_mode_prev = amp_walk_mode
         
         self.dance_flag_prev = dance_flag
 

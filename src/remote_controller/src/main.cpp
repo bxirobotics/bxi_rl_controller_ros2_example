@@ -43,9 +43,9 @@ using namespace std;
                                     // 组合RB：正常模式，走路站立跑步    (conbine with RB for change to normal: walk stand and run)
 #define JS_SWITCH_A         0       // 组合LB：HOST起身               (conbine with LB for change to dance)
                                     // 组合RB：零力                   (conbine with LB for change to dance)
-#define JS_SWITCH_B         1       //
+#define JS_SWITCH_B         1       // 组合LB：amp台阶
                                     // 组合RB：pd模式                 (conbine with LB for change to dance)
-#define JS_SWITCH_Y         4       // 
+#define JS_SWITCH_Y         4       // 组合LB：amp行走
                                     // 组合RB：初始位置模式            (conbine with LB for change to zero position)
 #define JS_START2_BT        14
 #endif
@@ -126,6 +126,8 @@ private:
     // 按下LB的变量
     bool host_mode = false;             // 按下改变状态，切换为host起身模式           (change to host mode, for stand up)
     bool dance_mode = false;            // 按下改变状态，切换为跳舞模式               (change to dance mode)
+    bool amp_terrain_mode = false;      
+    bool amp_walk_mode = false;
 
     bool dance_flag = false;            // 按下改变状态，暂停或继续跳舞               (stop or continue dancing)
 
@@ -185,8 +187,8 @@ private:
             // LB组合键
             message.btn_5 = dance_mode ? 1 : 0;
             message.btn_6 = host_mode ? 1 : 0; 
-            // message.btn_7 = 
-            // message.btn_8 =  
+            message.btn_7 = amp_terrain_mode ? 1 : 0;
+            message.btn_8 = amp_walk_mode ? 1 : 0;
 
             // 纯按键
             message.btn_9 = dance_flag ? 1 : 0;
@@ -284,7 +286,8 @@ private:
                         case JS_SWITCH_Y:{
                             if(LB_press){
                                 const std::lock_guard<std::mutex> guard(lock_);
-                                printf("LB + Y\n");
+                                amp_walk_mode = !amp_walk_mode;
+                                printf("amp_walk_mode: %d\n", amp_walk_mode);
                             }else if(RB_press){
                                 const std::lock_guard<std::mutex> guard(lock_);
                                 initial_pos_mode = !initial_pos_mode;
@@ -313,7 +316,8 @@ private:
                         case JS_SWITCH_B:{
                             if(LB_press){
                                 const std::lock_guard<std::mutex> guard(lock_);
-                                printf("LB + B\n");
+                                amp_terrain_mode = !amp_terrain_mode;
+                                printf("amp terrain mode:%d\n", amp_terrain_mode);
                             }else if(RB_press){
                                 const std::lock_guard<std::mutex> guard(lock_);
                                 pd_brake_mode = !pd_brake_mode;
