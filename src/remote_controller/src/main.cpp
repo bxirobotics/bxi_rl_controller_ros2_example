@@ -217,6 +217,8 @@ private:
         while (1){
             ssize_t len;
             struct js_event event;
+            int ret;
+            (void)ret;
             
             // 读取js端口数据到event (read js date to event)
             len = read(js_fd, &event, sizeof(event));
@@ -231,9 +233,9 @@ private:
                     if (event.value){
                         switch (event.number){
                         case JS_STOP_BT:{
-                            system("killall -SIGINT hardware_elf3");
-                            system("killall -SIGINT bxi_example_py_elf3");
-                            system("killall -SIGINT bxi_example_py_elf3_demo");
+                            ret = system("killall -SIGINT hardware_elf3");
+                            ret = system("killall -SIGINT bxi_example_py_elf3");
+                            ret = system("killall -SIGINT bxi_example_py_elf3_demo");
 
                             launch_lock = false;
 
@@ -242,11 +244,11 @@ private:
 
                         case JS_START_BT:{
                             if(launch_lock == false){
-                                system("mkdir -p /var/log/bxi_log");
+                                ret = system("mkdir -p /var/log/bxi_log");
                                 // // sim
-                                // system("ros2 launch bxi_example_py_elf3 example_launch_demo.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                                // ret = system("ros2 launch bxi_example_py_elf3 example_launch_demo.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
                                 // // real
-                                system("ros2 launch bxi_example_py_elf3 example_launch_demo_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                                ret = system("ros2 launch bxi_example_py_elf3 example_launch_demo_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
                                 printf("run robot\n");//robot_controller
                             
                                 reset_value();
