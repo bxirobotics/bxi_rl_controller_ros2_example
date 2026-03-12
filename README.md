@@ -15,8 +15,9 @@ The binary ROS2 packages of ROS2 environment and mujoco can be find here:[`bxi_r
 * Control program `src/` directory：：
 1. `src/bix_example`: demo of the initialization process and basic message receiving and sending functions.    
 2. `src/bix_example_py`: a demo of learming based control policy.    
-3. `remote_controller`: reads the Xbox/PS input and publish the commands. Work with both the robot hardware and the simulation environment.   
-4. `src/bix_example_py_arm`: a demo of upper body control.     
+3. `src/bix_example_py_elf3`: a demo of learming based control policy elf3.    
+4. `remote_controller`: reads the Xbox/PS input and publish the commands. Work with both the robot hardware and the simulation environment.   
+5. `src/bix_example_py_arm`: a demo of upper body control.     
 
 ## Usage
 ### Descripiton Files
@@ -25,14 +26,13 @@ The binary ROS2 packages of ROS2 environment and mujoco can be find here:[`bxi_r
 3. `elf2-foot`: Elf2 v3: sole changed: 1 shaping to human foot for wearing shoes. 2 symmetric soles change to asymmetric, like human feet.(deprecated)
 4. `elf2-footv4`: Elf2 v4: sole change : sole shape change back to regular rectangle with oval ends. Asymmetric sole.   
 5. `elf2-arm`: arms only.    
-6. `elf3_prev_dof20` : Elf3 preview version with dof20.
+6. `elf3_dof29` : Elf3 version with dof29
 
 ### Switch between hardware and simulation environment
 1. `hw` is short for`hardware`，all `launch` files with suffix `hw` are to launch real hardware. Please use them carefully.      
 2. The simulation environment and the robot hardware share the same control program. You only need to apply different launch files to switch between simulation and hardware. Topics for simulation code are with the `simulation/` prefix, while topics for the hardware are with the `hardware/` prefix. For details, please refer to the topic parameter settings in src/example.    
 3. The robot in the simulation environment is initialized with a virtual suspension. After startup, the suspension needs to be released. While suspension-related signals are ignored when operating on robot hardware).     
-4. There is a global odometer topic `odm` in the simulation env, while this topic is not available in `hardware` environment.    
-5. There is `touch_sensor` in the simulation env, while the real foot touch sensor is under developement. Although `hardware` publishes touch forces, they are rough estimates. For higher precision requirements, estimation can be performed using the ground contact state estimation algorithm in quadruped robots.       
+4. There is a global odometer topic `odm` in the simulation env, while this topic is not available in `hardware` environment.     
 
 ### System Environment Setup   
 1. `Ubuntu 22.04`，with ROS2 version `humble`. `mujoco` requires `libglfw3-dev`.       
@@ -48,15 +48,10 @@ For startup examples, please refer to src/bxi_example_py.
 ### Running a demo control program 
 1. Copy the ROS2 binary packages[`bxi_ros2_pkg`](https://github.com/bxirobotics/bxi_ros2_pkg) to /opt/bxi/bxi_ros2_pkg , activate it：
    `source /opt/bxi/bxi_ros2_pkg/setup.bash` . Run it as `root` on robot hardware.         
-2. In bxi_rl_controller_ros2_example directory, run `colcon build` to compile all sources in `./src` director. When compilation is done，run `source ./install/setup.bash` to activate the environment of current packages.        
+2. In bxi_rl_controller_ros2_example directory, run `bash build.sh` to compile all sources in `./src` director. When compilation is done，run `source ./install/setup.bash` to activate the environment of current packages.        
 3. Run whole body demos：
-* `ros2 launch bxi_example_py example_launch.py` : start simulation + controller program(learning based)        
-* `ros2 launch bxi_example_py example_launch_hw.py` start robot hardware + control policy 
-4. Run upper body control demos：
-* `ros2 launch bxi_example_arm example_launch.py`: start simulation + upper body controller program(C++ version) 
-* `ros2 launch bxi_example_arm example_launch_hw.py`: start robot hardware + upper body controller program(C++ version) 
-* `ros2 launch bxi_example_py_arm example_launch.py`: start simulation + upper body controller program(python version) 
-* `ros2 launch bxi_example_py_arm example_launch_hw.py`: start robot hardware + upper body controller program(python version)     
+* `ros2 launch bxi_example_py_elf3 example_launch_demo.py` : start simulation + controller program(learning based)        
+* `ros2 launch bxi_example_py_elf3 example_launch_demo_hw.py` start robot hardware + control policy  
 
 ### Tips for control program
 1. The control commands in the topic must be sent in the specified joint order. The order of joints refer to the example `src/bix_example`    
