@@ -234,7 +234,8 @@ class BxiExample(Node):
         self.act_pub = self.create_publisher(bxiMsg.ActuatorCmds, self.topic_prefix+'actuators_cmds', qos)  # CHANGE
         
         self.odom_sub = self.create_subscription(nav_msgs.msg.Odometry, self.topic_prefix+'odom', self.odom_callback, qos)
-        self.joint_sub = self.create_subscription(sensor_msgs.msg.JointState, self.topic_prefix+'joint_states', self.joint_callback, qos)
+        # self.joint_sub = self.create_subscription(sensor_msgs.msg.JointState, self.topic_prefix+'joint_states', self.joint_callback, qos)
+        self.actuator_sub = self.create_subscription(bxiMsg.ActuatorStates, self.topic_prefix+'actuator_states', self.actuator_callback, qos)
         self.imu_sub = self.create_subscription(sensor_msgs.msg.Imu, self.topic_prefix+'imu_data', self.imu_callback, qos)
         self.touch_sub = self.create_subscription(bxiMsg.TouchSensor, self.topic_prefix+'touch_sensor', self.touch_callback, qos)
         self.joy_sub = self.create_subscription(bxiMsg.MotionCommands, 'motion_commands', self.joy_callback, qos)
@@ -539,6 +540,17 @@ class BxiExample(Node):
         joint_pos = msg.position
         joint_vel = msg.velocity
         joint_tor = msg.effort
+        
+        with self.lock_in:
+            self.qpos[:] = np.array(joint_pos[:])
+            self.qvel[:] = np.array(joint_vel[:])
+            
+    def actuator_callback(self, msg):
+        joint_pos = msg.position
+        joint_vel = msg.velocity
+        joint_tor = msg.effort
+        drv_temperature = msg.driver_temperature
+        motor_temperature = msg.motor_temperature
         
         with self.lock_in:
             self.qpos[:] = np.array(joint_pos[:])
