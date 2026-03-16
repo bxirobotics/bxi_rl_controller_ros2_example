@@ -11,7 +11,12 @@ The binary ROS2 packages of ROS2 environment and mujoco can be find here:[`bxi_r
 2. `description`: contains the robot description files, including urdf, xml and the meshe files.    
 3. `mujoco`: Mujoco simulator based on ROS2. Controller programs a recommened to be verified in Mujoco before deploy to the robot hardware.    
 4. `hardware`: The robot hardware package. This node publishes all sensor data of the robot and receives control commands.     
-5. `hardware_arm`: The hardware control package for the upper-body-only version of the robot. This node publishes information about the robot's upper-body arms and receives control commands.
+5. `hardware_arm`: The hardware control package for the upper-body-only version of the robot. This node publishes information about the robot's upper-body arms and receives control commands.    
+    
+The [`bxi_ros2_pkg`](https://github.com/bxirobotics/bxi_ros2_pkg) is a unified framework for both simulation and hardare:    
+ROS2 structure simulation:    ![ROS2 structure simulation](docs/ROS2_structure_simulation.png)    
+ROS2 structure hardware:    ![ROS2 structure hardware](docs/ROS2_structure_hardware.png)
+
 * Control program `src/` directory：：
 1. `src/bix_example`: demo of the initialization process and basic message receiving and sending functions.    
 2. `src/bix_example_py`: a demo of learming based control policy.    
