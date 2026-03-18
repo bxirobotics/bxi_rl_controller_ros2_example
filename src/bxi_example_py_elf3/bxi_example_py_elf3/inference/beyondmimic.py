@@ -157,9 +157,9 @@ class DanceMotionPolicy:
         motion_vel = self.motioninputvel[self.timestep,:]  
           
         # 前两个时间步计算初始转换矩阵
-        if self.timeinit < 2:
-            self.timeinit += 1.0
-            self.compute_init_to_world(quat, motion_quat)
+        # if self.timeinit < 2:
+        #     self.timeinit += 1.0
+        self.compute_init_to_world(quat, motion_quat)
         
         # create observation
         offset = 0
