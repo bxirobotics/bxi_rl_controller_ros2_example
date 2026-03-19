@@ -145,6 +145,9 @@ class HumanoidGaitPolicyLite:
         self.single_obs_dim = 3 + 3 + 3 + self.num_actions*3 #96
         
         self.initialize_model(self.model_onnx_path)
+
+        self.pre_cmd_vel_run = np.array([0.0, 0.0, 0.0])
+        self.cmd_vel_run = np.array([0.0, 0.0, 0.0])
         
     # 初始化部分（完整版）
     def initialize_model(self, onnx_path):
