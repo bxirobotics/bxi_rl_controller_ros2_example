@@ -270,6 +270,7 @@ class BxiExample(Node):
 
             case robotState.amp_walk:
                 self.loop_count = 0
+                self.amp_walk.pre_cmd_vel_run = np.array([0., 0., 0.])
                 return
 
             case robotState.dance:
@@ -397,7 +398,9 @@ class BxiExample(Node):
                         self.next_state = robotState.zero_torque
                         return
 
-                    qpos = self.amp_walk.inference_step(q, dq, quat_wxyz, omega, cmd_vel)
+                    self.amp_walk.cmd_vel_run[:] = 0.98 * self.amp_walk.pre_cmd_vel_run[:] + 0.02 * cmd_vel[:]
+                    qpos = self.amp_walk.inference_step(q, dq, quat_wxyz, omega, self.amp_walk.cmd_vel_run)
+                    self.amp_walk.pre_cmd_vel_run = self.amp_walk.cmd_vel_run
                     
                     kp = self.amp_walk.kps
                     kd = self.amp_walk.kds
@@ -559,7 +562,7 @@ class BxiExample(Node):
     def joy_callback(self, msg):
         with self.lock_in:
             if self.state == robotState.normal:
-                self.vx = msg.vel_des.x * 2                 # * 3
+                self.vx = msg.vel_des.x * 1.5                 # * 3
                 self.vx = np.clip(self.vx, -1.5, 2.0)       # -2.0  3.0
                 self.vy = msg.vel_des.y * 2
                 self.dyaw = msg.yawdot_des * 2
