@@ -270,6 +270,7 @@ class BxiExample(Node):
 
             case robotState.amp_walk:
                 self.loop_count = 0
+                self.amp_walk.max_vel = 0.0
                 self.amp_walk.pre_cmd_vel_run = np.array([0., 0., 0.])
                 return
 
@@ -398,8 +399,17 @@ class BxiExample(Node):
                         self.next_state = robotState.zero_torque
                         return
 
-                    self.amp_walk.cmd_vel_run[:] = 0.98 * self.amp_walk.pre_cmd_vel_run[:] + 0.02 * cmd_vel[:]
-                    qpos = self.amp_walk.inference_step(q, dq, quat_wxyz, omega, self.amp_walk.cmd_vel_run)
+                    self.amp_walk.cmd_vel_run[:2] = 0.98 * self.amp_walk.pre_cmd_vel_run[:2] + 0.02 * cmd_vel[:2]
+                    self.amp_walk.cmd_vel_run[2] = cmd_vel[2]
+                    qpos, vel = self.amp_walk.inference_step(q, dq, quat_wxyz, omega, self.amp_walk.cmd_vel_run)
+
+                    if(vel[0] > self.amp_walk.max_vel):
+                        self.amp_walk.max_vel = vel[0]
+                    if(self.loop_count >= 100 + int(self.change_time/self.dt)):
+                        print(self.amp_walk.max_vel)
+                        self.loop_count = int(self.change_time/self.dt)
+                        self.amp_walk.max_vel = 0.0
+
                     self.amp_walk.pre_cmd_vel_run = self.amp_walk.cmd_vel_run
                     
                     kp = self.amp_walk.kps
@@ -426,7 +436,7 @@ class BxiExample(Node):
                         self.next_state = robotState.zero_torque
                         return
 
-                    qpos = self.amp_terrain.inference_step(q, dq, quat_wxyz, omega, cmd_vel)
+                    qpos, vel = self.amp_terrain.inference_step(q, dq, quat_wxyz, omega, cmd_vel)
 
                     kp = self.amp_terrain.kps
                     kd = self.amp_terrain.kds
@@ -563,21 +573,21 @@ class BxiExample(Node):
         with self.lock_in:
             if self.state == robotState.normal:
                 self.vx = msg.vel_des.x * 1.5                 # * 3
-                self.vx = np.clip(self.vx, -1.5, 2.0)       # -2.0  3.0
-                self.vy = msg.vel_des.y * 2
-                self.dyaw = msg.yawdot_des * 2
+                self.vx = np.clip(self.vx, -1.0, 1.5)       # -2.0  3.0
+                self.vy = msg.vel_des.y * 0.5
+                self.dyaw = msg.yawdot_des * 1.0
 
             elif self.state == robotState.amp_terrain:
-                self.vx = msg.vel_des.x *  1
+                self.vx = msg.vel_des.x *  1.0
                 self.vx = np.clip(self.vx, -1.0, 1.0)
-                self.vy = msg.vel_des.y * 1
-                self.dyaw = msg.yawdot_des * 1.6
+                self.vy = msg.vel_des.y * 0.5
+                self.dyaw = msg.yawdot_des * 1.5
 
             elif self.state == robotState.amp_walk:
-                self.vx = msg.vel_des.x *  5
-                self.vx = np.clip(self.vx, -3.0, 5.0)
-                self.vy = msg.vel_des.y * 2
-                self.dyaw = msg.yawdot_des * 1.6
+                self.vx = msg.vel_des.x * 4.0
+                self.vx = np.clip(self.vx, -2.0, 4.0)
+                self.vy = msg.vel_des.y * 0.5
+                self.dyaw = msg.yawdot_des * 1.5
 
             normal_mode = msg.btn_1             # RB+X 切换为普通模式
             zero_torque_mode = msg.btn_2        # RB+A 切换为零力模式
