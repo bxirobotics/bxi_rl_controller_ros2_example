@@ -148,6 +148,8 @@ class HumanoidGaitPolicyLite:
 
         self.pre_cmd_vel_run = np.array([0.0, 0.0, 0.0])
         self.cmd_vel_run = np.array([0.0, 0.0, 0.0])
+        self.vae_vel = np.zeros(3, dtype=np.float32)
+        self.max_vel = 0.0
         
     # 初始化部分（完整版）
     def initialize_model(self, onnx_path):
@@ -211,14 +213,16 @@ class HumanoidGaitPolicyLite:
         np.copyto(self.input_buffer, self.obs_tensor)  # 比直接赋值更安全
         self.action = self.session.run(["actions"], {"obs": self.obs_tensor})[0][0]
     
-        self.last_action = self.action.copy()
+        self.last_action = self.action[:29].copy()
 
-        self.target_dof_pos = self.action * self.action_scale
+        self.vae_vel = self.action[29:].copy()
+
+        self.target_dof_pos = self.last_action * self.action_scale
         
         self.target_dof_pos = self.target_dof_pos[self.isaac_to_mujoco_idx] + self.default_dof_pos
         
         # 极简推理（比原版快5-15%）
-        return self.target_dof_pos
+        return self.target_dof_pos, self.vae_vel
 
     # 创建观测输入   
     def compute_observation(self,qj, dqj, quat, omega, cmd_vel):
