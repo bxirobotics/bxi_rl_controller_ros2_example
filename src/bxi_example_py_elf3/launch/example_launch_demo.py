@@ -15,11 +15,11 @@ def generate_launch_description():
         "dance": "data/dance.npz",
     }  
     onnx_file_dict = {
-        "normal": "data/model_normal.onnx",
+        "normal": "data/amp_terrain.onnx",
         "host": "data/host.onnx",
         "dance": "data/dance.onnx",
-        "amp_walk": "data/amp_walk.onnx",
-        "amp_terrain": "data/amp_terrain.onnx"
+        "amp_run": "data/amp_run.onnx",
+        "normal_run": "data/model_normal.onnx",
     }
 
     for key, value in npz_file_dict.items():
