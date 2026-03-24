@@ -126,8 +126,8 @@ private:
     // 按下LB的变量
     bool host_mode = false;             // 按下改变状态，切换为host起身模式           (change to host mode, for stand up)
     bool dance_mode = false;            // 按下改变状态，切换为跳舞模式               (change to dance mode)
-    bool amp_terrain_mode = false;      
-    bool amp_walk_mode = false;
+    bool normal_run = false;      
+    bool amp_run_mode = false;
 
     bool dance_flag = false;            // 按下改变状态，暂停或继续跳舞               (stop or continue dancing)
 
@@ -187,8 +187,8 @@ private:
             // LB组合键
             message.btn_5 = dance_mode ? 1 : 0;
             message.btn_6 = host_mode ? 1 : 0; 
-            message.btn_7 = amp_terrain_mode ? 1 : 0;
-            message.btn_8 = amp_walk_mode ? 1 : 0;
+            message.btn_7 = normal_run ? 1 : 0;
+            message.btn_8 = amp_run_mode ? 1 : 0;
 
             // 纯按键
             message.btn_9 = dance_flag ? 1 : 0;
@@ -245,10 +245,8 @@ private:
                         case JS_START_BT:{
                             if(launch_lock == false){
                                 ret = system("mkdir -p /var/log/bxi_log");
-                                // // sim
-                                // ret = system("ros2 launch bxi_example_py_elf3 example_launch_demo.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
-                                // // real
                                 ret = system("ros2 launch bxi_example_py_elf3 example_launch_demo_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                                ret = system("ros2 launch bxi_excample_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log  2>&1 &");
                                 printf("run robot\n");//robot_controller
                             
                                 reset_value();
@@ -288,8 +286,8 @@ private:
                         case JS_SWITCH_Y:{
                             if(LB_press){
                                 const std::lock_guard<std::mutex> guard(lock_);
-                                amp_walk_mode = !amp_walk_mode;
-                                printf("amp_walk_mode: %d\n", amp_walk_mode);
+                                amp_run_mode = !amp_run_mode;
+                                printf("amp_run_mode: %d\n", amp_run_mode);
                             }else if(RB_press){
                                 const std::lock_guard<std::mutex> guard(lock_);
                                 initial_pos_mode = !initial_pos_mode;
@@ -318,8 +316,8 @@ private:
                         case JS_SWITCH_B:{
                             if(LB_press){
                                 const std::lock_guard<std::mutex> guard(lock_);
-                                amp_terrain_mode = !amp_terrain_mode;
-                                printf("amp terrain mode:%d\n", amp_terrain_mode);
+                                normal_run = !normal_run;
+                                printf("normal run mode:%d\n", normal_run);
                             }else if(RB_press){
                                 const std::lock_guard<std::mutex> guard(lock_);
                                 pd_brake_mode = !pd_brake_mode;
