@@ -1,0 +1,78 @@
+name: Auto Build and Release
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Generate Time-based Version Tag
+        id: vars
+        run: |
+          TIME_TAG=$(date +'%y%m%d')
+          VERSION="v${TIME_TAG}-${GITHUB_RUN_NUMBER}"
+          echo "tag_name=${VERSION}" >> $GITHUB_ENV
+          echo "Generated Tag: ${VERSION}"
+
+      - name: Set up ROS 2 Humble
+        uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: humble
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache-${{ github.ref }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-
+
+      - name: Fetch bxi_ros2_pkg
+        run: |
+          sudo mkdir -p /opt/bxi
+          sudo git clone https://github.com/bxirobotics/bxi_ros2_pkg.git /opt/bxi/bxi_ros2_pkg
+
+      - name: Build
+        run: |
+          INSTALL_DIR=/opt/bxi/bxi_rl_controller
+          BUILD_TYPE=Release
+
+          sudo bash -c "
+            set -e
+            source /opt/ros/humble/setup.bash
+            source /opt/bxi/bxi_ros2_pkg/setup.bash
+
+            mkdir -p $INSTALL_DIR
+
+            colcon build \
+              --merge-install \
+              --install-base $INSTALL_DIR \
+              --cmake-args \
+                  -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
+                  -DCMAKE_EXPORT_COMPILE_COMMANDS=On \
+                  -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                  -Wall -Wextra -Wpedantic
+          "
+
+      - name: Tar Package
+        run: |
+          cd /opt/bxi
+          tar -czvf bxi_rl_controller_${{ env.tag_name }}.tar.gz bxi_rl_controller/
+          mv bxi_rl_controller_${{ env.tag_name }}.tar.gz ${{ github.workspace }}/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.tag_name }}
+          name: "Release ${{ env.tag_name }}"
+          files: bxi_rl_controller_${{ env.tag_name }}.tar.gz
+          generate_release_notes: true
