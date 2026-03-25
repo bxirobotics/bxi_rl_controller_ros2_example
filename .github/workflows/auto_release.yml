@@ -69,6 +69,13 @@ jobs:
           tar -czvf bxi_rl_controller_${{ env.tag_name }}.tar.gz bxi_rl_controller/
           mv bxi_rl_controller_${{ env.tag_name }}.tar.gz ${{ github.workspace }}/
 
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bxi_rl_controller_package
+          path: bxi_rl_controller_${{ env.tag_name }}.tar.gz
+          retention-days: 7
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -76,3 +83,24 @@ jobs:
           name: "Release ${{ env.tag_name }}"
           files: bxi_rl_controller_${{ env.tag_name }}.tar.gz
           generate_release_notes: true
+
+  upload:
+    needs: build-and-release
+    runs-on: ubuntu-22.04
+    if: success()
+
+    steps:
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bxi_rl_controller_package
+
+      - name: SCP Upload to Server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: "*.tar.gz"
+          target: ${{ secrets.DEPLOY_PATH }}
