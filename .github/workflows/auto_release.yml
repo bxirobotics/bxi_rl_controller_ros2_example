@@ -16,13 +16,20 @@ env:
 jobs:
   build-and-release:
     runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/sloretz/ros:humble-desktop-full
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Mark Workspace as Safe Git Directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Generate Version Tag
-        shell: bash
         run: |
           git fetch --force --tags
           TIME_TAG=$(date +'%y%m%d')
@@ -37,28 +44,22 @@ jobs:
           fi
           echo "tag_name=${VERSION}" >> "$GITHUB_ENV"
 
-      - name: Set up ROS 2 Humble
-        uses: ros-tooling/setup-ros@v0.7
-        with:
-          required-ros-distributions: humble
-
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ runner.os }}-ccache-${{ github.ref }}
+          update-package-index: true
           restore-keys: |
             ${{ runner.os }}-ccache-
 
       - name: Fetch bxi_ros2_pkg
-        shell: bash
         run: |
-          sudo mkdir -p /opt/bxi
-          sudo git clone https://github.com/bxirobotics/bxi_ros2_pkg.git /opt/bxi/bxi_ros2_pkg
+          mkdir -p /opt/bxi
+          git clone --depth 1 https://github.com/bxirobotics/bxi_ros2_pkg.git /opt/bxi/bxi_ros2_pkg
 
       - name: Build Controller Package
-        shell: bash
         run: |
-          sudo bash -c "
+          bash -c "
             set -e
             source /opt/ros/humble/setup.bash
             source /opt/bxi/bxi_ros2_pkg/setup.bash
@@ -72,13 +73,11 @@ jobs:
           "
 
       - name: Write Package Metadata
-        shell: bash
         run: |
-          printf '%s\n' "${{ env.tag_name }}" | sudo tee "${PACKAGE_TARGET_PATH}/.version" >/dev/null
-          sudo chmod 444 "${PACKAGE_TARGET_PATH}/.version"
+          printf '%s\n' "${{ env.tag_name }}" | tee "${PACKAGE_TARGET_PATH}/.version" >/dev/null
+          chmod 444 "${PACKAGE_TARGET_PATH}/.version"
 
       - name: Package Artifact
-        shell: bash
         run: |
           ARTIFACT="${PACKAGE_NAME}_${{ env.tag_name }}.tar.gz"
           tar -czvf "${ARTIFACT}" -C /opt/bxi "${PACKAGE_NAME}"
