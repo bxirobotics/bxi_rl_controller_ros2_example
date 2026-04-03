@@ -252,7 +252,7 @@
     <parent link="l_knee_y_link"/>
     <child link="l_ankle_y_link"/>
     <axis xyz="0 1 0"/>
-    <limit lower="-0.87266" upper="0.7854" effort="40" velocity="20"/>
+    <limit lower="-0.87266" upper="0.7854" effort="50" velocity="20"/>
   </joint>
   <link name="l_ankle_x_link">
     <inertial>
@@ -281,7 +281,7 @@
     <parent link="l_ankle_y_link"/>
     <child link="l_ankle_x_link"/>
     <axis xyz="1 0 0"/>
-    <limit lower="-0.34907" upper="0.34907" effort="15" velocity="20"/>
+    <limit lower="-0.34907" upper="0.34907" effort="20" velocity="20"/>
   </joint>
   <link name="r_hip_y_link">
     <inertial>
@@ -426,7 +426,7 @@
     <parent link="r_knee_y_link"/>
     <child link="r_ankle_y_link"/>
     <axis xyz="0 1 0"/>
-    <limit lower="-0.87266" upper="0.7854" effort="40" velocity="20"/>
+    <limit lower="-0.87266" upper="0.7854" effort="50" velocity="20"/>
   </joint>
   <link name="r_ankle_x_link">
     <inertial>
@@ -455,7 +455,7 @@
     <parent link="r_ankle_y_link"/>
     <child link="r_ankle_x_link"/>
     <axis xyz="1 0 0"/>
-    <limit lower="-0.34907" upper="0.34907" effort="15" velocity="20"/>
+    <limit lower="-0.34907" upper="0.34907" effort="20" velocity="20"/>
   </joint>
   <link name="l_shoulder_y_link">
     <inertial>
