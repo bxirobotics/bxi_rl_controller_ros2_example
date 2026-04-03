@@ -1,0 +1,113 @@
+name: Auto Build and Release
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  ROBOT_MODEL: ELF3
+  PACKAGE_NAME: bxi_rl_controller_ros2_example
+  PACKAGE_TARGET_PATH: /opt/bxi/bxi_rl_controller_ros2_example
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/sloretz/ros:humble-desktop-full
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Mark Workspace as Safe Git Directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Generate Version Tag
+        run: |
+          git fetch --force --tags
+          TIME_TAG=$(date +'%y%m%d')
+          BASE_TAG="v${TIME_TAG}"
+          VERSION="${BASE_TAG}"
+          if git tag -l "${BASE_TAG}" | grep -qx "${BASE_TAG}"; then
+            SUFFIX=1
+            while git tag -l "${BASE_TAG}-${SUFFIX}" | grep -qx "${BASE_TAG}-${SUFFIX}"; do
+              SUFFIX=$((SUFFIX + 1))
+            done
+            VERSION="${BASE_TAG}-${SUFFIX}"
+          fi
+          echo "tag_name=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache-${{ github.ref }}
+          update-package-index: true
+          restore-keys: |
+            ${{ runner.os }}-ccache-
+
+      - name: Fetch bxi_ros2_pkg
+        run: |
+          mkdir -p /opt/bxi
+          git clone --depth 1 https://github.com/bxirobotics/bxi_ros2_pkg.git /opt/bxi/bxi_ros2_pkg
+
+      - name: Build Controller Package
+        run: |
+          bash -c "
+            set -e
+            source /opt/ros/humble/setup.bash
+            source /opt/bxi/bxi_ros2_pkg/setup.bash
+            mkdir -p ${PACKAGE_TARGET_PATH}
+            colcon build --merge-install --install-base ${PACKAGE_TARGET_PATH} --cmake-args \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_EXPORT_COMPILE_COMMANDS=On \
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+              -Wall -Wextra -Wpedantic
+          "
+
+      - name: Write Package Metadata
+        run: |
+          printf '%s\n' "${{ env.tag_name }}" | tee "${PACKAGE_TARGET_PATH}/.version" >/dev/null
+          chmod 444 "${PACKAGE_TARGET_PATH}/.version"
+
+      - name: Package Artifact
+        run: |
+          ARTIFACT="${PACKAGE_NAME}_${{ env.tag_name }}.tar.gz"
+          tar -czvf "${ARTIFACT}" -C /opt/bxi "${PACKAGE_NAME}"
+          sha256sum "${ARTIFACT}" > "${ARTIFACT}.sha256"
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bxi_rl_controller_ros2_example_package
+          path: |
+            bxi_rl_controller_ros2_example_${{ env.tag_name }}.tar.gz
+            bxi_rl_controller_ros2_example_${{ env.tag_name }}.tar.gz.sha256
+          retention-days: 7
+
+      - name: SCP Upload Package Files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: bxi_rl_controller_ros2_example_${{ env.tag_name }}.tar.gz,bxi_rl_controller_ros2_example_${{ env.tag_name }}.tar.gz.sha256
+          target: ${{ secrets.DEPLOY_PATH }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.tag_name }}
+          name: "Release ${{ env.tag_name }}"
+          files: |
+            bxi_rl_controller_ros2_example_${{ env.tag_name }}.tar.gz
+            bxi_rl_controller_ros2_example_${{ env.tag_name }}.tar.gz.sha256
+          generate_release_notes: true
