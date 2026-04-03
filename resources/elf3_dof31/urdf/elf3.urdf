@@ -2,9 +2,9 @@
 <robot name="elf3">
   <link name="torso_link">
     <inertial>
-      <origin xyz="0.001601 0.000219 0.023250" rpy="0 0 0"/>
-      <mass value="12.004"/>
-      <inertia ixx="0.2931669" ixy="-0.00014022" ixz="0.00019310" iyy="0.26589586" iyz="-0.00056456" izz="0.06116338"/>
+      <origin xyz="0.00108635 0.00009700 -0.02174892" rpy="0 0 0"/>
+      <mass value="10.239"/>
+      <inertia ixx="0.14717862" ixy="-0.00013710" ixz="0.00175486" iyy="0.12044077" iyz="-0.00013941" izz="0.05802838"/>
     </inertial>
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -863,4 +863,146 @@
     <axis xyz="0 0 1"/>
     <limit lower="-0.7854" upper="0.7854" effort="21" velocity="20"/>
   </joint>
+
+  <link
+    name="head_z_link">
+    <inertial>
+      <origin
+        xyz="0.00000248 -0.00002072 -0.07141233"
+        rpy="0 0 0" />
+      <mass
+        value="0.37665" />
+      <inertia
+        ixx="0.00192005"
+        ixy="-0.00000016"
+        ixz="0.00000017"
+        iyy="0.00110511"
+        iyz="0.00000007"
+        izz="0.00095156" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="./meshes/head_z_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="./meshes/head_z_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="head_z_joint"
+    type="revolute">
+    <origin
+      xyz="0 0 0.2995"
+      rpy="0 0 0" />
+    <parent
+      link="torso_link" />
+    <child
+      link="head_z_link" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-1.57"
+      upper="1.57"
+      effort="21"
+      velocity="20" />
+  </joint>
+  <link
+    name="head_y_link">
+    <inertial>
+      <origin
+        xyz="0.00693497 0.00114433 -0.00987703"
+        rpy="0 0 0" />
+      <mass
+        value="1.5742567" />
+      <inertia
+        ixx="0.00294861"
+        ixy="0.00000837"
+        ixz="0.00021043"
+        iyy="0.00324950"
+        iyz="-0.00001401"
+        izz="0.00265366" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="./meshes/head_y_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="./meshes/head_y_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="head_y_joint"
+    type="revolute">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="head_z_link" />
+    <child
+      link="head_y_link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="-0.785"
+      upper="0.785"
+      effort="21"
+      velocity="20" />
+  </joint>
+
+  <link name="mid360_link"/>
+  <joint name="mid360_joint" type="fixed">
+    <origin xyz="0 0 -0.081" rpy="3.1416 0 0" />
+    <parent link="head_y_link" />
+    <child link="mid360_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+
+  <link name="d435i_link"/>
+  <joint name="d435i_joint" type="fixed">
+    <origin xyz="0.067 0 -0.048" rpy="-1.5708 0 -1.5708" />
+    <parent link="head_y_link" />
+    <child link="d435i_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+
+  <link name="imu_link"/>
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="torso_link" />
+    <child link="imu_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+
 </robot>
