@@ -134,15 +134,23 @@ class HumanoidGaitPolicyLite:
         
         # Initial command vel
         self.command_vel = np.array([0.0, 0.0, 0.0])
+
+        # Gait parameters
+        self.dt: float = 0.005  #控制周期
+        self.gait_air_ratio_l: float = 0.38  #步态空中比率l
+        self.gait_air_ratio_r: float = 0.38  #步态空中比率r
+        self.gait_phase_offset_l: float = 0.38  #步态相位偏移l
+        self.gait_phase_offset_r: float = 0.88  #步态相位偏移r
+        self.gait_cycle: float = 0.85    #步态周期（秒）
         
         # Number of actions and observations
         self.num_actions = 29
         
-        self.num_obs = 960  # 96 * 10 (observation dimension * history length)
-    
+        # 【动态】以下将在initialize_model中根据实际模型输入维度调整
+        self.num_obs = 960  # 默认值，将被动态调整
         self.obs_history_len = 10
-        
-        self.single_obs_dim = 3 + 3 + 3 + self.num_actions*3 #96
+        self.single_obs_dim = 3 + 3 + 3 + self.num_actions*3  # 默认96维，将被动态调整
+        self.extra_obs_dim = 0  # 额外观测维度（用于1020维模型），默认0
         
         self.initialize_model(self.model_onnx_path)
 
@@ -178,6 +186,32 @@ class HumanoidGaitPolicyLite:
         self.output_info = self.session.get_outputs()[0]
         print(self.input_info)
         print(self.output_info)
+        
+        # 【关键】自动检测模型输入维度，兼容960和1020
+        input_shape = self.input_info.shape
+        if isinstance(input_shape, (list, tuple)) and len(input_shape) > 1:
+            actual_input_dim = input_shape[-1]
+        else:
+            actual_input_dim = 960  # 默认值
+        
+        print(f"\n[AutoDetect] Model input dimension: {actual_input_dim}")
+        
+        # 根据输入维度动态调整
+        if actual_input_dim == 960:
+            # 960维模型：96维/步 × 10步
+            self.single_obs_dim = 96  # 3+3+3+29+29+29
+            self.extra_obs_dim = 0
+            print(f"[AutoDetect] Configured for 960D input (96D per step, no extra)")
+        elif actual_input_dim == 1020:
+            # 1020维模型：102维/步 × 10步
+            self.single_obs_dim = 102  # 96 + 6 extra
+            self.extra_obs_dim = 6
+            print(f"[AutoDetect] Configured for 1020D input (102D per step, +6 extra)")
+      
+        # 更新总观测维度
+        self.num_obs = self.single_obs_dim * self.obs_history_len
+        print(f"[AutoDetect] Total observation dimension: {self.num_obs}\n")
+        
         # 预分配输入内存（可选，适合固定输入尺寸）
         self.input_buffer = np.zeros(
             self.input_info.shape[1],
@@ -195,6 +229,13 @@ class HumanoidGaitPolicyLite:
         
         # Prepare full observation vector
         self.obs = np.zeros(self.num_obs, dtype=np.float32)
+        
+        if self.extra_obs_dim > 0:
+            self.episode_length_buf = 0
+            self.gait_phase = np.zeros(2) #步态相位
+            self.gait_cycle = self.gait_cycle
+            self.phase_ratio = np.array([self.gait_air_ratio_l, self.gait_air_ratio_r]) #步态空中比率[0.38,0.38]
+            self.phase_offset = np.array([self.gait_phase_offset_l, self.gait_phase_offset_r]) #步态相位偏移[0.38,0.88]
 
         # 进行一次初始推理，填充obs_history
         print("preparing initial inference to fill obs_history...")
@@ -208,37 +249,67 @@ class HumanoidGaitPolicyLite:
         print("AMP model init finished!!!")
     # 循环推理部分（极速版）
     def inference_step(self, q, dq, quat, omega, cmd_vel):
-         # Update observation
+        # 如果启用了额外观测（步态），先更新步态相位，使观测包含当前相位
+        if self.extra_obs_dim > 0:
+            # 计数并计算当前相位
+            self.episode_length_buf += 1
+            t = self.episode_length_buf * 0.02 / self.gait_cycle
+            self.gait_phase[0] = (t + self.phase_offset[0]) % 1.0
+            self.gait_phase[1] = (t + self.phase_offset[1]) % 1.0
+
+        # Update observation (现在观测会使用最新的 gait_phase)
         self.obs_tensor = self.compute_observation(q, dq, quat, omega, cmd_vel)        
         np.copyto(self.input_buffer, self.obs_tensor)  # 比直接赋值更安全
         self.action = self.session.run(["actions"], {"obs": self.obs_tensor})[0][0]
-    
+
         self.last_action = self.action[:29].copy()
 
-        self.vae_vel = self.action[29:].copy()
+        # 安全地提取速度输出（可能没有或长度不足）
+        if hasattr(self.action, '__len__'):
+            out_len = len(self.action)
+        else:
+            out_len = self.action.size
+
+        if out_len >= 32:
+            self.vae_vel = self.action[29:32].copy()
+        elif out_len > 29:
+            tmp = np.zeros(3, dtype=np.float32)
+            available = out_len - 29
+            tmp[:available] = self.action[29:29+available]
+            self.vae_vel = tmp
+        else:
+            self.vae_vel = np.zeros(3, dtype=np.float32)
 
         self.target_dof_pos = self.last_action * self.action_scale
-        
         self.target_dof_pos = self.target_dof_pos[self.isaac_to_mujoco_idx] + self.default_dof_pos
-        
+
         # 极简推理（比原版快5-15%）
         return self.target_dof_pos, self.vae_vel
 
     # 创建观测输入   
-    def compute_observation(self,qj, dqj, quat, omega, cmd_vel):
+    def compute_observation(self, qj, dqj, quat, omega, cmd_vel):
         """Compute the observation vector from current state"""
         gravity_orientation = get_gravity_orientation(quat)
         self.command_vel = cmd_vel  # Placeholder for commanded velocity
-        # print(single_obs_dim)#94
         
-        # Create single observation
+        # Create single observation with dynamic dimensions
         single_obs = np.zeros(self.single_obs_dim, dtype=np.float32)
-        single_obs[0:3] = omega                                         #3
-        single_obs[3:6] = gravity_orientation                           #3
-        single_obs[6:9] = self.command_vel                                   #3
-        single_obs[9:9+self.num_actions] = (qj - self.default_dof_pos)[self.mujoco_to_isaac_idx]                           #29
-        single_obs[9+self.num_actions:9+2*self.num_actions] = dqj[self.mujoco_to_isaac_idx] #0.05 #29
-        single_obs[9+2*self.num_actions:9+3*self.num_actions] = self.last_action  # Assuming action has at least 15 elements #29
+        
+        # 【标准】前96维：omega + gravity + cmd_vel + joint_pos + joint_vel + last_action
+        single_obs[0:3] = omega                                         # 3维
+        single_obs[3:6] = gravity_orientation                           # 3维
+        single_obs[6:9] = self.command_vel                              # 3维
+        single_obs[9:9+self.num_actions] = (qj - self.default_dof_pos)[self.mujoco_to_isaac_idx]  # 29维
+        single_obs[9+self.num_actions:9+2*self.num_actions] = dqj[self.mujoco_to_isaac_idx]  # 29维
+        single_obs[9+2*self.num_actions:9+3*self.num_actions] = self.last_action  # 29维
+        
+        # 【兼容】如果需要额外维度（如1020维模型），补零
+        if self.extra_obs_dim > 0:
+            # 对于102维（1020维模型），在末尾补6维零
+            # single_obs[96:102] = 0  (已在初始化时设为0，无需显式赋值)        
+            single_obs[9+3*self.num_actions:11+3*self.num_actions] = np.sin(2 * np.pi * self.gait_phase)  # 2 #步态相位正弦值
+            single_obs[11+3*self.num_actions:13+3*self.num_actions] = np.cos(2 * np.pi * self.gait_phase)  # 2 #步态相位余弦值
+            single_obs[13+3*self.num_actions:15+3*self.num_actions] = self.phase_ratio  # 2 #步态空中比率
         
         self.obs_history.append(single_obs)
         
