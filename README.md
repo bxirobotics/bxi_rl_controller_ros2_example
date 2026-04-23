@@ -26,12 +26,8 @@ ROS2 structure hardware:    ![ROS2 structure hardware](docs/ROS2_structure_hardw
 
 ## Usage
 ### Descripiton Files
-1. `elf2-trunk`:Elf2 v1，`base link` is `trunk`(torso)，elf2-trunk_dof12: only 12 leg joints are free joints. dof25: all joints are free.
-2. `elf2-ankle`:Elf2 v2: ankles torques are increased `50Nm`.
-3. `elf2-foot`: Elf2 v3: sole changed: 1 shaping to human foot for wearing shoes. 2 symmetric soles change to asymmetric, like human feet.(deprecated)
-4. `elf2-footv4`: Elf2 v4: sole change : sole shape change back to regular rectangle with oval ends. Asymmetric sole.   
-5. `elf2-arm`: arms only.    
-6. `elf3_dof29` : Elf3 version with dof29
+1. `elf3_dof29` : Elf3 version with dof29
+2. `elf3_dof31` : Elf3 version with dof31
 
 ### Switch between hardware and simulation environment
 1. `hw` is short for`hardware`，all `launch` files with suffix `hw` are to launch real hardware. Please use them carefully.      
