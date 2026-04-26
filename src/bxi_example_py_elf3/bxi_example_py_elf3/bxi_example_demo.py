@@ -15,21 +15,19 @@ import time
 import sys
 import os
 import math
-import json
 from collections import deque
 from std_msgs.msg import Header
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
+import json
 
-from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicy
-from bxi_example_py_elf3.inference.host import TumbleRecoverPolicy
-from bxi_example_py_elf3.inference.normal import NormalMotionPolicy
+import onnxruntime as ort
 
 robot_name = "elf3"
 
 dof_num = 29
 
-real = 1                        # 1 for real; 0 for sim
+dof_use = 23
 
 joint_name = (
     "waist_y_joint",
@@ -67,59 +65,101 @@ joint_name = (
     "r_wrist_z_joint",
     )   
 
-joint_nominal_pos = np.array([   # 指定的固定关节角度
+joint_kp = np.array([
+    108.448, 162.672, 176.421,
+    176.421, 176.421,  54.224, 176.421,  33.493,  21.771,
+    176.421, 176.421,  54.224, 176.421,  33.493,  21.771,
+    54.224,  54.224,  16.747, 54.224,  16.747,  16.747,  16.747,
+    54.224,  54.224,  16.747, 54.224,  16.747,  16.747,  16.747],
+    dtype=np.float32)
+
+joint_kd = np.array([
+    6.904, 10.356, 11.231,
+    11.231, 11.231,  3.452, 11.231,  2.132,  1.386,
+    11.231, 11.231,  3.452, 11.231,  2.132,  1.386,
+    3.452,  3.452,  1.066,  3.452,  1.066,  1.066,  1.066,
+    3.452,  3.452,  1.066,  3.452,  1.066,  1.066,  1.066],
+    dtype=np.float32)
+
+joint_nominal_pos = np.array([   # 默认关节角度，来自 bxi_example_py_elf3_demo-2
     0.0, 0.0, 0.0,
-    -0.4,0.0,0.0,0.8,-0.4,0.0,
-    -0.4,0.0,0.0,0.8,-0.4,0.0,
-    0.5, 0.3,-0.1,-0.2, 0.0,0.0,0.0,     # 左臂放在大腿旁边 (Y=0 肩平, X=0 前后居中, Z=0 不旋转, 肘关节微弯)
-    0.5,-0.3, 0.1,-0.2, 0.0,0.0,0.0],    # 右臂放在大腿旁边 (Y=0 肩平, X=0 前后居中, Z=0 不旋转, 肘关节微弯)
+    -0.3, 0.0, 0.0, 0.6, -0.3, 0.0,
+    -0.3, 0.0, 0.0, 0.6, -0.3, 0.0,
+    0.2,  0.2, 0.0, 0.6, 0.0, 0.0, 0.0,
+    0.2, -0.2, 0.0, 0.6, 0.0, 0.0, 0.0],
     dtype=np.float32)
 
-joint_kp = np.array([     # 指定关节的kp，和joint_name顺序一一对应
-    500,500,300,
-    150,100,100,200,50,20,
-    150,100,100,200,50,20,
-    80,80,80,60, 20,20,20,
-    80,80,80,60, 20,20,20], 
-    dtype=np.float32)
+class env_cfg():
+    """
+    Configuration class for the XBotL humanoid robot.
+    """
+    class env():
+        frame_stack = 15  # 历史观测帧数
+        num_single_obs = (47+(3*11))  # 单帧观测数
+        num_observations = int(frame_stack * num_single_obs)  # 总观测空间 (66×47)
+        num_actions = (12+11)  # 动作数
+        num_commands = 5 # sin[2] vx vy vz
 
-joint_kd = np.array([  # 指定关节的kd，和joint_name顺序一一对应
-    3,3,3,
-    2,2,2,2.5,1,1,
-    2,2,2,2.5,1,1,
-    2,2,2,2, 1,1,1,
-    2,2,2,2, 1,1,1], 
-    dtype=np.float32)
+    class init_state():
 
-kp_host = np.array([     # 跌到起身腰部手部pd加大(add pd for hands and waist)
-    500,500,300, 
-    150, 150, 150, 200, 50, 50, 
-    150, 150, 150, 200, 50, 50,
-    80, 80, 80, 60, 20, 50, 50,
-    80, 80, 80, 60, 20, 50, 50,], 
-    dtype=np.float32)
+        default_joint_angles = {
+            "waist_y_joint": 0.0,
+            "waist_x_joint": 0.0,
+            "waist_z_joint": 0.0,
+            
+            'l_hip_z_joint': -0.4,
+            'l_hip_x_joint': 0.0,
+            'l_hip_y_joint': 0.0,
+            'l_knee_y_joint': 0.8,
+            'l_ankle_y_joint': -0.4,
+            'l_ankle_x_joint': 0.0,
+            
+            'r_hip_z_joint': -0.4,
+            'r_hip_x_joint': 0.0,
+            'r_hip_y_joint': 0.0,
+            'r_knee_y_joint': 0.8,
+            'r_ankle_y_joint': -0.4,
+            'r_ankle_x_joint': 0.0,
+            
+            'l_shoulder_y_joint': 0.5,
+            'l_shoulder_x_joint': 0.3,
+            'l_shoulder_z_joint': -0.2,
+            'l_elbow_y_joint': -1.5,
+            
+            'r_shoulder_y_joint': 0.5,
+            'r_shoulder_x_joint': -0.0,
+            'r_shoulder_z_joint': 0.2,
+            'r_elbow_y_joint': -1.5,
+        }
 
-kd_host = np.array([  # 跌到起身腰部手部pd加大(add pd for hands and waist)
-    5,3,3,
-    2,2,2,2,1,1,
-    2,2,2,2,1,1,
-    2,2,2,2, 1,2,2,
-    2,2,2,2, 1,2,2], 
-    dtype=np.float32)
+    class control():
+        action_scale = 0.5
+        
+    class commands():
+        stand_com_threshold = 0.05 # if (lin_vel_x, lin_vel_y, ang_vel_yaw).norm < this, robot should stand
+        sw_switch = True # use stand_com_threshold or not
 
-class robotState:
-    normal      = 0     # 站、走、跑(stand walk run)
-    zero_torque = 1     # 零力模式(zero torque mode)
-    pd_brake    = 2     # pd模式(pd mode)
-    initial_pos = 3     # 初始模式(zero position mode)
+    class rewards:
+        cycle_time = 0.6
 
-    dance       = 4
-    host        = 5
+    class normalization:
+        class obs_scales:
+            lin_vel = 2.
+            ang_vel = 1.
+            dof_pos = 1.
+            dof_vel = 0.05
+            quat = 1.
+        clip_observations = 100.
+        clip_actions = 100.
+
+class cfg():
+
+    class robot_config:
+        default_dof_pos = np.array(list(env_cfg.init_state.default_joint_angles.values()))   
 
 def quaternion_to_euler_array(quat):
     # Ensure quaternion is in the correct format [x, y, z, w]
     x, y, z, w = quat
-    # w, x, y, z = quat 
     
     # Roll (x-axis rotation)
     t0 = +2.0 * (w * x + y * z)
@@ -140,102 +180,15 @@ def quaternion_to_euler_array(quat):
     return np.array([roll_x, pitch_y, yaw_z])
 
 class BxiExample(Node):
+
     def __init__(self):
+
         super().__init__('bxi_example_py')
 
-        # 从launch文件中获取模型路径
-        self.load_files()
-
-        # 加载模型
-        self.normal = NormalMotionPolicy(self.onnx_file_dict["normal"]) 
-        self.host = TumbleRecoverPolicy(self.onnx_file_dict["host"])
-        self.dance = DanceMotionPolicy(self.npz_file_dict["dance"], self.onnx_file_dict["dance"])   
-
-        self.initial_pos = np.zeros(dof_num, dtype=np.double)
-        self.pd_pos = self.normal.default_joint_pos
-
-        # 订阅发布ros主题
-        self.init_pub_sub()
-
-        # 机器人状态变量(robot states)
-        self.qpos = np.zeros(dof_num, dtype=np.double)
-        self.qvel = np.zeros(dof_num, dtype=np.double)
-        self.omega = np.zeros(3,dtype=np.double)
-        self.quat_xyzw = np.zeros(4,dtype=np.double)
-        self.quat_wxyz = np.zeros(4,dtype=np.double)
-
-        self.pos_last = np.zeros(dof_num, dtype=np.float32)
-        self.kp_last = np.zeros(dof_num, dtype=np.float32)
-        self.kd_last = np.zeros(dof_num, dtype=np.float32)
-
-        self.pos_last_state = np.zeros(dof_num, dtype=np.float32)
-        self.kp_last_state = np.zeros(dof_num, dtype=np.float32)
-        self.kd_last_state = np.zeros(dof_num, dtype=np.float32)
-
-        # 状态切换参数
-        self.state = robotState.zero_torque
-        self.next_state = self.state 
-        self.last_state = self.state
-        self.change_state = 1
-
-        if(self.topic_prefix == "hardware/"):
-            real = 1
-            print("real == 1")
-        else:
-            real = 0
-            print("real == 0")
-
-        if(not real):
-            # sim 
-            self.change_time = 0.1
-        else:
-            # real
-            self.change_time = 0.3
-
-        # 遥控器参数
-        self.normal_mode_prev = False
-        self.zero_torque_prev = False
-        self.pd_brake_prev = False
-        self.initial_pos_prev = False
-
-        self.dance_mode_prev = False
-        self.host_mode_prev = False
-
-        self.dance_flag_prev = False
-
-        self.dance_mode_changed = True  # False: 暂停跳舞(stop dancing)  True： 继续跳舞(continue dancing)
-
-        # 运动命令变量
-        self.vx = 0.0
-        self.vy = 0
-        self.dyaw = 0
-
-        # 定时器初始化
-        self.step = 0
-        self.loop_count = 0
-        self.dt = 0.02  # loop @100Hz
-        self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
-
-        # 特殊动作初始帧设置
-        self.start_frame_dance = 100
-        self.dance.timestep = self.start_frame_dance
-        self.start_frame_pos = self.dance.motioninputpos[self.start_frame_dance,:] # 跳过前150帧准备动作
-
-    def load_files(self):
-        # 加载模型
         self.declare_parameter('/topic_prefix', 'default_value')
         self.topic_prefix = self.get_parameter('/topic_prefix').get_parameter_value().string_value
+        print('topic_prefix:', self.topic_prefix)
         
-        self.declare_parameter('/npz_file_dict', json.dumps({}))
-        npz_file_json = self.get_parameter('/npz_file_dict').value
-        self.npz_file_dict = json.loads(npz_file_json)
-            
-        self.declare_parameter('/onnx_file_dict', json.dumps({}))
-        onnx_file_json = self.get_parameter('/onnx_file_dict').value
-        self.onnx_file_dict = json.loads(onnx_file_json)
-
-    def init_pub_sub(self):
-        # 订阅和发布主题
         qos = QoSProfile(depth=1, durability=qos_profile_sensor_data.durability, reliability=qos_profile_sensor_data.reliability)
         
         self.act_pub = self.create_publisher(bxiMsg.ActuatorCmds, self.topic_prefix+'actuators_cmds', qos)  # CHANGE
@@ -250,234 +203,130 @@ class BxiExample(Node):
         self.sim_rest_srv = self.create_client(bxiSrv.SimulationReset, self.topic_prefix+'sim_reset')
         
         self.timer_callback_group_1 = MutuallyExclusiveCallbackGroup()
-        self.timer_callback_group_2 = MutuallyExclusiveCallbackGroup()
-
-        self.lock_in = Lock()
-        self.lock_ou = self.lock_in #Lock()
-
-    def enter_state(self):
-        match self.next_state:
-            case robotState.normal:
-                self.loop_count = 0
-                self.normal.action = np.zeros(dof_num, dtype=np.float32)
-                return
-            
-            case robotState.pd_brake:
-                self.loop_count = 0
-                return
-            
-            case robotState.initial_pos:
-                self.loop_count = 0
-                return
-            
-            case robotState.dance:
-                self.loop_count = 0
-                self.dance_mode_changed = True
-                self.dance.timestep = self.start_frame_dance
-                return
-            
-            case robotState.host:
-                self.loop_count = 0
-                print("loop:", self.loop_count)
-                return
-        return
+        
+        self.vx = 0.0
+        self.vy = 0
+        self.dyaw = 0
     
-    def exit_state(self):
-        self.pos_last_state = self.qpos
-        self.kp_last_state = self.kp_last
-        self.kd_last_state = self.kd_last
-        return
-    
+        self.step = 0
+        self.loop_count = 0
+        self.dt = 0.02  # loop @100Hz
+        self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
+
+        self.data_txt_path = '/home/bxi/bxi_ws/bxi_rl_controller_ros2_example/src/bxi_example_py_elf3/data/data.txt'
+        self.pos_data_lines = self.load_pos_file()
+        self.pos_data_index = 0
+
+        self.dance_flag_prev = False
+        self.dance_mode = False
+
+    def load_pos_file(self):
+        try:
+            with open(self.data_txt_path, 'r', encoding='utf-8') as f:
+                lines = [line.strip() for line in f if line.strip()]
+            if len(lines) == 0:
+                self.get_logger().warning(f'pos file found but empty: {self.data_txt_path}')
+            else:
+                self.get_logger().info(f'loaded {len(lines)} pose lines from {self.data_txt_path}')
+            return lines
+        except FileNotFoundError:
+            self.get_logger().warning(f'pos file not found: {self.data_txt_path}')
+            return []
+        except Exception as e:
+            self.get_logger().error(f'failed to load pos file: {e}')
+            return []
+
+    def get_next_pos_from_file(self):
+        if not self.pos_data_lines:
+            return None
+
+        if self.pos_data_index >= len(self.pos_data_lines):
+            # return None
+            self.pos_data_index = 0
+            # 如果希望循环播放，则从头开始读取；如果不希望循环，则改成返回 None
+
+        line = self.pos_data_lines[self.pos_data_index]
+        self.pos_data_index += 1
+        clean_line = line.strip()
+        if clean_line.startswith('[') and clean_line.endswith(']'):
+            clean_line = clean_line[1:-1].strip()
+
+        if ',' in clean_line:
+            tokens = [tok.strip() for tok in clean_line.split(',') if tok.strip()]
+        else:
+            tokens = [tok.strip() for tok in clean_line.split() if tok.strip()]
+
+        try:
+            values = [float(x) for x in tokens]
+        except ValueError as e:
+            self.get_logger().error(f'failed to parse pos line {self.pos_data_index}: {e} -> {repr(line)}')
+            self.pos_data_lines = []
+            return None
+
+        if len(values) != dof_num:
+            self.get_logger().error(f'expected {dof_num} values, got {len(values)} on line {self.pos_data_index}')
+            self.pos_data_lines = []
+            return None
+
+        return np.array(values, dtype=np.float32)
+
     def timer_callback(self):
+        
         # ptyhon 与 rclpy 多线程不太友好，这里使用定时间+简易状态机运行a
         if self.step == 0:
             self.robot_reset(1, False) # first reset
             print('robot reset 1!')
             self.step = 1
             return
-        elif self.step == 1 and self.loop_count >= (1./self.dt): # 延迟2s
-            self.robot_reset(2, True) # first reset
+        elif self.step == 1 and self.loop_count >= (2./self.dt): # 延迟10s
+            self.robot_reset(2, False) # first reset
             print('robot reset 2!')
             self.loop_count = 0
             self.step = 2
             return
         
-        if self.step == 2:
-            with self.lock_in:
-                q = self.qpos
-                dq = self.qvel
-                quat = self.quat_xyzw
-                quat_wxyz = self.quat_wxyz
-                omega = self.omega
+        if self.step == 1:
+            soft_start = self.loop_count/(1./self.dt) # 1秒关节缓启动
+            if soft_start > 1:
+                soft_start = 1
                 
-                x_vel_cmd = self.vx
-                y_vel_cmd = self.vy
-                yaw_vel_cmd = self.dyaw
-        
-            if(self.next_state != self.state):
-                self.exit_state()
-                if(self.change_state == 1):
-                    self.enter_state()
-                    self.last_state = self.state
-                    self.state = self.next_state
-
-            if self.state == robotState.normal:
-                if(self.loop_count * self.dt < self.change_time):
-                    soft_start = self.loop_count/(self.change_time/self.dt)
-                    if soft_start > 1:
-                        soft_start = 1
-                        
-                    qpos = self.pos_last_state + (self.normal.default_joint_pos - self.pos_last_state) * soft_start
-
-                    if(not real):
-                        # sim
-                        kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9 - self.kp_last_state) * soft_start
-                        kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
-                    else:
-                        # real
-                        kp = self.kp_last_state + (self.normal.joint_stiffness - self.kp_last_state) * soft_start
-                        kd = self.kd_last_state + (self.normal.joint_damping - self.kd_last_state) * soft_start
-                else:
-                    eu_ang = quaternion_to_euler_array(quat)
-                    eu_ang[eu_ang > math.pi] -= 2 * math.pi
-
-                    #check safe
-                    if (np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0)):
-                        print("check safe error, zero_torque!")
-
-                        self.next_state = robotState.zero_torque
-                        return
-                    
-                    cmd = [x_vel_cmd, y_vel_cmd, yaw_vel_cmd]
-                    qpos = self.normal.infer_step(q, dq, quat, omega, cmd)
-
-                    if(not real):
-                        # sim
-                        kp = self.normal.joint_stiffness * 0.9
-                        kd = self.normal.joint_damping * 0.2
-                    else:
-                        # real
-                        kp = self.normal.joint_stiffness
-                        kd = self.normal.joint_damping
-
-            elif self.state == robotState.zero_torque:      # kp,kd 均给0
-                qpos = joint_nominal_pos
-                kp = np.zeros(dof_num, dtype=np.float32)
-                kd = np.zeros(dof_num, dtype=np.float32)
-
-            elif self.state == robotState.pd_brake:
-                soft_start = self.loop_count/(2./self.dt) # 1秒关节缓启动
-                if soft_start > 1:
-                    soft_start = 1
-                    
-                qpos = self.pos_last_state + (self.pd_pos - self.pos_last_state) * soft_start
-
-                if(not real):
-                    # sim
-                    kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
-                    kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
-                else:
-                    # real
-                    kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
-                    kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
-
-            elif self.state == robotState.initial_pos:
-                soft_start = self.loop_count/(2./self.dt)
-                if soft_start > 1:
-                    soft_start = 1
-                    
-                qpos = self.pos_last_state + (self.initial_pos- self.pos_last_state) * soft_start
-
-                if(not real):
-                    # sim
-                    kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
-                    kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
-                else:
-                    # real
-                    kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
-                    kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
+            soft_joint_kp = joint_kp * soft_start
+            soft_joint_kd = joint_kd 
+                
+            msg = bxiMsg.ActuatorCmds()
+            msg.header.frame_id = robot_name
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.actuators_name = joint_name
+            msg.pos = joint_nominal_pos.tolist()
+            msg.vel = np.zeros(dof_num, dtype=np.float32).tolist()
+            msg.torque = np.zeros(dof_num, dtype=np.float32).tolist()
+            msg.kp = soft_joint_kp.tolist()
+            msg.kd = soft_joint_kd.tolist()
+            self.act_pub.publish(msg)
             
-            elif self.state == robotState.dance:
-                if(self.loop_count * self.dt < self.change_time):
-                    soft_start = self.loop_count/(self.change_time/self.dt)
-                    if soft_start > 1:
-                        soft_start = 1
-                        
-                    qpos = self.pos_last_state + (self.normal.default_joint_pos - self.pos_last_state) * soft_start
+        elif self.step == 2:
+            count_lowlevel = self.loop_count
+            
+            qpos = joint_nominal_pos.copy()
 
-                    if(not real):
-                        # sim
-                        kp = self.kp_last_state + (self.normal.joint_stiffness * 0.9  - self.kp_last_state) * soft_start
-                        kd = self.kd_last_state + (self.normal.joint_damping * 0.2 - self.kd_last_state) * soft_start
-                    else:
-                        # real
-                        kp = self.kp_last + (self.normal.joint_stiffness  - self.kp_last) * soft_start
-                        kd = self.kd_last + (self.normal.joint_damping - self.kd_last) * soft_start
-                else:
-                    if self.dance.timestep < self.dance.motionpos.shape[0]:
-                        eu_ang = quaternion_to_euler_array(quat)
-                        eu_ang[eu_ang > math.pi] -= 2 * math.pi
-
-                        #check safe
-                        if (np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0)):
-                            print("check safe error, zero_torque!")
-
-                            self.next_state = robotState.zero_torque
-                            return
-                        
-                        qpos = self.dance.inference_step(q, dq, quat_wxyz, omega)
-
-                        if(not real):
-                            # sim
-                            kp = self.dance.stiffness_array
-                            kd = self.dance.damping_array * 0.2
-                        else:
-                            # real
-                            kp = self.dance.stiffness_array
-                            kd = self.dance.damping_array
-
-                    if self.dance_mode_changed == True:
-                        self.dance.timestep += 1
-                    
-                    # 动作结束检测    
-                    if self.dance.timestep >= self.dance.motionpos.shape[0]:
-                        print("Motion replay finished, resetting simulation.")
-                        self.dance.timestep = self.start_frame_dance
-                        self.next_state = robotState.normal
-
-            elif self.state == robotState.host:
-                if((self.loop_count * self.dt > 5.0)):
-                    eu_ang = quaternion_to_euler_array(quat)
-                    eu_ang[eu_ang > math.pi] -= 2 * math.pi
-                    
-                    if((np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0))):
-                        print("check safe error, zero_torque!")
-
-                        self.next_state = robotState.zero_torque
-                        return
-                    
-                qpos = self.host.inference_step(q, dq, quat_wxyz, omega)
-                kp = kp_host
-                kd = kd_host
-
-            self.pos_last = qpos
-            self.kp_last = kp
-            self.kd_last = kd
-            self.send_to_motor(qpos, kp, kd)
+            if self.dance_mode == True:
+                if self.pos_data_lines:
+                    qpos_file = self.get_next_pos_from_file()
+                    if qpos_file is not None:
+                        qpos = qpos_file
+            
+            msg = bxiMsg.ActuatorCmds()
+            msg.header.frame_id = robot_name
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.actuators_name = joint_name
+            msg.pos = qpos.tolist()
+            msg.vel = np.zeros(dof_num, dtype=np.float32).tolist()
+            msg.torque = np.zeros(dof_num, dtype=np.float32).tolist()
+            msg.kp = joint_kp.tolist()
+            msg.kd = joint_kd.tolist()
+            self.act_pub.publish(msg)
 
         self.loop_count += 1
-
-    def send_to_motor(self, dof_pos_target, joint_kp, joint_kd):
-        msg = bxiMsg.ActuatorCmds()
-        msg.header.frame_id = robot_name
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.actuators_name = joint_name
-        msg.pos = dof_pos_target.tolist()
-        msg.vel = np.zeros(dof_num, dtype=np.float32).tolist()
-        msg.torque = np.zeros(dof_num, dtype=np.float32).tolist()
-        msg.kp = joint_kp.tolist()
-        msg.kd = joint_kd.tolist()
-        self.act_pub.publish(msg)  
     
     def robot_reset(self, reset_step, release):
         req = bxiSrv.RobotReset.Request()
@@ -521,165 +370,26 @@ class BxiExample(Node):
         joint_pos = msg.position
         joint_vel = msg.velocity
         joint_tor = msg.effort
-        
-        with self.lock_in:
-            self.qpos[:] = np.array(joint_pos[:])
-            self.qvel[:] = np.array(joint_vel[:])
 
     def joy_callback(self, msg):
-        with self.lock_in:
-            self.vx = msg.vel_des.x * 2                 # * 3
-            self.vx = np.clip(self.vx, -1.5, 2.0)       # -2.0  3.0
-            self.vy = msg.vel_des.y * 2
-            self.dyaw = msg.yawdot_des * 2
+        dance_flag = msg.btn_9              # X 暂停或继续跳舞
 
-            normal_mode = msg.btn_1             # RB+X 切换为普通模式
-            zero_torque_mode = msg.btn_2        # RB+A 切换为零力模式
-            pd_brake_mode = msg.btn_3           # RB+B 切换为pd模式
-            initial_pos_mode = msg.btn_4        # RB+Y 切换为初始状态
-
-            dance_mode = msg.btn_5              # LB+X 切换为跳舞模式
-            host_mode = msg.btn_6               # RB+A 切换为host模式
-            # = msg.btn_7
-            # = msg.btn_8
-
-            dance_flag = msg.btn_9              # X 暂停或继续跳舞
-            # = msg.btn_10
-            # = msg.btn_11
-            # = msg.btn_12
+        if dance_flag != self.dance_flag_prev:
+            self.dance_mode = not self.dance_mode
+            print("Dance mode:", self.dance_mode)
 
         if self.step < 2:
-            self.normal_mode_prev = normal_mode
-            self.zero_torque_prev = zero_torque_mode
-            self.pd_brake_prev = pd_brake_mode
-            self.initial_pos_prev = initial_pos_mode
-
-            self.dance_mode_prev = dance_mode
-            self.host_mode_prev = host_mode
-            
             self.dance_flag_prev = dance_flag
 
-        #按键状态变化检测  
-        match self.state:
-            case robotState.normal:
-                if zero_torque_mode != self.zero_torque_prev:
-                    self.next_state = robotState.zero_torque
-                    print("switch to zero_torque")
-
-                elif pd_brake_mode != self.pd_brake_prev:
-                    self.next_state = robotState.pd_brake
-                    print("switch to pd_mode")
-
-                elif initial_pos_mode != self.initial_pos_prev:
-                    self.next_state = robotState.initial_pos
-                    print("switch to initial")
-
-                elif dance_mode != self.dance_mode_prev:
-                    self.next_state = robotState.dance
-                    print("switch to dance")
-
-                elif host_mode != self.host_mode_prev:
-                    self.next_state = robotState.host
-                    print("switch to host")
-            
-            case robotState.zero_torque:
-                if normal_mode != self.normal_mode_prev:
-                    self.next_state = robotState.normal
-                    print("switch to normal")
-
-                elif pd_brake_mode != self.pd_brake_prev:
-                    self.next_state = robotState.pd_brake
-                    print("switch to pd_mode")
-
-                elif initial_pos_mode != self.initial_pos_prev:
-                    self.next_state = robotState.initial_pos
-                    print("switch to initial")
-
-                elif host_mode != self.host_mode_prev:
-                    self.next_state = robotState.host
-                    print("switch to host")
-            
-            case robotState.pd_brake:
-                if normal_mode != self.normal_mode_prev:
-                    self.next_state = robotState.normal
-                    print("switch to normal")
-
-                elif zero_torque_mode != self.zero_torque_prev:
-                    self.next_state = robotState.zero_torque
-                    print("switch to zero_torque")
-
-                elif initial_pos_mode != self.initial_pos_prev:
-                    self.next_state = robotState.initial_pos
-                    print("switch to initial")
-                
-                elif host_mode != self.host_mode_prev:
-                    self.next_state = robotState.host
-                    print("switch to host")
-
-            case robotState.initial_pos:
-                if normal_mode != self.normal_mode_prev:
-                    self.next_state = robotState.normal
-                    print("switch to normal")
-
-                elif pd_brake_mode != self.pd_brake_prev:
-                    self.next_state = robotState.pd_brake
-                    print("switch to pd_mode")
-
-                elif zero_torque_mode != self.zero_torque_prev:
-                    self.next_state = robotState.zero_torque
-                    print("switch to zero_torque")
-                
-                elif host_mode != self.host_mode_prev:
-                    self.next_state = robotState.host
-                    print("switch to host")
-
-            case robotState.dance:
-                if normal_mode != self.normal_mode_prev:
-                    self.next_state = robotState.normal
-                    print("switch to normal")
-
-                if dance_flag != self.dance_flag_prev:
-                    self.dance_mode_changed = not self.dance_mode_changed
-            
-            case robotState.host:
-                if normal_mode != self.normal_mode_prev:
-                    self.next_state = robotState.normal
-                    print("switch to normal")
-
-                elif zero_torque_mode != self.zero_torque_prev:
-                    self.next_state = robotState.zero_torque
-                    print("switch to zero_torque")
-
-                elif pd_brake_mode != self.pd_brake_prev:
-                    self.next_state = robotState.pd_brake
-                    print("switch to pd_mode")
-
-                elif initial_pos_mode != self.initial_pos_prev:
-                    self.next_state = robotState.initial_pos
-                    print("switch to initial")
-            
-        self.normal_mode_prev = normal_mode
-        self.zero_torque_prev = zero_torque_mode
-        self.pd_brake_prev = pd_brake_mode
-        self.initial_pos_prev = initial_pos_mode
-
-        self.dance_mode_prev = dance_mode
-        self.host_mode_prev = host_mode
-        
         self.dance_flag_prev = dance_flag
-
+        return
+        
     def imu_callback(self, msg):
         quat = msg.orientation
         avel = msg.angular_velocity
         acc = msg.linear_acceleration
 
         quat_tmp1 = np.array([quat.x, quat.y, quat.z, quat.w]).astype(np.double)
-        quat_tmp2 = np.array([quat.w, quat.x, quat.y, quat.z]).astype(np.double)
-
-        with self.lock_in:
-            self.quat_xyzw = quat_tmp1
-            self.quat_wxyz = quat_tmp2
-            self.omega = np.array([avel.x, avel.y, avel.z])
 
     def touch_callback(self, msg):
         foot_force = msg.value
@@ -689,7 +399,7 @@ class BxiExample(Node):
         base_twist = msg.twist
 
 def main(args=None):
-       
+   
     time.sleep(5)
     
     rclpy.init(args=args)
