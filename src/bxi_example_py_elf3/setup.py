@@ -58,6 +58,7 @@ setup(
             'bxi_example_py_elf3_run = bxi_example_py_elf3.bxi_example_run:main',
             'bxi_example_py_elf3_mjlab = bxi_example_py_elf3.bxi_example_mjlab:main',
             'bxi_example_py_elf3_demo = bxi_example_py_elf3.bxi_example_demo:main',
+            'bxi_example_py_elf3_test_wire = bxi_example_py_elf3.bxi_example_test_wire:main',
         ],
     },
 )
