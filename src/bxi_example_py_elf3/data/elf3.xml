@@ -313,16 +313,12 @@
     <motor name="r_wrist_z_joint" joint="r_wrist_z_joint" gear="1" ctrllimited='true' ctrlrange='-25 25'/>
   </actuator>
 
-  <!-- <sensor>
-    <gyro site="imu_in_torso" name="imu_ang_vel"/>
-    <velocimeter site="imu_in_torso" name="imu_lin_vel"/>
-    <accelerometer site="imu_in_torso" name="imu_lin_acc"/>
-    <subtreeangmom body="torso_link" name="root_angmom"/>
-  </sensor> -->
-
-  <!-- <keyframe>
-    <key name="init_state" qpos="0 0 1.1 1 0 0 0 0 0 0 -0.3 0 0 0.6 0 0 -0.3 0 0 0.6 0 0 0.2 0.2 0 0.6 0 0 0 0.2 -0.2 0 0.6 0 0 0" ctrl="0 0 0 -0.3 0 0 0.6 0 0 -0.3 0 0 0.6 0 0 0.2 0.2 0 0.6 0 0 0 0.2 -0.2 0 0.6 0 0 0"/>
-  </keyframe> -->
+  <sensor>
+    <gyro name="torso_ang_vel" site="imu_in_torso"/>
+    <framequat name="torso_quat" objtype="site" objname="imu_in_torso"/>
+    <velocimeter name="torso_lin_vel" site="imu_in_torso"/>
+    <accelerometer name="torso_lin_acc" site="imu_in_torso"/>
+  </sensor>
 
   <asset>
     <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
