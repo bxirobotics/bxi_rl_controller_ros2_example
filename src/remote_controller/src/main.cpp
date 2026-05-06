@@ -1,4 +1,9 @@
 #include <iostream>
+#include <string>
+#include <map>
+#include <chrono>
+#include <termios.h>
+#include <sys/select.h>
 #include <communication/msg/motion_commands.hpp>
 #include <linux/joystick.h>
 #include <unistd.h>
@@ -67,45 +72,73 @@ using namespace std;
 
 class COMPublisher : public rclcpp::Node{
 public:
-    COMPublisher(const char *_js_dev) : Node("COM_publisher"){
-        if (strlen(_js_dev) >= 128){
-            printf("dev:%s error\n", _js_dev);
-            exit(-1);
-        }
-
-        strcpy(_js_dev_name, _js_dev);
-        
-        while (1){
-            js_fd = open(_js_dev_name, O_RDONLY); // O_NONBLOCK
-            if (js_fd < 0){
-                printf("open:%s failed\n", _js_dev_name);
-                sleep(1);      
-            }
-            else{
-                printf("open js dev: %s\n", _js_dev_name);
-                break;
-            }
-        }
-        
+    COMPublisher(const char *_js_dev, bool use_keyboard)
+        : Node("COM_publisher"), use_keyboard_(use_keyboard), stop_flag_(false)
+    {
         com_pub = this->create_publisher<communication::msg::MotionCommands>("motion_commands", 20);
         timer_ = this->create_wall_timer(10ms, std::bind(&COMPublisher::timer_callback, this));
-        js_loop_thread_ = std::thread(&COMPublisher::js_loop, this);
+
+        if (use_keyboard_){
+            printf("Keyboard mode enabled.\n");
+            printf("  W/S      : forward / backward\n");
+            printf("  A/D      : turn left / right (rotation axis)\n");
+            printf("  Q/E      : strafe left / right (Y axis)\n");
+            printf("  Space    : full stop\n");
+            // Keys 1-5 map 1-to-1 to the 5 onnx models in onnx_file_dict:
+            printf("  1        : normal   (amp_terrain.onnx)\n");
+            printf("  2        : host     (host.onnx)\n");
+            printf("  3        : dance    (dance.onnx)\n");
+            printf("  4        : amp_run  (amp_run.onnx)\n");
+            printf("  5        : normal_run (model_normal.onnx)\n");
+            printf("  ESC      : exit\n");
+            kb_loop_thread_ = std::thread(&COMPublisher::kb_loop, this);
+        } else {
+            if (strlen(_js_dev) >= 128){
+                printf("dev:%s error\n", _js_dev);
+                exit(-1);
+            }
+            strcpy(_js_dev_name, _js_dev);
+            while (1){
+                js_fd = open(_js_dev_name, O_RDONLY); // O_NONBLOCK
+                if (js_fd < 0){
+                    printf("open:%s failed\n", _js_dev_name);
+                    sleep(1);
+                }
+                else{
+                    printf("open js dev: %s\n", _js_dev_name);
+                    break;
+                }
+            }
+            js_loop_thread_ = std::thread(&COMPublisher::js_loop, this);
+            js_loop_thread_.detach();
+        }
     }
 
     ~COMPublisher(){
-        if (js_fd > 0){
-            close(js_fd);
+        stop_flag_ = true;
+        if (use_keyboard_){
+            if (kb_loop_thread_.joinable()){
+                kb_loop_thread_.join();
+            }
+        } else {
+            if (js_fd >= 0){
+                close(js_fd);
+            }
         }
     }
 
 private:
     mutable std::mutex lock_;
 
+    bool use_keyboard_ = false;
+    bool stop_flag_ = false;
     char _js_dev_name[128] = {0};
-    int js_fd;
+    int js_fd = -1;
     double js_axis[20] = {0};   // original data of js axis data
     double js_bt[20] = {0};    // original data of ja button data
     std::thread js_loop_thread_;
+    std::thread kb_loop_thread_;
+    struct termios orig_termios_{};
 
     double velxy[2] = {0};                      //x y速度       (x,y speed)
     double velxy_filt[2] = {0};                 //x y速度滤波值  (x,y speed filter)
@@ -211,6 +244,119 @@ private:
         memset(velxy_filt, 0, sizeof(velxy_filt));
         velr_filt = 0;
         height_filt = STAND_HEIGHT;
+    }
+
+    void kb_loop(){
+        // If stdin is not a tty (e.g. launched via ros2 launch), open /dev/tty directly
+        int tty_fd = isatty(STDIN_FILENO) ? STDIN_FILENO : open("/dev/tty", O_RDONLY);
+        if (tty_fd < 0){
+            printf("kb_loop: cannot open tty\n");
+            return;
+        }
+
+        struct termios raw;
+        tcgetattr(tty_fd, &orig_termios_);
+        raw = orig_termios_;
+        raw.c_lflag &= ~(tcflag_t)(ECHO | ICANON);
+        raw.c_cc[VMIN] = 1;
+        raw.c_cc[VTIME] = 0;
+        tcsetattr(tty_fd, TCSAFLUSH, &raw);
+
+        using clock = std::chrono::steady_clock;
+        std::map<char, clock::time_point> last_toggle_time;
+        const auto debounce = std::chrono::milliseconds(300);
+
+        while (!stop_flag_){
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(tty_fd, &fds);
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 150000; // 150 ms — simulates key-release when no key arrives
+
+            int sel = select(tty_fd + 1, &fds, nullptr, nullptr, &tv);
+            if (sel < 0){
+                break;
+            }
+            if (sel == 0){
+                // Timeout: zero movement axes (key released)
+                const std::lock_guard<std::mutex> guard(lock_);
+                js_axis[JS_VELX_AXIS] = 0;
+                js_axis[JS_VELY_AXIS] = 0;
+                js_axis[JS_VELR_AXIS] = 0;
+                continue;
+            }
+
+            char c;
+            if (read(tty_fd, &c, 1) != 1){
+                break;
+            }
+
+            if (c == '\x1b'){ // ESC: exit keyboard mode
+                break;
+            }
+
+            auto now = clock::now();
+
+            switch (c){
+            case 'w': case 'W':{
+                const std::lock_guard<std::mutex> guard(lock_);
+                js_axis[JS_VELX_AXIS] = -AXIS_VALUE_MAX; // forward
+            }break;
+            case 's': case 'S':{
+                const std::lock_guard<std::mutex> guard(lock_);
+                js_axis[JS_VELX_AXIS] = AXIS_VALUE_MAX;  // backward
+            }break;
+            // A/D control rotation only (JS_VELR_AXIS), not strafe.
+            case 'a': case 'A':{
+                const std::lock_guard<std::mutex> guard(lock_);
+                js_axis[JS_VELR_AXIS] = -AXIS_VALUE_MAX; // turn left
+            }break;
+            case 'd': case 'D':{
+                const std::lock_guard<std::mutex> guard(lock_);
+                js_axis[JS_VELR_AXIS] = AXIS_VALUE_MAX;  // turn right
+            }break;
+            // Q/E take over strafe (JS_VELY_AXIS) since A/D are now rotation.
+            case 'q': case 'Q':{
+                const std::lock_guard<std::mutex> guard(lock_);
+                js_axis[JS_VELY_AXIS] = -AXIS_VALUE_MAX; // strafe left
+            }break;
+            case 'e': case 'E':{
+                const std::lock_guard<std::mutex> guard(lock_);
+                js_axis[JS_VELY_AXIS] = AXIS_VALUE_MAX;  // strafe right
+            }break;
+            case ' ':{
+                const std::lock_guard<std::mutex> guard(lock_);
+                js_axis[JS_VELX_AXIS] = 0;
+                js_axis[JS_VELY_AXIS] = 0;
+                js_axis[JS_VELR_AXIS] = 0;
+            }break;
+            // Keys 1-5 map exactly to the 5 onnx models in onnx_file_dict (example_launch_demo.py).
+            // Each key simply toggles its own bool, identical to the joystick button logic
+            // (JS_SWITCH_X/Y/A/B + LB/RB combos each do `flag = !flag` independently).
+            case '1': case '2': case '3': case '4': case '5':{
+                auto it = last_toggle_time.find(c);
+                if (it == last_toggle_time.end() || (now - it->second) > debounce){
+                    last_toggle_time[c] = now;
+                    const std::lock_guard<std::mutex> guard(lock_);
+                    switch(c){
+                    case '1': normal_mode  = !normal_mode;  printf("model: normal %d\n",      normal_mode);  break; // amp_terrain.onnx -> btn_1
+                    case '2': host_mode    = !host_mode;    printf("model: host %d\n",        host_mode);    break; // host.onnx         -> btn_6
+                    case '3': dance_mode   = !dance_mode;   printf("model: dance %d\n",       dance_mode);   break; // dance.onnx        -> btn_5
+                    case '4': amp_run_mode = !amp_run_mode; printf("model: amp_run %d\n",     amp_run_mode); break; // amp_run.onnx      -> btn_8
+                    case '5': normal_run   = !normal_run;   printf("model: normal_run %d\n",  normal_run);   break; // model_normal.onnx -> btn_7
+                    }
+                }
+            }break;
+            default:
+                break;
+            }
+        }
+
+        tcsetattr(tty_fd, TCSAFLUSH, &orig_termios_);
+        if (tty_fd != STDIN_FILENO){
+            close(tty_fd);
+        }
     }
 
     void js_loop(){
@@ -378,8 +524,17 @@ private:
 };
 
 int main(int argc, const char *argv[]){
+    bool use_keyboard = false;
+    for (int i = 1; i < argc; ++i){
+        if (std::string(argv[i]) == "--keyboard"){
+            printf("in keyboard input mode\n");
+            use_keyboard = true;
+            break;
+        }
+    }
+
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<COMPublisher>("/dev/input/js0"));
+    rclcpp::spin(std::make_shared<COMPublisher>("/dev/input/js0", use_keyboard));
     rclcpp::shutdown();
 
     return 0;
