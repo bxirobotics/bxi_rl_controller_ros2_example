@@ -393,7 +393,7 @@ private:
                         case JS_START_BT:{
                             if(launch_lock == false){
                                 ret = system("mkdir -p /var/log/bxi_log");
-                                ret = system("ros2 launch bxi_example_py_elf3 example_launch_demo_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                                ret = system("ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
                                 ret = system("ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log  2>&1 &");
                                 printf("run robot\n");//robot_controller
                             
