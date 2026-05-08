@@ -24,12 +24,12 @@ ROS2 structure hardware:    ![ROS2 structure hardware](docs/ROS2_structure_hardw
 1. `src/bix_example_py_elf3`: a demo of learming based control policy elf3.    
 2. `remote_controller`: reads the joystick/keyboard input and publish the commands. Work with both the robot hardware and the simulation environment.   
 
+## Descripiton Files(URDF)    
+1. `elf3_dof29` : Elf3 of dof29
+2. `elf3_dof31` : Elf3 of dof31 (2 on head)    
+For USD or XML format please refer to: [unofficical models](https://github.com/MelodyAI/TienKung-Lab-bxi/tree/main/legged_lab/assets/elf3_lite)
 
 ## Instructions    
-### Descripiton Files
-1. `elf3_dof29` : Elf3 version with dof29
-2. `elf3_dof31` : Elf3 version with dof31
-
 ### Switch between hardware and simulation environment
 1. `hw` is short for`hardware`，all `launch` files with suffix `hw` are to launch real hardware. **Please use them carefully**.      
 2. The simulation environment and the robot hardware share the same control program. You only need to apply different launch files to switch between simulation and hardware. Topics for simulation code are with the `simulation/` prefix, while topics for the hardware are with the `hardware/` prefix. For details, please refer to the topic parameter settings in src/example.    
