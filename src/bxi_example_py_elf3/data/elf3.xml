@@ -53,7 +53,7 @@
 
   <worldbody>
     <body name="torso_link" childclass="elf3" pos="0 0 1.1">
-      <inertial pos="-0.001401 0.00016468 -0.031753" quat="0.999882 -0.00116014 -0.0153263 -0.000154017" mass="8.0753" diaginertia="0.111595 0.0864478 0.04676"/>
+      <inertial pos="0.001601 0.000219 0.02325" quat="0.999996 -0.00137768 -0.000418876 -0.00258007" mass="12.004" diaginertia="0.293168 0.265897 0.0611617"/>
       <joint name="world_joint" type="free"/>
       <geom rgba="0.75294 0.75294 0.75294 1" mesh="torso_link"/>
       <geom name="torso_collision" class="collision" size="0.09 0.1" pos="0 0 -0.02" quat="0 1 0 0" condim="1"/>
