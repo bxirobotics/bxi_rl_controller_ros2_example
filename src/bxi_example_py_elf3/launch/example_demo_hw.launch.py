@@ -33,11 +33,12 @@ def generate_launch_description():
     xml_file = os.path.join(get_package_share_path("bxi_example_py_elf3"), xml_file_name)
 
     npz_file_dict = {
+        "recover": "data/recover.npz",
         "dance": "data/dance.npz",
     }  
     onnx_file_dict = {
         "normal": "data/amp_terrain.onnx",
-        "host": "data/host.onnx",
+        "recover": "data/recover.onnx",
         "dance": "data/dance.onnx",
         "amp_run": "data/amp_run.onnx",
         "normal_run": "data/model_normal.onnx",

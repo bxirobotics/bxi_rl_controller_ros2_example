@@ -22,7 +22,6 @@ from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 
 from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicy
-from bxi_example_py_elf3.inference.host import TumbleRecoverPolicy
 from bxi_example_py_elf3.inference.normal import NormalMotionPolicy
 from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicyLite
 
@@ -90,7 +89,7 @@ joint_kd = np.array([  # 指定关节的kd，和joint_name顺序一一对应
     2.5,2,2,2.5, 1,1,1],
     dtype=np.float32)
 
-kp_host = np.array([     # 跌到起身腰部手部pd加大(add pd for hands and waist)
+kp_recover = np.array([     # 跌到起身腰部手部pd加大(add pd for hands and waist)
     500,500,300,
     150, 150, 150, 200, 50, 50,
     150, 150, 150, 200, 50, 50,
@@ -98,7 +97,7 @@ kp_host = np.array([     # 跌到起身腰部手部pd加大(add pd for hands and
     80, 80, 80, 60, 20, 50, 50,],
     dtype=np.float32)
 
-kd_host = np.array([  # 跌到起身腰部手部pd加大(add pd for hands and waist)
+kd_recover = np.array([  # 跌到起身腰部手部pd加大(add pd for hands and waist)
     5,3,3,
     2,2,2,2,1,1,
     2,2,2,2,1,1,
@@ -113,7 +112,7 @@ class robotState:
     initial_pos = 3     # 初始模式(zero position mode)
 
     dance       = 4
-    host        = 5
+    recover     = 5
 
     amp_run    = 6
     normal_run  = 7
@@ -150,7 +149,7 @@ class BxiExample(Node):
 
         # 加载模型
         self.normal = HumanoidGaitPolicyLite(self.onnx_file_dict["normal"])
-        self.host = TumbleRecoverPolicy(self.onnx_file_dict["host"])
+        self.recover = DanceMotionPolicy(self.npz_file_dict["recover"], self.onnx_file_dict["recover"], start_frame=600)
         self.dance = DanceMotionPolicy(self.npz_file_dict["dance"], self.onnx_file_dict["dance"])
         self.amp_run = HumanoidGaitPolicyLite(self.onnx_file_dict["amp_run"])
         self.normal_run = NormalMotionPolicy(self.onnx_file_dict["normal_run"])
@@ -188,7 +187,7 @@ class BxiExample(Node):
         self.initial_pos_prev = False
 
         self.dance_mode_prev = False
-        self.host_mode_prev = False
+        self.recover_mode_prev = False
         self.amp_run_mode_prev = False
         self.normal_run_mode_prev = False
 
@@ -282,10 +281,24 @@ class BxiExample(Node):
                 self.dance.timestep = self.start_frame_dance
                 return
             
-            case robotState.host:
+            case robotState.recover:
                 self.loop_count = 0
-                print("loop:", self.loop_count)
+                # self.preheat_steps = 20
+                eu_ang = quaternion_to_euler_array(self.quat_xyzw)
+                eu_ang[eu_ang > math.pi] -= 2 * math.pi
+
+                if (eu_ang[1] < -(math.pi/4.0)):
+                    self.recover.end_frame = 880
+                    self.recover.timestep = 600
+                    self.recover.start_frame = 600
+                elif (eu_ang[1] > (math.pi/4.0)):
+                    self.recover.end_frame = 1690
+                    self.recover.timestep = 1350
+                    self.recover.start_frame = 1350
+                else:
+                    self.next_state = robotState.zero_torque
                 return
+            
         return
 
     def exit_state(self):
@@ -326,10 +339,11 @@ class BxiExample(Node):
                 self.change_state = 1
                 return
 
-            case robotState.host:
-                self.preheat_model(self.host)
+            case robotState.recover:
+                self.preheat_model(self.recover)
                 self.change_state = 1
                 return
+
         return
 
     def timer_callback(self):
@@ -477,20 +491,25 @@ class BxiExample(Node):
                     self.dance.timestep = self.start_frame_dance
                     self.next_state = robotState.normal
 
-            elif self.state == robotState.host:
-                if((self.loop_count * self.dt > 5.0)):
-                    eu_ang = quaternion_to_euler_array(quat)
-                    eu_ang[eu_ang > math.pi] -= 2 * math.pi
+            elif self.state == robotState.recover:
+                if self.recover.timestep <= self.recover.end_frame:
+                    # print(self.recover.end_frame)
+                    qpos = self.recover.inference_step(q, dq, quat_wxyz, omega)
 
-                    if((np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0))):
-                        print("check safe error, zero_torque!")
+                    kp = self.recover.kps
+                    kd = self.recover.kds
+                else:
+                    print("error",self.recover.timestep, self.recover.end_frame)
 
-                        self.next_state = robotState.zero_torque
-                        return
+                    # 动作管理
+                if self.dance_mode_changed == True:
+                    self.recover.timestep += 1
+                    
+                # 动作结束检测    
+                if self.recover.timestep > self.recover.end_frame:
+                    self.recover.timestep = self.recover.start_frame #停止动作
 
-                qpos = self.host.inference_step(q, dq, quat_wxyz, omega)
-                kp = kp_host
-                kd = kd_host
+                    self.next_state = robotState.normal
 
             self.pos_last = qpos
             self.kp_last = kp
@@ -595,7 +614,7 @@ class BxiExample(Node):
             initial_pos_mode = msg.btn_4        # RB+Y 切换为初始状态
 
             dance_mode = msg.btn_5              # LB+X 切换为跳舞模式
-            host_mode = msg.btn_6               # LB+A 切换为host模式
+            recover_mode = msg.btn_6               # LB+A 切换为recover模式
             normal_run_mode = msg.btn_7        # LB+B 切换为普通跑步模式
             amp_run_mode = msg.btn_8           # LB+Y 切换为高速跑步
 
@@ -611,7 +630,7 @@ class BxiExample(Node):
             self.initial_pos_prev = initial_pos_mode
 
             self.dance_mode_prev = dance_mode
-            self.host_mode_prev = host_mode
+            self.recover_mode_prev = recover_mode
             self.amp_run_mode_prev = amp_run_mode
             self.normal_run_mode_prev = normal_run_mode
 
@@ -647,10 +666,10 @@ class BxiExample(Node):
                     self.next_state = robotState.dance
                     print("switch to dance")
 
-                elif host_mode != self.host_mode_prev:
+                elif recover_mode != self.recover_mode_prev:
                     # self.preheat_steps = 20
-                    self.next_state = robotState.host
-                    print("switch to host")
+                    self.next_state = robotState.recover
+                    print("switch to recover")
 
             case robotState.zero_torque:
                 if normal_mode != self.normal_mode_prev:
@@ -666,10 +685,10 @@ class BxiExample(Node):
                     self.next_state = robotState.initial_pos
                     print("switch to initial")
 
-                elif host_mode != self.host_mode_prev:
+                elif recover_mode != self.recover_mode_prev:
                     # self.preheat_steps = 20
-                    self.next_state = robotState.host
-                    print("switch to host")
+                    self.next_state = robotState.recover
+                    print("switch to recover")
 
             case robotState.pd_brake:
                 if normal_mode != self.normal_mode_prev:
@@ -685,10 +704,10 @@ class BxiExample(Node):
                     self.next_state = robotState.initial_pos
                     print("switch to initial")
 
-                elif host_mode != self.host_mode_prev:
+                elif recover_mode != self.recover_mode_prev:
                     # self.preheat_steps = 20
-                    self.next_state = robotState.host
-                    print("switch to host")
+                    self.next_state = robotState.recover
+                    print("switch to recover")
 
             case robotState.initial_pos:
                 if normal_mode != self.normal_mode_prev:
@@ -704,10 +723,10 @@ class BxiExample(Node):
                     self.next_state = robotState.zero_torque
                     print("switch to zero_torque")
 
-                elif host_mode != self.host_mode_prev:
+                elif recover_mode != self.recover_mode_prev:
                     # self.preheat_steps = 20
-                    self.next_state = robotState.host
-                    print("switch to host")
+                    self.next_state = robotState.recover
+                    print("switch to recover")
 
             case robotState.dance:
                 if normal_mode != self.normal_mode_prev:
@@ -730,7 +749,7 @@ class BxiExample(Node):
                     self.next_state = robotState.normal
                     print("switch to normal")
 
-            case robotState.host:
+            case robotState.recover:
                 if normal_mode != self.normal_mode_prev:
                     # self.preheat_steps = 20
                     self.next_state = robotState.normal
@@ -757,7 +776,7 @@ class BxiExample(Node):
         self.initial_pos_prev = initial_pos_mode
 
         self.dance_mode_prev = dance_mode
-        self.host_mode_prev = host_mode
+        self.recover_mode_prev = recover_mode
         self.normal_run_mode_prev = normal_run_mode
         self.amp_run_mode_prev = amp_run_mode
 
