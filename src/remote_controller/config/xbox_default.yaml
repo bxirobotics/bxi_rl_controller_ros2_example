@@ -1,110 +1,198 @@
-device:
-  js: /dev/input/js0
-  vel_offset: 0.0
+sources:
+  gamepad:
+    type: joystick
+    device: /dev/input/js0
+    axes:
+      left_y: 3
+      left_x: 0
+      yaw: 6
+      trigger_left: 5
+      trigger_right: 4
+    buttons:
+      stop: 11
+      start: 14
+      lb: 6
+      rb: 7
+      a: 0
+      b: 1
+      x: 3
+      y: 4
 
-axes:
-  vx:
-    index: 3
-    direction: -1
-    deadzone: 1000.0
+  keyboard:
+    type: keyboard
+    poll_timeout_us: 20000
+    hold_ms: 200
+    axes:
+      vx: keyboard.axis.vx
+      vy: keyboard.axis.vy
+      yaw: keyboard.axis.yaw
+    movement:
+      forward: w
+      backward: s
+      yaw_left: a
+      yaw_right: d
+      strafe_left: q
+      strafe_right: e
+      stop: space
+    keys:
+      normal: {key: "1", source: key.normal}
+      recover: {key: "2", source: key.recover}
+      dance: {key: "3", source: key.dance}
+      amp_run: {key: "4", source: key.amp_run}
+      normal_run: {key: "5", source: key.normal_run}
+      back_flip: {key: "6", source: key.back_flip}
+      forward_flip: {key: "7", source: key.forward_flip}
+      applause: {key: "8", source: key.applause}
+      hello: {key: "9", source: key.hello}
+
+controls:
+  move.vx:
+    type: analog
+    sources:
+      - source: gamepad.left_y
+        direction: -1
+      - source: keyboard.vx
+    deadzone: 0.03
     min: -1.0
     max: 1.0
     alpha: 0.03
-  vy:
-    index: 0
-    direction: -1
-    deadzone: 1000.0
+
+  move.vy:
+    type: analog
+    sources:
+      - source: gamepad.left_x
+        direction: -1
+      - source: keyboard.vy
+    deadzone: 0.03
     min: -1.0
     max: 1.0
     alpha: 0.03
-  yaw:
-    index: 6
-    direction: -1
-    deadzone: 1000.0
+
+  move.yaw:
+    type: analog
+    sources:
+      - source: gamepad.yaw
+        direction: -1
+      - source: keyboard.yaw
+    deadzone: 0.03
     min: -1.0
     max: 1.0
     alpha: 0.05
 
-buttons:
-  system.stop: 11
-  system.start: 14
-  shoulder.left: 6 #LB
-  shoulder.right: 7 #RB
-  button.south: 0 #A
-  button.east: 1 #B
-  button.west: 3 #X
-  button.north: 4 #Y
+  system.stop: {type: bool, source: gamepad.stop}
+  system.start: {type: bool, source: gamepad.start}
+  shoulder.left: {type: bool, source: gamepad.lb}
+  shoulder.right: {type: bool, source: gamepad.rb}
+  button.south: {type: bool, source: gamepad.a}
+  button.east: {type: bool, source: gamepad.b}
+  button.west: {type: bool, source: gamepad.x}
+  button.north: {type: bool, source: gamepad.y}
 
-modifiers:
-  - shoulder.left
-  - shoulder.right
-  - trigger.left
-  - trigger.right
-
-axis_buttons:
   trigger.left:
-    index: 5
-    direction: 1
+    type: bool
+    source: gamepad.trigger_left
     threshold: 0.85
-    release_outputs: [btn_10=0]
+    hysteresis: 0.05
+
   trigger.right:
-    index: 4
-    direction: 1
+    type: bool
+    source: gamepad.trigger_right
     threshold: 0.85
-    release_outputs: [btn_10=0]
+    hysteresis: 0.05
 
-bindings:
-  - output: system.stop
-    when: [system.stop]
-  - output: system.start
-    when: [system.start]
-  - output: btn_1
-    when: [shoulder.right, button.west]
-  - output: btn_2
-    when: [shoulder.right, button.south]
-  - output: btn_3
-    when: [shoulder.right, button.east]
-  - output: btn_4
-    when: [shoulder.right, button.north]
-  - output: btn_5
-    when: [shoulder.left, button.west]
-  - output: btn_6
-    when: [shoulder.left, button.south]
-  - output: btn_7
-    when: [shoulder.left, button.east]
-  - output: btn_8
-    when: [shoulder.left, button.north]
-  - output: btn_9
-    when: [button.west]
-  - output: btn_10=1
-    when: [trigger.left, button.west]
-  - output: btn_10=2
-    when: [trigger.left, button.north]
-  - output: btn_10=3
-    when: [trigger.right, button.east]
-  - output: btn_10=4
-    when: [trigger.right, button.south]
+  key.normal: {type: bool, source: keyboard.normal}
+  key.recover: {type: bool, source: keyboard.recover}
+  key.dance: {type: bool, source: keyboard.dance}
+  key.amp_run: {type: bool, source: keyboard.amp_run}
+  key.normal_run: {type: bool, source: keyboard.normal_run}
+  key.back_flip: {type: bool, source: keyboard.back_flip}
+  key.forward_flip: {type: bool, source: keyboard.forward_flip}
+  key.applause: {type: bool, source: keyboard.applause}
+  key.hello: {type: bool, source: keyboard.hello}
 
-keyboard:
-  timeout_us: 150000
-  movement:
-    forward: w
-    backward: s
-    yaw_left: a
-    yaw_right: d
-    strafe_left: q
-    strafe_right: e
-    stop: space
-  bindings:
-    "1": btn_1
-    "2": btn_6
-    "3": btn_5
-    "4": btn_8
-    "5": btn_7
-    "6": btn_10=1
-    "7": btn_10=2
-    "8": btn_10=3
-    "0": btn_10=0
+outputs:
+  analog:
+    vx: move.vx
+    vy: move.vy
+    yaw: move.yaw
+
+  edge:
+    - output: system.stop
+      when: [system.stop]
+    - output: system.start
+      when: [system.start]
+
+  level:
+    - output: btn_1=1
+      when:
+        any:
+          - [shoulder.right, button.west]
+          - [key.normal]
+
+    - output: btn_2=1
+      when: [shoulder.right, button.south]
+
+    - output: btn_3=1
+      when: [shoulder.right, button.east]
+
+    - output: btn_4=1
+      when: [shoulder.right, button.north]
+
+    - output: btn_5=1
+      when:
+        any:
+          - [shoulder.left, button.west]
+          - [key.dance]
+
+    - output: btn_6=1
+      when:
+        any:
+          - [shoulder.left, button.south]
+          - [key.recover]
+
+    - output: btn_7=1
+      when:
+        any:
+          - [shoulder.left, button.east]
+          - [key.normal_run]
+
+    - output: btn_8=1
+      when:
+        any:
+          - [shoulder.left, button.north]
+          - [key.amp_run]
+
+    - output: btn_9=1
+      when:
+        - button.west
+        - released: shoulder.left
+        - released: shoulder.right
+        - released: trigger.left
+        - released: trigger.right
+
+    - output: btn_10=1
+      when:
+        any:
+          - [trigger.left, button.west]
+          - [key.back_flip]
+
+    - output: btn_10=2
+      when:
+        any:
+          - [trigger.left, button.north]
+          - [key.forward_flip]
+
+    - output: btn_10=3
+      when:
+        any:
+          - [trigger.right, button.east]
+          - [key.applause]
+
+    - output: btn_10=4
+      when:
+        any:
+          - [trigger.right, button.south]
+          - [key.hello]
 
 system:
   start:
@@ -118,13 +206,11 @@ system:
     - "killall -SIGINT bxi_bms"
     - "killall -SIGINT bxi_example_bms"
 
-#互斥，例如只能start一次
 system_mutexes:
   robot_process:
     acquire: start
     release: stop
 
-#重置遥控器的滤波值
 system_reset_motion_after:
   - start
   - stop
