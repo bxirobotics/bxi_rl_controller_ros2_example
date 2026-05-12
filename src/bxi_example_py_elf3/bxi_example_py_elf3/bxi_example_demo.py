@@ -175,7 +175,6 @@ class BxiExample(Node):
             start_frame=150,
         )
         self.noarm = HumanoidGaitPolicyLite(self.onnx_file_dict["noarm"])
-        self.back_flip.end_frame = self.back_flip.end_frame - 20
 
         self.initial_pos = np.zeros(dof_num, dtype=np.double)
         self.pd_pos = self.normal.default_dof_pos
@@ -221,9 +220,6 @@ class BxiExample(Node):
             self,
             self.state_machine_config,
             build_robot_states(self.state_id_by_name),
-            action_handlers={
-                "toggle_dance_pause": self.toggle_dance_pause,
-            },
         )
         self.remote_event_adapter = RemoteEventAdapter(self.state_machine_config.get("remote_events", {}))
         self.speed_profiles = self.state_machine_config.get("speed_profiles", {})
@@ -238,8 +234,6 @@ class BxiExample(Node):
         self.current_quat_wxyz = np.zeros(4, dtype=np.double)
         self.current_cmd_vel = np.zeros(3, dtype=np.double)
 
-        self.dance_mode_changed = True  # False: 暂停跳舞(stop dancing)  True： 继续跳舞(continue dancing)
-
         # 运动命令变量
         self.vx = 0.0
         self.vy = 0
@@ -249,11 +243,6 @@ class BxiExample(Node):
         self.step = 0
         self.dt = 0.02  # loop @100Hz
         self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
-
-        # 特殊动作初始帧设置
-        self.start_frame_dance = 100
-        self.dance.timestep = self.start_frame_dance
-        self.start_frame_pos = self.dance.motioninputpos[self.start_frame_dance,:] # 跳过前150帧准备动作
 
     def load_files(self):
         # 加载模型
@@ -418,9 +407,6 @@ class BxiExample(Node):
         with self.lock_in:
             self.qpos[:] = np.array(joint_pos[:])
             self.qvel[:] = np.array(joint_vel[:])
-
-    def toggle_dance_pause(self):
-        self.dance_mode_changed = not self.dance_mode_changed
 
     def set_motor_target(self, qpos, kp, kd):
         self.motor_target = (qpos, kp, kd)

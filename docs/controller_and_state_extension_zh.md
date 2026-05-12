@@ -600,26 +600,23 @@ toggle_wave_pause:
   action: toggle_wave_pause
 ```
 
-需要在 `bxi_example_demo.py` 里添加方法：
+优先在对应状态类里处理，让状态自己的私有变量留在状态内部：
 
 ```python
-def toggle_wave_pause(self):
-    self.wave_paused = not self.wave_paused
+class WaveState(RobotControlState):
+    def __init__(self, name, state_id):
+        super().__init__(name, state_id)
+        self.paused = False
+
+    def on_action(self, ctx, action_name):
+        if action_name != "toggle_wave_pause":
+            return False
+
+        self.paused = not self.paused
+        return True
 ```
 
-然后注册到 `RobotStateMachine`：
-
-```python
-self.state_machine = RobotStateMachine(
-    self,
-    self.state_machine_config,
-    build_robot_states(self.state_id_by_name),
-    action_handlers={
-        "toggle_dance_pause": self.toggle_dance_pause,
-        "toggle_wave_pause": self.toggle_wave_pause,
-    },
-)
-```
+`on_action()` 返回 `True` 表示这个 action 已被当前状态处理；返回 `False` 时状态机会继续查全局 `action_handlers`，仍没有处理器就报错。
 
 ## 4. 把新遥控器事件接到新状态
 
