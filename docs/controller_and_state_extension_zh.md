@@ -450,48 +450,37 @@ class WaveState(RobotControlState):
             ctx.request_state("normal", trigger="wave_finished", transition="soft_switch")
 ```
 
-### 3.4 注册状态 ID
+### 3.4 注册状态类
 
-在 `bxi_example_demo.py` 的 `robotState` 增加一个 ID：
+状态 ID 不需要手动写。`build_robot_states()` 会读取 `elf3_state_machine.yaml` 里的 `states:`，按配置顺序自动生成 ID，并根据 `behavior` 找到同名状态类。
 
-```python
-class robotState:
-    normal = 0
-    zero_torque = 1
-    pd_brake = 2
-    initial_pos = 3
-    dance = 4
-    recover = 5
-    amp_run = 6
-    normal_run = 7
-    back_flip = 8
-    forward_flip = 9
-    applause = 10
-    wave = 11
+新增状态时，只要把状态类放在 `robot_states.py` 里，然后在 YAML 里引用它：
+
+```yaml
+states:
+  wave:
+    behavior: WaveState
 ```
 
-然后在 `BxiExample.__init__` 的 `state_id_by_name` 增加：
+如果确实需要兼容某个固定数字 ID，可以在 YAML 里可选写 `id`：
+
+```yaml
+states:
+  wave:
+    id: 11
+    behavior: WaveState
+```
+
+一般不要写 `id`，避免以后插入状态时又要维护数字。
+
+`behavior` 必须等于 Python 类名。比如 `behavior: WaveState` 会实例化：
 
 ```python
-self.state_id_by_name = {
+class WaveState(RobotControlState):
     ...
-    "wave": robotState.wave,
-}
 ```
 
-### 3.5 注册状态类
-
-在 `robot_states.py` 的 `build_robot_states()` 里增加：
-
-```python
-def build_robot_states(state_ids):
-    return {
-        ...
-        "wave": WaveState("wave", state_ids["wave"]),
-    }
-```
-
-### 3.6 配置状态转移
+### 3.5 配置状态转移
 
 编辑：
 
@@ -566,7 +555,7 @@ after:
     transition: soft_switch
 ```
 
-### 3.7 配置过渡时间和过渡行为
+### 3.6 配置过渡时间和过渡行为
 
 过渡 profile 在 YAML 顶部定义：
 
@@ -591,7 +580,7 @@ def on_enter_transition(self, ctx, from_state, progress, transition):
     ctx.set_motor_target(qpos, self.kp, self.kd)
 ```
 
-### 3.8 添加新 action
+### 3.7 添加新 action
 
 如果配置里写：
 
@@ -740,9 +729,9 @@ modifiers:
 
 检查三处是否一致：
 
-1. `robotState` 里有状态 ID。
-2. `state_id_by_name` 里有状态名。
-3. `build_robot_states()` 里注册了同名状态类。
+1. `robot_states.py` 里有同名状态类。
+2. `elf3_state_machine.yaml` 的 `states.<name>.behavior` 写的是这个类名。
+3. 允许进入该状态的 `transitions.on_event` 已经配置。
 
 ### 状态运行了但没有电机输出
 

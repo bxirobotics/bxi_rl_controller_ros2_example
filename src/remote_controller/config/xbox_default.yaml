@@ -81,7 +81,7 @@ bindings:
   - output: btn_10=2
     when: [trigger.left, button.north]
   - output: btn_10=3
-    when: [trigger.left, button.east]
+    when: [trigger.right, button.east]
 
 keyboard:
   timeout_us: 150000
