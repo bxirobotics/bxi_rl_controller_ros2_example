@@ -37,12 +37,14 @@ RobotStateMachine
 - 遥控器配置：`src/remote_controller/config/xbox_default.yaml`
 - 遥控器 YAML 解析：`src/remote_controller/src/config.cpp`
 - 输入映射：`src/remote_controller/src/input_mapper.cpp`
+- 输入驱动抽象：`src/remote_controller/include/remote_controller/input_driver.hpp`
+- 内置输入驱动：`src/remote_controller/src/input_driver.cpp`
 - 遥控器节点：`src/remote_controller/src/main.cpp`
 - 状态机配置：`src/bxi_example_py_elf3/config/elf3_state_machine.yaml`
 - 状态机引擎：`src/bxi_example_py_elf3/bxi_example_py_elf3/state_machine.py`
 - 机器人状态类：`src/bxi_example_py_elf3/bxi_example_py_elf3/robot_states.py`
 
-`remote_controller` 的核心解析和映射代码已经做成 `remote_controller_core` 库。以后写 CRSF、串口、UDP 节点，可以复用 `RemoteConfig` 和 `InputMapper`，只需要把协议数据喂成 source。
+`remote_controller` 的核心解析、输入驱动和映射代码已经做成 `remote_controller_core` 库。以后写 CRSF、串口、UDP，可以新增 `InputDriver`，也可以单独写节点复用 `RemoteConfig` 和 `InputMapper`。
 
 ## 2. 遥控器配置
 
@@ -50,6 +52,9 @@ RobotStateMachine
 
 ```yaml
 sources:
+  ...
+
+curves:
   ...
 
 controls:
@@ -64,7 +69,14 @@ system:
 
 ### 2.1 sources
 
-`sources` 只声明输入来源和别名，不写业务含义。
+`sources` 只声明语义 source 从哪里来，不写业务输出。
+
+统一规则：
+
+```text
+左边：后续 YAML 要引用的语义 source
+右边：这个 source 的来源描述，必须写 from
+```
 
 Linux joystick 示例：
 
@@ -73,24 +85,25 @@ sources:
   gamepad:
     type: joystick
     device: /dev/input/js0
-    axes:
-      left_y: 3
-      trigger_left: 5
-    buttons:
-      rb: 7
-      x: 3
+    signals:
+      gamepad.left_y: {from: js.axis.3}
+      gamepad.trigger_left: {from: js.axis.5}
+      gamepad.rb: {from: js.button.7}
+      gamepad.x: {from: js.button.3}
 ```
 
 字段：
 
 - `sources.<name>`：输入源分组名，例如 `gamepad`、`keyboard`、`crsf`。
-- `sources.<name>.type`：输入源类型。内置支持 `joystick` 和 `keyboard`；其他类型可作为自定义 source 声明使用。
+- `sources.<name>.type`：输入源类型。内置支持 `joystick` 和 `keyboard`；其他类型按自定义 source 处理。
 - `sources.<name>.device` / `sources.<name>.js`：joystick 设备路径。
-- `sources.<name>.axes.<alias>`：轴别名。joystick 下可以写数字 `3`，等价于 `js.axis.3`。
-- `sources.<name>.buttons.<alias>`：按钮别名。joystick 下可以写数字 `7`，等价于 `js.button.7`。
-- `sources.<name>.signals.<alias>`：自定义输入源的 source 别名，例如 `crsf.ch5`。
+- `sources.<name>.signals.<signal>`：声明一个语义 source。
+- `sources.<name>.signals.<signal>.from`：这个语义 source 从哪里来，例如 `js.axis.3`、`js.button.7`、`keyboard.axis`、`keyboard.key`、`crsf.ch5`。
+- `sources.<name>.signals.<signal>.hold_ms`：仅键盘 source 使用，覆盖该键或模拟轴的保持时间。
+- `sources.<name>.signals.<signal>.timeout_ms`：source 超时，单位毫秒。适合 CRSF、UDP、串口这类持续刷新输入；不建议随便用在 Linux joystick 这种事件型输入上。
+- `sources.<name>.signals.<signal>.failsafe`：超时后写入该 raw source 的值，通常是 `0.0`。
 
-这些别名后续用 `<分组名>.<别名>` 引用，例如 `gamepad.left_y`、`gamepad.x`。
+这些语义 source 后续直接引用，例如 `gamepad.left_y`、`gamepad.x`。
 
 键盘示例：
 
@@ -100,30 +113,27 @@ sources:
     type: keyboard
     poll_timeout_us: 20000
     hold_ms: 200
-    axes:
-      vx: keyboard.axis.vx
-      vy: keyboard.axis.vy
-      yaw: keyboard.axis.yaw
-    movement:
-      forward: w
-      backward: s
-      yaw_left: a
-      yaw_right: d
-      strafe_left: q
-      strafe_right: e
-      stop: space
-    keys:
-      normal: {key: "1", source: key.normal}
+    stop: space
+    signals:
+      keyboard.vx: {from: keyboard.axis, negative: w, positive: s}
+      keyboard.vy: {from: keyboard.axis, negative: q, positive: e}
+      keyboard.yaw: {from: keyboard.axis, negative: a, positive: d}
+      keyboard.normal: {from: keyboard.key, key: "1", hold_ms: 200}
+      keyboard.back_flip: {from: keyboard.key, key: "6"}
 ```
 
 键盘字段：
 
 - `poll_timeout_us`：读取键盘的轮询超时，单位微秒。
-- `hold_ms`：terminal 键盘没有真实释放事件，按一次键后 source 保持按下的毫秒数。
-- `axes`：给键盘模拟移动轴起别名。
-- `movement.forward/backward/yaw_left/yaw_right/strafe_left/strafe_right/stop`：移动键。
-- `keys.<alias>.key`：键盘按键。
-- `keys.<alias>.source`：按下该键时产生的 source。
+- `hold_ms`：terminal 键盘没有真实释放事件，按一次键后对应 source 保持按下的毫秒数。
+- `stop`：清空键盘模拟移动轴的按键。`space` 表示空格。
+- `from: keyboard.axis`：声明一个由两个键模拟的轴。
+- `negative`：让该轴变成负方向的键。
+- `positive`：让该轴变成正方向的键。
+- `from: keyboard.key`：声明一个动作键。
+- `key`：动作键的键位。
+
+例子 `keyboard.normal: {from: keyboard.key, key: "1"}` 的读法是：定义 `keyboard.normal`，它由 `1` 键产生。
 
 CRSF 示例：
 
@@ -132,8 +142,8 @@ sources:
   crsf:
     type: crsf
     signals:
-      throttle: crsf.ch1
-      mode: crsf.ch5
+      crsf.throttle: {from: crsf.ch1, timeout_ms: 200, failsafe: 0.0}
+      crsf.mode: {from: crsf.ch5, timeout_ms: 200, failsafe: 0.0}
 ```
 
 配置解析器只负责声明别名。真正读取 CRSF 协议的节点需要调用：
@@ -143,7 +153,46 @@ mapper.set_signal("crsf.ch1", normalized_ch1);
 mapper.set_signal("crsf.ch5", normalized_ch5);
 ```
 
-### 2.2 controls
+### 2.2 curves
+
+`curves` 是可复用的输入曲线。它可以挂在 `controls.<name>.curve`，也可以挂在 `controls.<name>.sources[].curve`。
+
+示例：
+
+```yaml
+curves:
+  stick:
+    type: expo
+    deadzone: 0.03
+    expo: 0.2
+    limit: [-1.0, 1.0]
+    calibration:
+      input: [-1.0, 0.0, 1.0]
+      output: [-1.0, 0.0, 1.0]
+
+  crsf_switch:
+    type: piecewise
+    points:
+      - [172, -1.0]
+      - [992, 0.0]
+      - [1811, 1.0]
+    limit: [-1.0, 1.0]
+```
+
+字段：
+
+- `curves.<name>`：曲线名，后续用 `curve: <name>` 引用。
+- `type`：曲线类型。`expo` 使用指数曲线；`piecewise` 使用分段线性插值。
+- `deadzone`：曲线死区，绝对值小于等于该值时输出 `0`。
+- `expo`：指数曲线强度，范围 `0.0..1.0`。越大，摇杆中心越柔和。
+- `points`：`type: piecewise` 使用，按输入从小到大写 `[input, output]` 点。
+- `calibration.input`：输入校准三点 `[min, center, max]`。
+- `calibration.output`：输出校准三点 `[min, center, max]`。
+- `calibration.clamp`：是否把输入夹在校准范围内，默认 `true`。
+- `limit`：输出限幅，写成 `[min, max]`。
+- `min` / `max`：也可以不用 `limit`，分别写下限和上限。
+
+### 2.3 controls
 
 `controls` 把 source 解释成统一控件。业务绑定只看 control，不关心它来自 Xbox、键盘还是 CRSF。
 
@@ -152,9 +201,17 @@ mapper.set_signal("crsf.ch5", normalized_ch5);
 - `controls.<name>`：控件名，例如 `move.vx`、`button.west`、`mode.switch`。
 - `type`：`analog`、`bool`、`enum`。
 - `source`：单个 source 或 source 别名。
-- `sources`：多个 source。多个输入同时存在时，取绝对值最大的输入。
-- `direction`：方向，默认 `1`，写 `-1` 可反向。
-- `scale`：倍率，默认 `1.0`。
+- `sources`：多个 source。
+- `expr`：派生 bool control，由其他 control 的条件表达式计算出来。
+- `mix`：多个 source 的混合策略。支持 `max_abs`、`sum`、`first_active`，默认 `max_abs`。
+- `direction`：单个 source 的方向，默认 `1`，写 `-1` 可反向。
+- `scale`：单个 source 的倍率，默认 `1.0`。
+- `offset`：单个 source 的偏置，默认 `0.0`。
+- `sources[].direction/scale/offset/deadzone/expo/curve`：单个 source 的局部变换。
+- `invert`：control 层整体取反。
+- `expo`：control 层曲线，`0.0..1.0`，越大中心越柔和。
+- `curve`：control 层使用的命名曲线。
+- `default`：control 没有匹配值时的默认字符串值，常用于 `enum`。
 
 `analog` 字段：
 
@@ -173,15 +230,19 @@ mapper.set_signal("crsf.ch5", normalized_ch5);
 - `positions`：档位表，每个档位写 `[min, max]`。
 - `hysteresis`：档位迟滞量。
 
+`expr` 条件写法和 `outputs.level[].when` 一样，支持 `all`、`any`、`pressed`、`released`、`equals`、`range`。派生 control 可以引用任意已定义 control，加载时会检查未知引用和循环依赖。
+
 示例：
 
 ```yaml
 controls:
   move.vx:
     type: analog
+    mix: max_abs
     sources:
       - source: gamepad.left_y
         direction: -1
+        curve: stick
       - source: keyboard.vx
     deadzone: 0.03
     min: -1.0
@@ -202,33 +263,58 @@ controls:
       low: [-1.0, -0.35]
       mid: [-0.35, 0.35]
       high: [0.35, 1.0]
+
+  command.back_flip:
+    type: bool
+    expr:
+      any:
+        - [trigger.left, button.west]
+        - [keyboard.back_flip]
 ```
 
-### 2.3 outputs
+### 2.4 outputs
 
 `outputs` 是最终输出层，分三类：
 
+- `outputs.conflict_policy`：多个 level binding 同时写同一个 `btn_N` 且值不同时的处理策略。
 - `outputs.analog`：连续量，写到 `MotionCommands.vel_des` 或 `yawdot_des`。
 - `outputs.level`：电平量，条件满足就保持，条件不满足就回 `0`。`btn_*` 推荐用这个。
-- `outputs.edge`：边沿量，条件从不满足变成满足时触发一次。`system.*` 必须用这个。
+- `outputs.edge`：边沿量，条件从不满足变成满足时触发一次。`system.*` 推荐用这个，`btn_*` 放这里会变成一次脉冲。
+
+`conflict_policy` 支持：
+
+- `first_wins`：先匹配到的 binding 生效，后面的冲突写入被忽略。
+- `last_wins`：后匹配到的 binding 覆盖前面的值。
+- `error`：运行时如果真实发生冲突，抛出错误；适合调试严格配置。
 
 analog 示例：
 
 ```yaml
 outputs:
+  conflict_policy: first_wins
+
   analog:
     vx: move.vx
     vy: move.vy
     yaw: move.yaw
+    height_des:
+      control: body.height
+      limit: [0.3, 1.2]
 ```
 
 analog 字段：
 
 - `outputs.analog.vx`：写到 `MotionCommands.vel_des.x`。
 - `outputs.analog.vy`：写到 `MotionCommands.vel_des.y`。
+- `outputs.analog.vz`：写到 `MotionCommands.vel_des.z`。
 - `outputs.analog.yaw`：写到 `MotionCommands.yawdot_des`。
+- `outputs.analog.height`：写到 `MotionCommands.height_des`。
+- `outputs.analog.<field_path>`：也可以直接写 `MotionCommands` 字段路径，例如 `vel_des.z`、`height_des`。
 - 值可以直接写 control，也可以写 `{control: move.vx, offset: 0.0}`。
-- 如果写 `controls: [...]`，多个 control 取绝对值最大的值。
+- `controls`：多个 control。
+- `mix`：多个 control 的混合策略，支持 `max_abs`、`sum`、`first_active`。
+- `scale` / `offset`：输出层整体缩放和偏置。
+- `limit` 或 `min` / `max`：输出限幅。
 
 level / edge 示例：
 
@@ -243,14 +329,20 @@ outputs:
       when:
         any:
           - [shoulder.right, button.west]
-          - [key.normal]
+          - [keyboard.normal]
 ```
 
 binding 字段：
 
 - `output`：支持 `btn_N`、`btn_N=value`、`system.<action>`。
 - `when`：触发条件。
-- `mode`：可选，通常不需要写；放在 `outputs.level` 下默认是 `level`，放在 `outputs.edge` 下默认是 `edge`。
+- 放在 `outputs.level` 下就是 level 输出；放在 `outputs.edge` 下就是 edge 输出，不再单独写 `mode`。
+
+输出目标和模式：
+
+- `btn_*` 可以放在 `level` 或 `edge`。
+- `system.*` 只能放在 `edge`，因为 shell 命令没有“条件不满足时撤销”的 level 语义。
+- `edge` 下的 `btn_*` 会在条件上升沿输出一次，发布一帧后自动回 `0`。
 
 条件写法：
 
@@ -264,9 +356,9 @@ binding 字段：
 - `when: {all: [a, b]}`：所有条件都满足。
 - `when: {any: [[a, b], [c]]}`：任意一组条件满足。
 
-### 2.4 btn_N 变化逻辑
+### 2.5 btn_N 变化逻辑
 
-`btn_N` 是 level 输出，不自动发布一帧后清零，也不需要 `release_outputs`。
+`btn_N` 在 `outputs.level` 下是电平输出，不自动发布一帧后清零，也不需要 `release_outputs`。
 
 规则：
 
@@ -296,7 +388,28 @@ btn_10: 0 -> 3  再次触发 applause
 
 如果其他节点直接发布 `MotionCommands`，也应该遵守这个 level 语义：条件满足时保持非零，条件不满足时设回 `0`。
 
-### 2.5 system
+如果把 `btn_N` 放在 `outputs.edge` 下，它就是脉冲输出：
+
+```yaml
+outputs:
+  edge:
+    - output: btn_1=1
+      when:
+        any:
+          - [shoulder.right, button.west]
+          - [keyboard.normal]
+```
+
+语义：
+
+```text
+条件 false -> true 的第一帧  -> btn_1 = 1
+下一次发布                  -> btn_1 = 0
+条件保持 true               -> 不重复触发
+条件先回 false 再到 true     -> 再次触发一帧脉冲
+```
+
+### 2.6 system
 
 `system` 定义 `system.<action>` 要执行的命令。
 
@@ -326,14 +439,82 @@ system_mutexes:
     release: stop
 ```
 
+### 2.7 配置自检
+
+遥控器节点加载 YAML 时会先做自检。
+
+会直接报错并停止启动的情况：
+
+- `sources`、`controls`、`outputs` 结构类型不对。
+- source、curve、control 重名。
+- control 引用了不存在的 source。
+- 派生 control 的 `expr` 引用了不存在的 control 或形成循环依赖。
+- binding 引用了不存在的 control。
+- `outputs.analog` 写了不支持的 `MotionCommands` 字段。
+- `system.*` 输出引用了不存在的 system action。
+- `system_mutexes` 或 `system_reset_motion_after` 引用了不存在的 action。
+- `alpha`、`expo`、`deadzone`、`timeout_ms`、curve calibration/points 等数值越界。
+- `outputs.level` 里写了非 `btn_N` 输出，或 `outputs.edge` 里写了非 `btn_N` / `system.<action>` 输出。
+
+会打印 warning/info 但继续启动的情况：
+
+- 顶层出现未知字段。
+- source、control 名字里有不推荐字符。
+- enum 档位有重叠或空洞。
+- 定义了没有使用的 source、curve、control。
+- 同一个 `btn_N` 有多个可能值；最终按 `outputs.conflict_policy` 处理。
+
 ## 3. 添加非 joystick 输入源
 
-复杂输入源建议做独立节点，例如 `crsf_remote_controller`、`udp_remote_controller`。
+有两种方式：
 
-原则：
+- 如果新输入源仍由 `remote_controller` 节点统一发布 `/motion_commands`，新增一个 `InputDriver`。
+- 如果新输入源是独立 ROS2 节点，复用 `RemoteConfig` 和 `InputMapper`，自己发布 `/motion_commands`。
+
+### 3.1 新增 InputDriver
+
+驱动接口在：
+
+```text
+src/remote_controller/include/remote_controller/input_driver.hpp
+```
+
+新增驱动时做三件事：
+
+1. 在 `src/remote_controller/src/input_driver.cpp` 里新增一个 `InputDriver` 子类。
+2. 在驱动里读取协议，把通道值写成 raw source，例如 `mapper.set_signal("crsf.ch1", value)`。
+3. 在 `create_input_driver()` 里注册新的 `driver_type`。
+
+驱动内部需要遵守：
+
+- 持有 `mapper_lock` 时只调用 `mapper.set_signal()` / `mapper.handle_*()`，拿到 edge outputs 后释放锁再执行回调。
+- 周期逻辑不要自己写业务判断，业务判断留给 YAML 的 `controls` 和 `outputs`。
+- `mapper.tick()` 由主节点定时器周期调用，驱动只负责输入事件。
+
+启动时可用：
+
+```bash
+ros2 run remote_controller remote_controller \
+  --config src/remote_controller/config/xbox_default.yaml \
+  --driver joystick
+```
+
+键盘模式仍兼容：
+
+```bash
+ros2 run remote_controller remote_controller \
+  --config src/remote_controller/config/xbox_default.yaml \
+  --driver keyboard
+```
+
+`--keyboard` 也还可以用，等价于 `--driver keyboard`。
+
+### 3.2 独立节点复用 InputMapper
+
+独立节点原则：
 
 1. 新节点负责读取协议。
-2. 把协议通道归一化为 `-1.0..1.0` 或 `0.0/1.0` source。
+2. 把协议通道归一化为 `-1.0..1.0`、`0.0/1.0`，或者直接交给 curve calibration 处理。
 3. 复用 `remote_controller_core::InputMapper`。
 4. 发布同一个 `/motion_commands`。
 
@@ -344,13 +525,23 @@ sources:
   crsf:
     type: crsf
     signals:
-      throttle: crsf.ch1
-      mode: crsf.ch5
+      crsf.throttle: {from: crsf.ch1, timeout_ms: 200, failsafe: 0.0}
+      crsf.mode: {from: crsf.ch5, timeout_ms: 200, failsafe: 0.0}
+
+curves:
+  crsf_channel:
+    type: expo
+    calibration:
+      input: [172, 992, 1811]
+      output: [-1.0, 0.0, 1.0]
+    deadzone: 0.02
+    limit: [-1.0, 1.0]
 
 controls:
   throttle:
     type: analog
     source: crsf.throttle
+    curve: crsf_channel
     deadzone: 0.02
     min: -1.0
     max: 1.0
@@ -359,6 +550,7 @@ controls:
   mode.switch:
     type: enum
     source: crsf.mode
+    curve: crsf_channel
     hysteresis: 0.05
     positions:
       low: [-1.0, -0.35]
@@ -366,6 +558,9 @@ controls:
       high: [0.35, 1.0]
 
 outputs:
+  analog:
+    vx: throttle
+
   level:
     - output: btn_10=1
       when: [mode.switch=high]
@@ -374,6 +569,9 @@ outputs:
 节点伪代码：
 
 ```cpp
+auto edge_outputs = mapper.tick();
+dispatch_outputs(edge_outputs);
+
 auto outputs = mapper.set_signal("crsf.ch1", normalize(channel_1));
 dispatch_outputs(outputs);
 
@@ -385,6 +583,8 @@ mapper.fill_message(msg);
 publisher->publish(msg);
 ```
 
+`tick()` 要周期调用，用来处理键盘保持时间、source 超时/failsafe、edge 条件更新。
+
 不要让两个节点同时发布同一个 `/motion_commands`。
 
 ## 4. 当前能力边界
@@ -393,17 +593,25 @@ publisher->publish(msg);
 
 - source 别名声明。
 - joystick source 自动归一化。
-- keyboard `hold_ms` 模拟释放。
+- keyboard 全局和单键 `hold_ms` 模拟释放。
 - `analog`、`bool`、`enum` control。
-- 多 source 混合，策略是取绝对值最大的输入。
+- source 超时/failsafe。
+- 命名曲线 `curves`，支持 deadzone、expo、limit、calibration、piecewise points。
+- source 局部 `direction/scale/offset/deadzone/expo/curve`。
+- control 层 `mix/invert/expo/default/expr`。
+- 多 source 混合，支持 `max_abs`、`sum`、`first_active`。
 - `outputs.analog`、`outputs.level`、`outputs.edge`。
+- `outputs.conflict_policy`。
 - `when` 支持 `all`、`any`、`pressed`、`released`、`equals`、`range`。
+- `InputDriver` 抽象层，内置 joystick 和 keyboard driver。
+- 加载配置时自检并通过 ROS log 报告诊断信息。
 
 没有内置实现：
 
 - CRSF 协议读取节点本身。
 - 串口/UDP 协议读取节点本身。
-- 更复杂的混合策略，例如加权求和、优先级锁定、曲线映射。
+- 查表曲线。
+- control 级优先级锁定。
 
 这些可以继续在 `remote_controller_core` 上扩展，不需要改业务状态机。
 
@@ -443,6 +651,31 @@ remote_events:
   applause:
     slot: btn_10
     value: 3
+```
+
+`graph`：
+
+- `graph.validate`：是否启动时做状态图自检，默认 `true`。
+- `graph.export.dot`：导出 Graphviz dot 文件路径。
+- `graph.export.mermaid`：导出 Mermaid 状态图文件路径。
+
+自检会检查：
+
+- transition 目标状态是否存在。
+- transition profile 是否存在。
+- `on_event` 是否在 `remote_events` 中声明。
+- 从 `initial_state` 出发是否有不可达状态。
+- 是否有状态没有配置任何 outgoing transition。
+- 是否存在只由 `after` 自动转移构成的循环。
+
+示例：
+
+```yaml
+graph:
+  validate: true
+  export:
+    dot: /tmp/elf3_state_machine.dot
+    mermaid: /tmp/elf3_state_machine.mmd
 ```
 
 `transition_profiles`：
@@ -636,6 +869,14 @@ ros2 launch remote_controller remote_controller.launch.py
 
 ```bash
 ros2 launch remote_controller remote_controller_keyboard.launch.py
+```
+
+直接指定 driver：
+
+```bash
+ros2 run remote_controller remote_controller \
+  --config src/remote_controller/config/xbox_default.yaml \
+  --driver keyboard
 ```
 
 观察输出：

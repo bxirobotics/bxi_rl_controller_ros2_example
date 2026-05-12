@@ -1,8 +1,11 @@
 #include "remote_controller/input_mapper.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <set>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -23,6 +26,28 @@ bool is_axis_source(const std::string &source)
 {
     return source.find(".axis.") != std::string::npos ||
            starts_with(source, "keyboard.axis.");
+}
+
+bool parse_int_text(const std::string &text, int &value)
+{
+    if (text.empty()) {
+        return false;
+    }
+
+    std::size_t index = 0;
+    if (text[index] == '-' || text[index] == '+') {
+        ++index;
+    }
+    if (index >= text.size()) {
+        return false;
+    }
+    for (; index < text.size(); ++index) {
+        if (!std::isdigit(static_cast<unsigned char>(text[index]))) {
+            return false;
+        }
+    }
+    value = std::atoi(text.c_str());
+    return true;
 }
 
 }  // namespace
@@ -53,35 +78,64 @@ std::vector<std::string> InputMapper::set_signal(const std::string &source, doub
 {
     signals_[source] = value;
     signal_expiry_.erase(source);
+    signal_update_time_[source] = std::chrono::steady_clock::now();
+    timed_out_sources_.erase(source);
     return refresh_bindings();
 }
 
 void InputMapper::zero_motion_axes()
 {
-    signals_["keyboard.axis.vx"] = 0.0;
-    signals_["keyboard.axis.vy"] = 0.0;
-    signals_["keyboard.axis.yaw"] = 0.0;
-    signal_expiry_.erase("keyboard.axis.vx");
-    signal_expiry_.erase("keyboard.axis.vy");
-    signal_expiry_.erase("keyboard.axis.yaw");
+    signals_[config_.keyboard.vx_source] = 0.0;
+    signals_[config_.keyboard.vy_source] = 0.0;
+    signals_[config_.keyboard.yaw_source] = 0.0;
+    signal_expiry_.erase(config_.keyboard.vx_source);
+    signal_expiry_.erase(config_.keyboard.vy_source);
+    signal_expiry_.erase(config_.keyboard.yaw_source);
     refresh_bindings();
 }
 
 void InputMapper::reset_motion()
 {
+    std::set<std::string> motion_sources;
+    for (const auto &output : config_.analog_outputs) {
+        for (const auto &output_control : output.controls) {
+            for (const auto &control : config_.controls) {
+                if (control.name != output_control) {
+                    continue;
+                }
+                for (const auto &source : control.sources) {
+                    motion_sources.insert(source.source);
+                }
+            }
+        }
+    }
+
     for (auto &item : signals_) {
-        if (is_axis_source(item.first)) {
+        if (is_axis_source(item.first) || motion_sources.count(item.first) > 0) {
             item.second = 0.0;
         }
     }
-    for (auto &item : signal_expiry_) {
-        if (is_axis_source(item.first)) {
-            item.second = std::chrono::steady_clock::time_point();
+    for (const auto &source : motion_sources) {
+        signals_[source] = 0.0;
+    }
+    signals_[config_.keyboard.vx_source] = 0.0;
+    signals_[config_.keyboard.vy_source] = 0.0;
+    signals_[config_.keyboard.yaw_source] = 0.0;
+    for (auto it = signal_expiry_.begin(); it != signal_expiry_.end();) {
+        if (is_axis_source(it->first) || motion_sources.count(it->first) > 0) {
+            it = signal_expiry_.erase(it);
+        } else {
+            ++it;
         }
     }
+    signal_expiry_.erase(config_.keyboard.vx_source);
+    signal_expiry_.erase(config_.keyboard.vy_source);
+    signal_expiry_.erase(config_.keyboard.yaw_source);
     for (auto &control : controls_) {
         control.second.analog = 0.0;
     }
+    std::fill(output_slots_, output_slots_ + kButtonSlotCount + 1, 0);
+    std::fill(edge_pulse_slots_, edge_pulse_slots_ + kButtonSlotCount + 1, 0);
     height_filtered_ = kStandHeight;
     refresh_bindings();
 }
@@ -99,6 +153,22 @@ std::vector<std::string> InputMapper::tick()
             ++it;
         }
     }
+    for (const auto &item : config_.source_runtime) {
+        const SourceRuntimeConfig &runtime = item.second;
+        if (runtime.timeout_ms <= 0 || timed_out_sources_.count(runtime.source) > 0) {
+            continue;
+        }
+        const auto update_it = signal_update_time_.find(runtime.source);
+        if (update_it == signal_update_time_.end()) {
+            continue;
+        }
+        const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - update_it->second);
+        if (age.count() >= runtime.timeout_ms) {
+            signals_[runtime.source] = runtime.failsafe;
+            timed_out_sources_.insert(runtime.source);
+            changed = true;
+        }
+    }
 
     if (!changed) {
         return {};
@@ -114,36 +184,48 @@ std::vector<std::string> InputMapper::handle_button(int button_index, bool press
 std::vector<std::string> InputMapper::handle_keyboard_key(char key)
 {
     const auto now = std::chrono::steady_clock::now();
-    const auto expiry = now + std::chrono::milliseconds(config_.keyboard.hold_ms);
+    const auto expiry_for_signal = [this, now](const std::string &signal) {
+        const auto hold_it = config_.keyboard.hold_ms_by_signal.find(signal);
+        const int hold_ms = hold_it == config_.keyboard.hold_ms_by_signal.end() ?
+            config_.keyboard.hold_ms :
+            hold_it->second;
+        return now + std::chrono::milliseconds(hold_ms);
+    };
 
     if (key == config_.keyboard.forward) {
-        signals_["keyboard.axis.vx"] = -1.0;
-        signal_expiry_["keyboard.axis.vx"] = expiry;
+        signals_[config_.keyboard.vx_source] = -1.0;
+        signal_update_time_[config_.keyboard.vx_source] = now;
+        signal_expiry_[config_.keyboard.vx_source] = expiry_for_signal(config_.keyboard.vx_source);
         return refresh_bindings();
     }
     if (key == config_.keyboard.backward) {
-        signals_["keyboard.axis.vx"] = 1.0;
-        signal_expiry_["keyboard.axis.vx"] = expiry;
+        signals_[config_.keyboard.vx_source] = 1.0;
+        signal_update_time_[config_.keyboard.vx_source] = now;
+        signal_expiry_[config_.keyboard.vx_source] = expiry_for_signal(config_.keyboard.vx_source);
         return refresh_bindings();
     }
     if (key == config_.keyboard.yaw_left) {
-        signals_["keyboard.axis.yaw"] = -1.0;
-        signal_expiry_["keyboard.axis.yaw"] = expiry;
+        signals_[config_.keyboard.yaw_source] = -1.0;
+        signal_update_time_[config_.keyboard.yaw_source] = now;
+        signal_expiry_[config_.keyboard.yaw_source] = expiry_for_signal(config_.keyboard.yaw_source);
         return refresh_bindings();
     }
     if (key == config_.keyboard.yaw_right) {
-        signals_["keyboard.axis.yaw"] = 1.0;
-        signal_expiry_["keyboard.axis.yaw"] = expiry;
+        signals_[config_.keyboard.yaw_source] = 1.0;
+        signal_update_time_[config_.keyboard.yaw_source] = now;
+        signal_expiry_[config_.keyboard.yaw_source] = expiry_for_signal(config_.keyboard.yaw_source);
         return refresh_bindings();
     }
     if (key == config_.keyboard.strafe_left) {
-        signals_["keyboard.axis.vy"] = -1.0;
-        signal_expiry_["keyboard.axis.vy"] = expiry;
+        signals_[config_.keyboard.vy_source] = -1.0;
+        signal_update_time_[config_.keyboard.vy_source] = now;
+        signal_expiry_[config_.keyboard.vy_source] = expiry_for_signal(config_.keyboard.vy_source);
         return refresh_bindings();
     }
     if (key == config_.keyboard.strafe_right) {
-        signals_["keyboard.axis.vy"] = 1.0;
-        signal_expiry_["keyboard.axis.vy"] = expiry;
+        signals_[config_.keyboard.vy_source] = 1.0;
+        signal_update_time_[config_.keyboard.vy_source] = now;
+        signal_expiry_[config_.keyboard.vy_source] = expiry_for_signal(config_.keyboard.vy_source);
         return refresh_bindings();
     }
     if (key == config_.keyboard.stop) {
@@ -158,7 +240,9 @@ std::vector<std::string> InputMapper::handle_keyboard_key(char key)
 
     for (const auto &signal : signal_it->second) {
         signals_[signal] = 1.0;
-        signal_expiry_[signal] = expiry;
+        signal_update_time_[signal] = now;
+        timed_out_sources_.erase(signal);
+        signal_expiry_[signal] = expiry_for_signal(signal);
     }
     return refresh_bindings();
 }
@@ -167,31 +251,24 @@ void InputMapper::fill_message(communication::msg::MotionCommands &message)
 {
     refresh_controls();
 
+    bool height_written = false;
     for (const auto &output : config_.analog_outputs) {
-        double value = 0.0;
-        for (const auto &control : output.controls) {
-            const double candidate = read_analog_control(control);
-            if (std::fabs(candidate) > std::fabs(value)) {
-                value = candidate;
-            }
-        }
-        value += output.offset;
-
-        if (output.field == "vx") {
-            message.vel_des.x = static_cast<float>(value);
-        } else if (output.field == "vy") {
-            message.vel_des.y = static_cast<float>(value);
-        } else if (output.field == "yaw") {
-            message.yawdot_des = static_cast<float>(value);
+        const double value = read_analog_output(output);
+        if (set_message_field(message, output.field, value) && output.field == "height_des") {
+            height_written = true;
         }
     }
 
     for (int slot = 1; slot <= kButtonSlotCount; ++slot) {
-        set_button_slot(message, slot, output_slots_[slot]);
+        const int value = edge_pulse_slots_[slot] != 0 ? edge_pulse_slots_[slot] : output_slots_[slot];
+        set_button_slot(message, slot, value);
+        edge_pulse_slots_[slot] = 0;
     }
 
-    height_filtered_ = height_filtered_ * 0.9 + kStandHeight * 0.1;
-    message.height_des = static_cast<float>(height_filtered_);
+    if (!height_written) {
+        height_filtered_ = height_filtered_ * 0.9 + kStandHeight * 0.1;
+        message.height_des = static_cast<float>(height_filtered_);
+    }
 }
 
 std::vector<std::string> InputMapper::refresh_bindings()
@@ -206,7 +283,9 @@ std::vector<std::string> InputMapper::refresh_bindings()
 
         if (binding.mode == "edge") {
             if (active && !binding_active_[index]) {
-                edge_outputs.push_back(binding.output);
+                if (!apply_edge_pulse_output(binding.output)) {
+                    edge_outputs.push_back(binding.output);
+                }
             }
         } else if (active) {
             apply_level_output(binding.output);
@@ -220,9 +299,49 @@ std::vector<std::string> InputMapper::refresh_bindings()
 
 void InputMapper::refresh_controls()
 {
+    std::set<std::string> visiting;
+    std::set<std::string> evaluated;
     for (const auto &control : config_.controls) {
-        controls_[control.name] = evaluate_control(control);
+        evaluate_control_recursive(control.name, visiting, evaluated);
     }
+}
+
+void InputMapper::evaluate_control_recursive(
+    const std::string &control,
+    std::set<std::string> &visiting,
+    std::set<std::string> &evaluated)
+{
+    if (evaluated.count(control) > 0) {
+        return;
+    }
+    if (visiting.count(control) > 0) {
+        throw std::runtime_error("derived control expression cycle detected at: " + control);
+    }
+
+    const ControlConfig *config = find_control_config(control);
+    if (config == nullptr) {
+        return;
+    }
+
+    visiting.insert(control);
+    for (const auto &group : config->expression_groups) {
+        for (const auto &condition : group) {
+            evaluate_control_recursive(condition.control, visiting, evaluated);
+        }
+    }
+    controls_[control] = evaluate_control(*config);
+    visiting.erase(control);
+    evaluated.insert(control);
+}
+
+const ControlConfig *InputMapper::find_control_config(const std::string &control) const
+{
+    for (const auto &item : config_.controls) {
+        if (item.name == control) {
+            return &item;
+        }
+    }
+    return nullptr;
 }
 
 InputMapper::ControlValue InputMapper::evaluate_control(const ControlConfig &control)
@@ -230,12 +349,18 @@ InputMapper::ControlValue InputMapper::evaluate_control(const ControlConfig &con
     const ControlValue previous = controls_[control.name];
     ControlValue value = previous;
 
-    double raw = 0.0;
-    for (const auto &source : control.sources) {
-        const double candidate = read_source(source);
-        if (std::fabs(candidate) > std::fabs(raw)) {
-            raw = candidate;
-        }
+    double raw = mix_sources(control);
+    if (control.invert) {
+        raw = -raw;
+    }
+    raw = apply_curve(raw, control.curve);
+    raw = apply_expo(raw, control.expo);
+
+    if (!control.expression_groups.empty()) {
+        value.pressed = condition_groups_match(control.expression_groups);
+        value.analog = value.pressed ? 1.0 : 0.0;
+        value.value = value.pressed ? "true" : "false";
+        return value;
     }
 
     if (control.type == "analog") {
@@ -250,7 +375,7 @@ InputMapper::ControlValue InputMapper::evaluate_control(const ControlConfig &con
         }
         value.analog = analog * control.alpha + previous.analog * (1.0 - control.alpha);
         value.pressed = std::fabs(value.analog) > 0.0;
-        value.value.clear();
+        value.value = control.default_value;
         return value;
     }
 
@@ -266,7 +391,7 @@ InputMapper::ControlValue InputMapper::evaluate_control(const ControlConfig &con
                 return value;
             }
         }
-        value.value.clear();
+        value.value = control.default_value;
         for (const auto &position : control.positions) {
             if (raw >= position.min && raw <= position.max) {
                 value.value = position.value;
@@ -290,13 +415,146 @@ InputMapper::ControlValue InputMapper::evaluate_control(const ControlConfig &con
 double InputMapper::read_source(const SignalSourceConfig &source) const
 {
     const auto signal_it = signals_.find(source.source);
-    const double value = signal_it == signals_.end() ? 0.0 : signal_it->second;
-    return value * source.direction * source.scale;
+    double value = signal_it == signals_.end() ? 0.0 : signal_it->second;
+    value = value * source.direction * source.scale + source.offset;
+    value = apply_curve(value, source.curve);
+    if (std::fabs(value) <= source.deadzone) {
+        value = 0.0;
+    }
+    return apply_expo(value, source.expo);
+}
+
+double InputMapper::mix_sources(const ControlConfig &control) const
+{
+    if (control.sources.empty()) {
+        return 0.0;
+    }
+
+    if (control.mix == "sum") {
+        double value = 0.0;
+        for (const auto &source : control.sources) {
+            value += read_source(source);
+        }
+        return std::max(-1.0, std::min(1.0, value));
+    }
+
+    if (control.mix == "first_active") {
+        for (const auto &source : control.sources) {
+            const double value = read_source(source);
+            if (std::fabs(value) > 0.0) {
+                return value;
+            }
+        }
+        return 0.0;
+    }
+
+    double value = 0.0;
+    for (const auto &source : control.sources) {
+        const double candidate = read_source(source);
+        if (std::fabs(candidate) > std::fabs(value)) {
+            value = candidate;
+        }
+    }
+    return value;
+}
+
+double InputMapper::apply_expo(double value, double expo) const
+{
+    if (expo <= 0.0) {
+        return value;
+    }
+    if (expo > 1.0) {
+        expo = 1.0;
+    }
+    const double curved = value * value * value;
+    return value * (1.0 - expo) + curved * expo;
+}
+
+double InputMapper::apply_calibration(double value, const CalibrationConfig &calibration) const
+{
+    if (!calibration.enabled) {
+        return value;
+    }
+
+    if (calibration.clamp) {
+        value = std::max(calibration.input_min, std::min(calibration.input_max, value));
+    }
+
+    if (value <= calibration.input_center) {
+        const double span = calibration.input_center - calibration.input_min;
+        if (span <= 0.0) {
+            return calibration.output_center;
+        }
+        const double t = (value - calibration.input_min) / span;
+        return calibration.output_min + (calibration.output_center - calibration.output_min) * t;
+    }
+
+    const double span = calibration.input_max - calibration.input_center;
+    if (span <= 0.0) {
+        return calibration.output_center;
+    }
+    const double t = (value - calibration.input_center) / span;
+    return calibration.output_center + (calibration.output_max - calibration.output_center) * t;
+}
+
+double InputMapper::apply_piecewise(double value, const std::vector<CurvePoint> &points) const
+{
+    if (points.empty()) {
+        return value;
+    }
+    if (value <= points.front().input) {
+        return points.front().output;
+    }
+    if (value >= points.back().input) {
+        return points.back().output;
+    }
+
+    for (std::size_t index = 1; index < points.size(); ++index) {
+        const CurvePoint &right = points[index];
+        if (value > right.input) {
+            continue;
+        }
+        const CurvePoint &left = points[index - 1];
+        const double span = right.input - left.input;
+        if (span <= 0.0) {
+            return right.output;
+        }
+        const double t = (value - left.input) / span;
+        return left.output + (right.output - left.output) * t;
+    }
+    return value;
+}
+
+double InputMapper::apply_curve(double value, const std::string &curve_name) const
+{
+    if (curve_name.empty()) {
+        return value;
+    }
+    const auto curve_it = config_.curves.find(curve_name);
+    if (curve_it == config_.curves.end()) {
+        return value;
+    }
+    const CurveConfig &curve = curve_it->second;
+    value = apply_calibration(value, curve.calibration);
+    if (std::fabs(value) <= curve.deadzone) {
+        value = 0.0;
+    }
+    if (curve.type == "piecewise") {
+        value = apply_piecewise(value, curve.points);
+    } else {
+        value = apply_expo(value, curve.expo);
+    }
+    return std::max(curve.min_value, std::min(curve.max_value, value));
 }
 
 bool InputMapper::conditions_match(const Binding &binding) const
 {
-    for (const auto &group : binding.condition_groups) {
+    return condition_groups_match(binding.condition_groups);
+}
+
+bool InputMapper::condition_groups_match(const std::vector<std::vector<BindingCondition>> &groups) const
+{
+    for (const auto &group : groups) {
         bool group_matches = true;
         for (const auto &condition : group) {
             if (!condition_matches(condition)) {
@@ -338,7 +596,34 @@ bool InputMapper::apply_level_output(const std::string &output)
     if (!parse_button_output(output, slot, value)) {
         return false;
     }
+    if (output_slots_[slot] != 0 && output_slots_[slot] != value) {
+        if (config_.output_conflict_policy == "first_wins") {
+            return true;
+        }
+        if (config_.output_conflict_policy == "error") {
+            throw std::runtime_error("conflicting level outputs for btn_" + std::to_string(slot));
+        }
+    }
     output_slots_[slot] = value;
+    return true;
+}
+
+bool InputMapper::apply_edge_pulse_output(const std::string &output)
+{
+    int slot = 0;
+    int value = 0;
+    if (!parse_button_output(output, slot, value)) {
+        return false;
+    }
+    if (edge_pulse_slots_[slot] != 0 && edge_pulse_slots_[slot] != value) {
+        if (config_.output_conflict_policy == "first_wins") {
+            return true;
+        }
+        if (config_.output_conflict_policy == "error") {
+            throw std::runtime_error("conflicting edge pulse outputs for btn_" + std::to_string(slot));
+        }
+    }
+    edge_pulse_slots_[slot] = value;
     return true;
 }
 
@@ -350,13 +635,46 @@ bool InputMapper::parse_button_output(const std::string &output, int &slot, int 
 
     const auto eq_pos = output.find('=');
     const std::string slot_text = output.substr(4, eq_pos == std::string::npos ? std::string::npos : eq_pos - 4);
-    slot = std::atoi(slot_text.c_str());
+    if (!parse_int_text(slot_text, slot)) {
+        return false;
+    }
     if (slot < 1 || slot > kButtonSlotCount) {
         return false;
     }
 
-    value = eq_pos == std::string::npos ? 1 : std::atoi(output.substr(eq_pos + 1).c_str());
+    if (eq_pos == std::string::npos) {
+        value = 1;
+    } else if (!parse_int_text(output.substr(eq_pos + 1), value)) {
+        return false;
+    }
     return true;
+}
+
+double InputMapper::read_analog_output(const AnalogOutputConfig &output) const
+{
+    double value = 0.0;
+    if (output.mix == "sum") {
+        for (const auto &control : output.controls) {
+            value += read_analog_control(control);
+        }
+    } else if (output.mix == "first_active") {
+        for (const auto &control : output.controls) {
+            value = read_analog_control(control);
+            if (std::fabs(value) > 0.0) {
+                break;
+            }
+        }
+    } else {
+        for (const auto &control : output.controls) {
+            const double candidate = read_analog_control(control);
+            if (std::fabs(candidate) > std::fabs(value)) {
+                value = candidate;
+            }
+        }
+    }
+
+    value = value * output.scale + output.offset;
+    return std::max(output.min_value, std::min(output.max_value, value));
 }
 
 double InputMapper::read_analog_control(const std::string &control) const
@@ -366,6 +684,35 @@ double InputMapper::read_analog_control(const std::string &control) const
         return 0.0;
     }
     return control_it->second.analog;
+}
+
+bool InputMapper::set_message_field(
+    communication::msg::MotionCommands &message,
+    const std::string &field,
+    double value)
+{
+    const float float_value = static_cast<float>(value);
+    if (field == "vel_des.x") {
+        message.vel_des.x = float_value;
+        return true;
+    }
+    if (field == "vel_des.y") {
+        message.vel_des.y = float_value;
+        return true;
+    }
+    if (field == "vel_des.z") {
+        message.vel_des.z = float_value;
+        return true;
+    }
+    if (field == "yawdot_des") {
+        message.yawdot_des = float_value;
+        return true;
+    }
+    if (field == "height_des") {
+        message.height_des = float_value;
+        return true;
+    }
+    return false;
 }
 
 void InputMapper::set_button_slot(communication::msg::MotionCommands &message, int slot, int value)

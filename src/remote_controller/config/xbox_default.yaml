@@ -2,55 +2,58 @@ sources:
   gamepad:
     type: joystick
     device: /dev/input/js0
-    axes:
-      left_y: 3
-      left_x: 0
-      yaw: 6
-      trigger_left: 5
-      trigger_right: 4
-    buttons:
-      stop: 11
-      start: 14
-      lb: 6
-      rb: 7
-      a: 0
-      b: 1
-      x: 3
-      y: 4
+    signals:
+      gamepad.left_y: {from: js.axis.3}
+      gamepad.left_x: {from: js.axis.0}
+      gamepad.yaw: {from: js.axis.6}
+      gamepad.trigger_left: {from: js.axis.5}
+      gamepad.trigger_right: {from: js.axis.4}
+      gamepad.stop: {from: js.button.11}
+      gamepad.start: {from: js.button.14}
+      gamepad.lb: {from: js.button.6}
+      gamepad.rb: {from: js.button.7}
+      gamepad.a: {from: js.button.0}
+      gamepad.b: {from: js.button.1}
+      gamepad.x: {from: js.button.3}
+      gamepad.y: {from: js.button.4}
 
   keyboard:
     type: keyboard
     poll_timeout_us: 20000
     hold_ms: 200
-    axes:
-      vx: keyboard.axis.vx
-      vy: keyboard.axis.vy
-      yaw: keyboard.axis.yaw
-    movement:
-      forward: w
-      backward: s
-      yaw_left: a
-      yaw_right: d
-      strafe_left: q
-      strafe_right: e
-      stop: space
-    keys:
-      normal: {key: "1", source: key.normal}
-      recover: {key: "2", source: key.recover}
-      dance: {key: "3", source: key.dance}
-      amp_run: {key: "4", source: key.amp_run}
-      normal_run: {key: "5", source: key.normal_run}
-      back_flip: {key: "6", source: key.back_flip}
-      forward_flip: {key: "7", source: key.forward_flip}
-      applause: {key: "8", source: key.applause}
-      hello: {key: "9", source: key.hello}
+    stop: space
+    signals:
+      keyboard.vx: {from: keyboard.axis, negative: w, positive: s}
+      keyboard.vy: {from: keyboard.axis, negative: q, positive: e}
+      keyboard.yaw: {from: keyboard.axis, negative: a, positive: d}
+      keyboard.normal: {from: keyboard.key, key: "1", hold_ms: 200}
+      keyboard.recover: {from: keyboard.key, key: "2"}
+      keyboard.dance: {from: keyboard.key, key: "3"}
+      keyboard.amp_run: {from: keyboard.key, key: "4"}
+      keyboard.normal_run: {from: keyboard.key, key: "5"}
+      keyboard.back_flip: {from: keyboard.key, key: "6"}
+      keyboard.forward_flip: {from: keyboard.key, key: "7"}
+      keyboard.applause: {from: keyboard.key, key: "8"}
+      keyboard.hello: {from: keyboard.key, key: "9"}
+
+curves:
+  stick:
+    type: expo
+    deadzone: 0.03
+    expo: 0.0
+    limit: [-1.0, 1.0]
+    calibration:
+      input: [-1.0, 0.0, 1.0]
+      output: [-1.0, 0.0, 1.0]
 
 controls:
   move.vx:
     type: analog
+    mix: max_abs
     sources:
       - source: gamepad.left_y
         direction: -1
+        curve: stick
       - source: keyboard.vx
     deadzone: 0.03
     min: -1.0
@@ -59,9 +62,11 @@ controls:
 
   move.vy:
     type: analog
+    mix: max_abs
     sources:
       - source: gamepad.left_x
         direction: -1
+        curve: stick
       - source: keyboard.vy
     deadzone: 0.03
     min: -1.0
@@ -70,9 +75,11 @@ controls:
 
   move.yaw:
     type: analog
+    mix: max_abs
     sources:
       - source: gamepad.yaw
         direction: -1
+        curve: stick
       - source: keyboard.yaw
     deadzone: 0.03
     min: -1.0
@@ -100,17 +107,19 @@ controls:
     threshold: 0.85
     hysteresis: 0.05
 
-  key.normal: {type: bool, source: keyboard.normal}
-  key.recover: {type: bool, source: keyboard.recover}
-  key.dance: {type: bool, source: keyboard.dance}
-  key.amp_run: {type: bool, source: keyboard.amp_run}
-  key.normal_run: {type: bool, source: keyboard.normal_run}
-  key.back_flip: {type: bool, source: keyboard.back_flip}
-  key.forward_flip: {type: bool, source: keyboard.forward_flip}
-  key.applause: {type: bool, source: keyboard.applause}
-  key.hello: {type: bool, source: keyboard.hello}
+  keyboard.normal: {type: bool, source: keyboard.normal}
+  keyboard.recover: {type: bool, source: keyboard.recover}
+  keyboard.dance: {type: bool, source: keyboard.dance}
+  keyboard.amp_run: {type: bool, source: keyboard.amp_run}
+  keyboard.normal_run: {type: bool, source: keyboard.normal_run}
+  keyboard.back_flip: {type: bool, source: keyboard.back_flip}
+  keyboard.forward_flip: {type: bool, source: keyboard.forward_flip}
+  keyboard.applause: {type: bool, source: keyboard.applause}
+  keyboard.hello: {type: bool, source: keyboard.hello}
 
 outputs:
+  conflict_policy: first_wins
+
   analog:
     vx: move.vx
     vy: move.vy
@@ -127,7 +136,7 @@ outputs:
       when:
         any:
           - [shoulder.right, button.west]
-          - [key.normal]
+          - [keyboard.normal]
 
     - output: btn_2=1
       when: [shoulder.right, button.south]
@@ -142,25 +151,25 @@ outputs:
       when:
         any:
           - [shoulder.left, button.west]
-          - [key.dance]
+          - [keyboard.dance]
 
     - output: btn_6=1
       when:
         any:
           - [shoulder.left, button.south]
-          - [key.recover]
+          - [keyboard.recover]
 
     - output: btn_7=1
       when:
         any:
           - [shoulder.left, button.east]
-          - [key.normal_run]
+          - [keyboard.normal_run]
 
     - output: btn_8=1
       when:
         any:
           - [shoulder.left, button.north]
-          - [key.amp_run]
+          - [keyboard.amp_run]
 
     - output: btn_9=1
       when:
@@ -174,25 +183,25 @@ outputs:
       when:
         any:
           - [trigger.left, button.west]
-          - [key.back_flip]
+          - [keyboard.back_flip]
 
     - output: btn_10=2
       when:
         any:
           - [trigger.left, button.north]
-          - [key.forward_flip]
+          - [keyboard.forward_flip]
 
     - output: btn_10=3
       when:
         any:
           - [trigger.right, button.east]
-          - [key.applause]
+          - [keyboard.applause]
 
     - output: btn_10=4
       when:
         any:
           - [trigger.right, button.south]
-          - [key.hello]
+          - [keyboard.hello]
 
 system:
   start:

@@ -1,5 +1,11 @@
 initial_state: zero_torque
 
+graph:
+  validate: true
+  export:
+    dot: /tmp/elf3_state_machine.dot
+    mermaid: /tmp/elf3_state_machine.mmd
+
 remote_events:
   normal:
     slot: btn_1
