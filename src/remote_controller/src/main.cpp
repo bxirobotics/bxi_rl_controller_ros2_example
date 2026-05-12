@@ -74,10 +74,13 @@ private:
     void timer_callback()
     {
         auto message = communication::msg::MotionCommands();
+        std::vector<std::string> outputs;
         {
             const std::lock_guard<std::mutex> guard(lock_);
+            outputs = mapper_.tick();
             mapper_.fill_message(message);
         }
+        dispatch_outputs(outputs);
         com_pub_->publish(message);
     }
 
@@ -157,15 +160,13 @@ private:
             FD_SET(tty_fd, &fds);
             struct timeval tv;
             tv.tv_sec = 0;
-            tv.tv_usec = mapper_.config().keyboard.timeout_us;
+            tv.tv_usec = mapper_.config().keyboard.poll_timeout_us;
 
             const int sel = select(tty_fd + 1, &fds, nullptr, nullptr, &tv);
             if (sel < 0) {
                 break;
             }
             if (sel == 0) {
-                const std::lock_guard<std::mutex> guard(lock_);
-                mapper_.zero_motion_axes();
                 continue;
             }
 
@@ -209,8 +210,12 @@ private:
         printf("  %c/%c      : turn left / right\n", keyboard.yaw_left, keyboard.yaw_right);
         printf("  %c/%c      : strafe left / right\n", keyboard.strafe_left, keyboard.strafe_right);
         printf("  Space    : full stop\n");
-        for (const auto &item : keyboard.bindings) {
-            printf("  %c        : %s\n", item.first, item.second.c_str());
+        for (const auto &item : keyboard.signals_by_key) {
+            printf("  %c        :", item.first);
+            for (const auto &signal : item.second) {
+                printf(" %s", signal.c_str());
+            }
+            printf("\n");
         }
         printf("  ESC      : exit\n");
     }
@@ -218,15 +223,6 @@ private:
     void dispatch_outputs(const std::vector<std::string> &outputs)
     {
         for (const auto &output : outputs) {
-            bool consumed = false;
-            {
-                const std::lock_guard<std::mutex> guard(lock_);
-                consumed = mapper_.apply_button_output(output);
-            }
-            if (consumed) {
-                continue;
-            }
-
             if (remote_controller::starts_with(output, "system.")) {
                 run_system_action(output.substr(std::string("system.").size()));
             } else if (!output.empty()) {

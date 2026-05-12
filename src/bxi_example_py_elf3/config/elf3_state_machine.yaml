@@ -1,15 +1,33 @@
 initial_state: zero_torque
 
 remote_events:
-  normal: btn_1
-  zero_torque: btn_2
-  pd_brake: btn_3
-  initial_pos: btn_4
-  dance: btn_5
-  recover: btn_6
-  normal_run: btn_7
-  amp_run: btn_8
-  toggle_dance_pause: btn_9
+  normal:
+    slot: btn_1
+    value: 1
+  zero_torque:
+    slot: btn_2
+    value: 1
+  pd_brake:
+    slot: btn_3
+    value: 1
+  initial_pos:
+    slot: btn_4
+    value: 1
+  dance:
+    slot: btn_5
+    value: 1
+  recover:
+    slot: btn_6
+    value: 1
+  normal_run:
+    slot: btn_7
+    value: 1
+  amp_run:
+    slot: btn_8
+    value: 1
+  toggle_dance_pause:
+    slot: btn_9
+    value: 1
   back_flip:
     slot: btn_10
     value: 1

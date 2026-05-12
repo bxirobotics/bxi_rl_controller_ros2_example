@@ -37,21 +37,42 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-add_executable(${PROJECT_NAME}
-  src/main.cpp
+add_library(${PROJECT_NAME}_core
   src/config.cpp
   src/input_mapper.cpp
 )
+target_include_directories(${PROJECT_NAME}_core PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(${PROJECT_NAME}_core communication)
+target_link_libraries(${PROJECT_NAME}_core yaml-cpp)
+
+add_executable(${PROJECT_NAME}
+  src/main.cpp
+)
 target_include_directories(${PROJECT_NAME} PRIVATE include)
 ament_target_dependencies(${PROJECT_NAME} rclcpp std_msgs communication)
-target_link_libraries(${PROJECT_NAME} yaml-cpp)
+target_link_libraries(${PROJECT_NAME} ${PROJECT_NAME}_core)
 
-install(TARGETS ${PROJECT_NAME} DESTINATION lib/${PROJECT_NAME})
+install(TARGETS ${PROJECT_NAME}_core ${PROJECT_NAME}
+        EXPORT ${PROJECT_NAME}_targets
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION lib/${PROJECT_NAME})
+
+install(DIRECTORY include/
+        DESTINATION include)
 
 install(DIRECTORY launch
          DESTINATION share/${PROJECT_NAME})
 
 install(DIRECTORY config
          DESTINATION share/${PROJECT_NAME})
+
+ament_export_include_directories(include)
+ament_export_libraries(${PROJECT_NAME}_core)
+ament_export_targets(${PROJECT_NAME}_targets)
+ament_export_dependencies(communication yaml-cpp)
 
 ament_package()
