@@ -39,6 +39,7 @@ endif()
 
 add_library(${PROJECT_NAME}_core
   src/config.cpp
+  src/input_driver.cpp
   src/input_mapper.cpp
 )
 target_include_directories(${PROJECT_NAME}_core PUBLIC

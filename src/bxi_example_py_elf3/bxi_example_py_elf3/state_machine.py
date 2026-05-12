@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Optional
+import os
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import yaml
 
@@ -117,6 +118,12 @@ class ActiveTransition:
     elapsed: float = 0.0
 
 
+@dataclass(frozen=True)
+class GraphDiagnostic:
+    severity: str
+    message: str
+
+
 class RobotStateMachine:
     """Unity-style state machine with user-defined StateBehavior classes."""
 
@@ -139,6 +146,9 @@ class RobotStateMachine:
             initial_state_name = next(iter(self._states))
         if initial_state_name not in self._states:
             raise ValueError(f"unknown initial_state in state machine config: {initial_state_name}")
+
+        self._run_graph_checks(initial_state_name)
+        self._export_graph_from_config(initial_state_name)
 
         self.current = self._states[initial_state_name]
         self.state_elapsed = 0.0
@@ -376,3 +386,206 @@ class RobotStateMachine:
                 )
             )
         return rules
+
+    def _graph_config(self) -> Dict:
+        graph_config = self._config.get("graph", {}) or {}
+        if graph_config is True:
+            return {"validate": True}
+        if not isinstance(graph_config, dict):
+            return {}
+        return graph_config
+
+    def _run_graph_checks(self, initial_state_name: str) -> None:
+        graph_config = self._graph_config()
+        if graph_config.get("validate", True) is False:
+            return
+
+        diagnostics = self.validate_graph(initial_state_name)
+        errors = [item for item in diagnostics if item.severity == "error"]
+        for item in diagnostics:
+            self._report_graph_diagnostic(item)
+        if errors:
+            messages = "; ".join(item.message for item in errors)
+            raise ValueError(f"state machine graph validation failed: {messages}")
+
+    def _report_graph_diagnostic(self, diagnostic: GraphDiagnostic) -> None:
+        logger = getattr(self._ctx, "get_logger", None)
+        if callable(logger):
+            ros_logger = logger()
+            if diagnostic.severity == "warning":
+                if hasattr(ros_logger, "warning"):
+                    ros_logger.warning(diagnostic.message)
+                else:
+                    ros_logger.warn(diagnostic.message)
+            else:
+                ros_logger.info(diagnostic.message)
+            return
+        print(f"{diagnostic.severity}: {diagnostic.message}")
+
+    def validate_graph(self, initial_state_name: str) -> List[GraphDiagnostic]:
+        diagnostics: List[GraphDiagnostic] = []
+        declared_events = set((self._config.get("remote_events", {}) or {}).keys())
+
+        edges = self._graph_edges()
+        for from_state, to_state, label, rule in edges:
+            if to_state and to_state not in self._states:
+                diagnostics.append(GraphDiagnostic(
+                    "error",
+                    f"state '{from_state}' transition '{label}' targets unknown state '{to_state}'",
+                ))
+            if rule.transition not in self._profiles:
+                diagnostics.append(GraphDiagnostic(
+                    "error",
+                    f"state '{from_state}' transition '{label}' references unknown profile '{rule.transition}'",
+                ))
+            if rule.event and rule.event not in declared_events:
+                diagnostics.append(GraphDiagnostic(
+                    "warning",
+                    f"state '{from_state}' listens to undeclared remote event '{rule.event}'",
+                ))
+
+        reachable = self._reachable_states(initial_state_name, edges)
+        for state_name in self._states:
+            if state_name not in reachable:
+                diagnostics.append(GraphDiagnostic("warning", f"state '{state_name}' is unreachable from '{initial_state_name}'"))
+            if not self._rules.get(state_name):
+                diagnostics.append(GraphDiagnostic("warning", f"state '{state_name}' has no configured outgoing transitions"))
+
+        for cycle in self._after_transition_cycles():
+            diagnostics.append(GraphDiagnostic(
+                "warning",
+                "automatic after-transition cycle detected: " + " -> ".join(cycle),
+            ))
+
+        diagnostics.append(GraphDiagnostic(
+            "info",
+            f"state graph loaded: {len(self._states)} states, {len(edges)} transitions",
+        ))
+        return diagnostics
+
+    def _graph_edges(self) -> List[Tuple[str, Optional[str], str, TransitionRule]]:
+        edges: List[Tuple[str, Optional[str], str, TransitionRule]] = []
+        for from_state, rules in self._rules.items():
+            for rule in rules:
+                if rule.event:
+                    label = rule.event
+                elif rule.after is not None:
+                    label = f"after {rule.after:g}s"
+                elif rule.action:
+                    label = f"action {rule.action}"
+                else:
+                    label = "transition"
+                if rule.action:
+                    label += f" / {rule.action}"
+                if rule.transition != "instant":
+                    label += f" [{rule.transition}]"
+                edges.append((from_state, rule.to_state, label, rule))
+        return edges
+
+    def _reachable_states(
+        self,
+        initial_state_name: str,
+        edges: List[Tuple[str, Optional[str], str, TransitionRule]],
+    ) -> Set[str]:
+        adjacency: Dict[str, List[str]] = {}
+        for from_state, to_state, _label, _rule in edges:
+            if to_state:
+                adjacency.setdefault(from_state, []).append(to_state)
+
+        reachable: Set[str] = set()
+        stack = [initial_state_name]
+        while stack:
+            state = stack.pop()
+            if state in reachable:
+                continue
+            reachable.add(state)
+            stack.extend(adjacency.get(state, []))
+        return reachable
+
+    def _after_transition_cycles(self) -> List[List[str]]:
+        adjacency: Dict[str, List[str]] = {}
+        for from_state, rules in self._rules.items():
+            for rule in rules:
+                if rule.after is not None and rule.to_state:
+                    adjacency.setdefault(from_state, []).append(rule.to_state)
+
+        cycles: List[List[str]] = []
+        stack: List[str] = []
+        visiting: Set[str] = set()
+        visited: Set[str] = set()
+
+        def dfs(state: str) -> None:
+            if state in visiting:
+                index = stack.index(state)
+                cycles.append(stack[index:] + [state])
+                return
+            if state in visited:
+                return
+            visiting.add(state)
+            stack.append(state)
+            for target in adjacency.get(state, []):
+                dfs(target)
+            stack.pop()
+            visiting.remove(state)
+            visited.add(state)
+
+        for state_name in adjacency:
+            dfs(state_name)
+        return cycles
+
+    def _export_graph_from_config(self, initial_state_name: str) -> None:
+        graph_config = self._graph_config()
+        export_config = graph_config.get("export", {}) or {}
+        if export_config is True:
+            export_config = {
+                "dot": "/tmp/elf3_state_machine.dot",
+                "mermaid": "/tmp/elf3_state_machine.mmd",
+            }
+        if not isinstance(export_config, dict):
+            return
+
+        dot_path = export_config.get("dot")
+        mermaid_path = export_config.get("mermaid")
+        if dot_path:
+            self.export_dot(dot_path, initial_state_name)
+            self._report_graph_diagnostic(GraphDiagnostic("info", f"state graph dot exported: {dot_path}"))
+        if mermaid_path:
+            self.export_mermaid(mermaid_path, initial_state_name)
+            self._report_graph_diagnostic(GraphDiagnostic("info", f"state graph mermaid exported: {mermaid_path}"))
+
+    def export_dot(self, path: str, initial_state_name: Optional[str] = None) -> None:
+        initial = initial_state_name or self.current_state_name
+        lines = [
+            "digraph RobotStateMachine {",
+            "  rankdir=LR;",
+            "  node [shape=box];",
+            f"  __start [shape=point];",
+            f"  __start -> \"{initial}\";",
+        ]
+        for state_name in self._states:
+            lines.append(f"  \"{state_name}\";")
+        for from_state, to_state, label, _rule in self._graph_edges():
+            if to_state:
+                lines.append(f"  \"{from_state}\" -> \"{to_state}\" [label=\"{label}\"];")
+            else:
+                lines.append(f"  \"{from_state}\" -> \"{from_state}\" [style=dashed, label=\"{label}\"];")
+        lines.append("}")
+        self._write_text(path, "\n".join(lines) + "\n")
+
+    def export_mermaid(self, path: str, initial_state_name: Optional[str] = None) -> None:
+        initial = initial_state_name or self.current_state_name
+        lines = [
+            "stateDiagram-v2",
+            f"    [*] --> {initial}",
+        ]
+        for from_state, to_state, label, _rule in self._graph_edges():
+            target = to_state or from_state
+            lines.append(f"    {from_state} --> {target}: {label}")
+        self._write_text(path, "\n".join(lines) + "\n")
+
+    def _write_text(self, path: str, text: str) -> None:
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as output_file:
+            output_file.write(text)

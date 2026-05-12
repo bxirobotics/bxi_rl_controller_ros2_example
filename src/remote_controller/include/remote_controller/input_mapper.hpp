@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -39,19 +40,39 @@ private:
     std::map<std::string, double> signals_;
     std::map<std::string, ControlValue> controls_;
     std::map<std::string, std::chrono::steady_clock::time_point> signal_expiry_;
+    std::map<std::string, std::chrono::steady_clock::time_point> signal_update_time_;
+    std::set<std::string> timed_out_sources_;
     std::vector<bool> binding_active_;
     int output_slots_[kButtonSlotCount + 1] = {0};
+    int edge_pulse_slots_[kButtonSlotCount + 1] = {0};
     double height_filtered_ = kStandHeight;
 
     std::vector<std::string> refresh_bindings();
     void refresh_controls();
+    void evaluate_control_recursive(
+        const std::string &control,
+        std::set<std::string> &visiting,
+        std::set<std::string> &evaluated);
+    const ControlConfig *find_control_config(const std::string &control) const;
     ControlValue evaluate_control(const ControlConfig &control);
     double read_source(const SignalSourceConfig &source) const;
+    double mix_sources(const ControlConfig &control) const;
+    double apply_calibration(double value, const CalibrationConfig &calibration) const;
+    double apply_piecewise(double value, const std::vector<CurvePoint> &points) const;
+    double apply_curve(double value, const std::string &curve_name) const;
+    double apply_expo(double value, double expo) const;
     bool conditions_match(const Binding &binding) const;
+    bool condition_groups_match(const std::vector<std::vector<BindingCondition>> &groups) const;
     bool condition_matches(const BindingCondition &condition) const;
     bool apply_level_output(const std::string &output);
+    bool apply_edge_pulse_output(const std::string &output);
     bool parse_button_output(const std::string &output, int &slot, int &value) const;
+    double read_analog_output(const AnalogOutputConfig &output) const;
     double read_analog_control(const std::string &control) const;
+    bool set_message_field(
+        communication::msg::MotionCommands &message,
+        const std::string &field,
+        double value);
     void set_button_slot(communication::msg::MotionCommands &message, int slot, int value);
 };
 
