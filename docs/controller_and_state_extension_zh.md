@@ -511,23 +511,154 @@ ros2 topic echo /motion_commands
 
 如果输入源不是 `/dev/input/js*`，例如网络手柄、串口遥控器、蓝牙自定义协议，不建议把协议逻辑写进 `InputMapper`。
 
-推荐做法：
+推荐分层：
 
 1. 保持 `InputMapper` 不变。
-2. 新增一个输入读取器，把外部协议转换成标准调用：
+2. 新增一个输入读取器，只负责读取外部协议。
+3. 把外部协议里的轴和按钮转换成“虚拟 joystick 轴编号/按钮编号”。
+4. 继续调用 `InputMapper::set_axis()`、`InputMapper::handle_button()`、`InputMapper::apply_button_output()`，让组合键、`btn_N`、`system.<action>` 仍然走同一套 YAML 配置。
 
-```cpp
-auto axis_outputs = mapper_.set_axis(axis_index, raw_value);
-auto button_outputs = mapper_.handle_button(button_index, pressed);
+这样新协议不会影响 `MotionCommands`，也不会影响 Python 状态机。
+
+#### 2.7.1 用虚拟轴和虚拟按钮接入
+
+假设有一个网络遥控器，每帧发来类似这样的数据：
+
+```json
+{
+  "vx": 0.4,
+  "vy": 0.0,
+  "yaw": -0.2,
+  "rb": true,
+  "x": true
+}
 ```
 
-3. 或者直接输出标准业务槽位：
+其中 `vx/vy/yaw` 已经归一化到 `-1.0..1.0`，`rb/x` 是按钮状态。可以给它分配一套虚拟编号：
 
-```cpp
-mapper_.apply_button_output("btn_1");
+```text
+axis 0 -> vx
+axis 1 -> vy
+axis 2 -> yaw
+button 0 -> shoulder.right
+button 1 -> button.west
 ```
 
-这样 `MotionCommands` 和 Python 状态机都不用改。
+对应 YAML 可以写成：
+
+```yaml
+device:
+  js: unused
+  vel_offset: 0.0
+
+axes:
+  vx:
+    index: 0
+    direction: 1
+    deadzone: 0.0
+    min: -1.0
+    max: 1.0
+    alpha: 0.03
+  vy:
+    index: 1
+    direction: 1
+    deadzone: 0.0
+    min: -1.0
+    max: 1.0
+    alpha: 0.03
+  yaw:
+    index: 2
+    direction: 1
+    deadzone: 0.0
+    min: -1.0
+    max: 1.0
+    alpha: 0.05
+
+buttons:
+  shoulder.right: 0
+  button.west: 1
+
+modifiers:
+  - shoulder.right
+
+bindings:
+  - output: btn_1
+    when: [shoulder.right, button.west]
+```
+
+输入读取器收到协议包后，把归一化轴值放大到 joystick 原始范围，再喂给 `InputMapper`：
+
+```cpp
+#include <algorithm>
+
+struct NetPacket {
+    double vx = 0.0;
+    double vy = 0.0;
+    double yaw = 0.0;
+    bool rb = false;
+    bool x = false;
+};
+
+int to_raw_axis(double value)
+{
+    const double clipped = std::max(-1.0, std::min(1.0, value));
+    return static_cast<int>(clipped * remote_controller::kAxisValueMax);
+}
+
+void apply_net_packet(remote_controller::InputMapper &mapper, const NetPacket &packet)
+{
+    auto outputs = mapper.set_axis(0, to_raw_axis(packet.vx));
+    dispatch_outputs(outputs);
+
+    outputs = mapper.set_axis(1, to_raw_axis(packet.vy));
+    dispatch_outputs(outputs);
+
+    outputs = mapper.set_axis(2, to_raw_axis(packet.yaw));
+    dispatch_outputs(outputs);
+
+    outputs = mapper.handle_button(0, packet.rb);
+    dispatch_outputs(outputs);
+
+    outputs = mapper.handle_button(1, packet.x);
+    dispatch_outputs(outputs);
+}
+```
+
+这里的 `dispatch_outputs()` 复用 `main.cpp` 里的输出分发逻辑：`btn_N` 交给 `apply_button_output()`，`system.<action>` 查 `system` 命令表执行。真实实现时可以把当前 `main.cpp` 的 joystick 读取循环换成网络/串口读取循环，`InputMapper` 和 YAML 结构不用变。
+
+组合键要注意按钮状态顺序。比如 `when: [shoulder.right, button.west]` 表示先让 `shoulder.right` 处于按下状态，再按下 `button.west` 时触发。释放时也要把按钮状态同步回去：
+
+```cpp
+mapper.handle_button(1, false);  // release button.west
+mapper.handle_button(0, false);  // release shoulder.right
+```
+
+`handle_button()` 只在按下触发键时返回输出；松开按钮主要用于更新内部按下状态。
+
+#### 2.7.2 直接输出业务槽位
+
+如果外部协议已经有业务语义，例如网络包直接表示“进入 normal”或“鼓掌”，也可以绕过虚拟按钮，直接输出 `btn_N`：
+
+```cpp
+mapper.apply_button_output("btn_1");
+mapper.apply_button_output("btn_10=3");
+```
+
+这种方式适合上层系统已经完成了按键组合判断的情况。缺点是它绕过了 `bindings.when`，所以换遥控器时不再只改 YAML。
+
+#### 2.7.3 什么时候需要新增节点
+
+如果自定义遥控器读取逻辑比较复杂，建议新增一个独立 ROS2 节点，例如 `network_remote_controller`：
+
+```text
+network_remote_controller
+  - 读取 UDP / TCP / 串口 / 蓝牙协议
+  - 使用同一份 remote_controller/config/*.yaml
+  - 内部复用 InputMapper
+  - 发布 /motion_commands
+```
+
+这样原来的 `remote_controller` 可以继续服务 Linux joystick，新的节点只负责新协议。两者不要同时发布同一个 `/motion_commands`，否则业务层会收到互相覆盖的命令。
 
 ## 3. 添加新的机器人状态
 
