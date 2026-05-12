@@ -246,6 +246,7 @@ class ApplauseState(RobotControlState):
         self.return_elapsed = 0.0
         self.returning = False
         self.return_start_pos = self.applause_data[0].copy()
+        self.playing = True
 
     def on_update(self, ctx, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
@@ -278,10 +279,51 @@ class ApplauseState(RobotControlState):
                 qpos[-14:] = self.return_start_pos
             else:
                 qpos[-14:] = self.applause_data[frame_index]
-                self.frame += self.fps * dt
+                if self.playing:
+                    self.frame += self.fps * dt
 
         ctx.set_motor_target(qpos, ctx.noarm.kps, ctx.noarm.kds)
+    def on_action(self, ctx, action_name: str) -> bool:
+        if action_name != "toggle_dance_pause":
+            return False
 
+        self.playing = not self.playing
+        return True
+
+class HelloState(RobotControlState):
+    def __init__(self, name, state_id):
+        super().__init__(name, state_id)
+    def on_prepare_enter(self, ctx, from_state, transition) -> None:
+        ctx.preheat_model(ctx.noarm, with_cmd_vel=True)
+    def on_enter(self, ctx) -> None:
+        self.reset_loop(ctx)
+        self.playing = True
+        self.shaketime = 0
+    def on_update(self, ctx, dt: float) -> None:
+        if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
+            ctx.request_state("zero_torque", trigger="safety")
+            return
+        if self.shaketime < 50:
+            self.kp = self.shaketime/50 * ctx.noarm.kps
+        qpos, vel = ctx.noarm.inference_step(
+            ctx.current_q,
+            ctx.current_dq,
+            ctx.current_quat_wxyz,
+            ctx.current_omega,
+            ctx.current_cmd_vel,
+        )
+        qpos[22] = -0.9
+        qpos[24] = math.sin(self.shaketime/10) * 0.5
+        qpos[25] = -0.3
+        ctx.set_motor_target(qpos, self.kp, ctx.noarm.kds)
+        if self.playing:
+            self.shaketime += 1
+    def on_action(self, ctx, action_name: str) -> bool:
+        if action_name != "toggle_dance_pause":
+            return False
+
+        self.playing = not self.playing
+        return True
 
 class RecoverState(RobotControlState):
     def __init__(self, name: str, state_id: int):

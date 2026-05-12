@@ -19,6 +19,9 @@ remote_events:
   applause:
     slot: btn_10
     value: 3
+  hello:
+    slot: btn_10
+    value: 4
 
 transition_profiles:
   instant:
@@ -82,6 +85,9 @@ states:
           transition: soft_switch
         applause:
           to: applause
+          transition: soft_switch
+        hello:
+          to: hello
           transition: soft_switch
 
   zero_torque:
@@ -188,4 +194,16 @@ states:
         normal:
           to: normal
           transition: soft_switch
-        zero_torque: zero_torque
+        toggle_dance_pause:
+          action: toggle_dance_pause
+
+  hello:
+    behavior: HelloState
+    speed_profile: normal
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+        toggle_dance_pause:
+          action: toggle_dance_pause
