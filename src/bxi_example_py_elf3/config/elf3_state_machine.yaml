@@ -1,0 +1,191 @@
+initial_state: zero_torque
+
+remote_events:
+  normal: btn_1
+  zero_torque: btn_2
+  pd_brake: btn_3
+  initial_pos: btn_4
+  dance: btn_5
+  recover: btn_6
+  normal_run: btn_7
+  amp_run: btn_8
+  toggle_dance_pause: btn_9
+  back_flip:
+    slot: btn_10
+    value: 1
+  forward_flip:
+    slot: btn_10
+    value: 2
+  applause:
+    slot: btn_10
+    value: 3
+
+transition_profiles:
+  instant:
+    duration: 0.0
+    exit_behavior: hold_last_motor
+    enter_behavior: none
+
+  soft_switch:
+    duration: 0.02
+    exit_behavior: hold_last_motor
+    enter_behavior: hold_last_motor
+
+speed_profiles:
+  normal:
+    vx_scale: 1.0
+    vx_min: -1.0
+    vx_max: 1.0
+    vy_scale: 0.5
+    yaw_scale: 1.5
+
+  normal_run:
+    vx_scale: 2.0
+    vx_min: -1.0
+    vx_max: 2.0
+    vy_scale: 0.5
+    yaw_scale: 1.0
+
+  amp_run:
+    vx_scale: 4.0
+    vx_min: -2.0
+    vx_max: 4.0
+    vy_scale: 0.5
+    yaw_scale: 1.5
+
+states:
+  normal:
+    behavior: NormalState
+    speed_profile: normal
+    transitions:
+      on_event:
+        zero_torque: zero_torque
+        pd_brake: pd_brake
+        initial_pos: initial_pos
+        amp_run:
+          to: amp_run
+          transition: soft_switch
+        normal_run:
+          to: normal_run
+          transition: soft_switch
+        dance:
+          to: dance
+          transition: soft_switch
+        recover:
+          to: recover
+          transition: soft_switch
+        back_flip:
+          to: back_flip
+          transition: soft_switch
+        forward_flip:
+          to: forward_flip
+          transition: soft_switch
+        applause:
+          to: applause
+          transition: soft_switch
+
+  zero_torque:
+    behavior: ZeroTorqueState
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+        pd_brake: pd_brake
+        initial_pos: initial_pos
+        recover:
+          to: recover
+          transition: soft_switch
+
+  pd_brake:
+    behavior: PdBrakeState
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+        zero_torque: zero_torque
+        initial_pos: initial_pos
+        recover:
+          to: recover
+          transition: soft_switch
+
+  initial_pos:
+    behavior: InitialPosState
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+        pd_brake: pd_brake
+        zero_torque: zero_torque
+        recover:
+          to: recover
+          transition: soft_switch
+
+  dance:
+    behavior: DanceState
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+        toggle_dance_pause:
+          action: toggle_dance_pause
+
+  back_flip:
+    behavior: BackFlipState
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+        zero_torque: zero_torque
+
+  forward_flip:
+    behavior: ForwardFlipState
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+        zero_torque: zero_torque
+
+  applause:
+    behavior: ApplauseState
+    speed_profile: normal
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+        zero_torque: zero_torque
+
+  amp_run:
+    behavior: AmpRunState
+    speed_profile: amp_run
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+
+  normal_run:
+    behavior: NormalRunState
+    speed_profile: normal_run
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+
+  recover:
+    behavior: RecoverState
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+        zero_torque: zero_torque
+        pd_brake: pd_brake
+        initial_pos: initial_pos

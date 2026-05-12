@@ -1,0 +1,117 @@
+device:
+  js: /dev/input/js0
+  vel_offset: 0.0
+
+axes:
+  vx:
+    index: 3
+    direction: -1
+    deadzone: 1000.0
+    min: -1.0
+    max: 1.0
+    alpha: 0.03
+  vy:
+    index: 0
+    direction: -1
+    deadzone: 1000.0
+    min: -1.0
+    max: 1.0
+    alpha: 0.03
+  yaw:
+    index: 6
+    direction: -1
+    deadzone: 1000.0
+    min: -1.0
+    max: 1.0
+    alpha: 0.05
+
+buttons:
+  system.stop: 11
+  system.start: 14
+  shoulder.left: 6 #LB
+  shoulder.right: 7 #RB
+  button.south: 0 #A
+  button.east: 1 #B
+  button.west: 3 #X
+  button.north: 4 #Y
+
+modifiers:
+  - shoulder.left
+  - shoulder.right
+  - trigger.left
+  - trigger.right
+
+axis_buttons:
+  trigger.left:
+    index: 5
+    direction: 1
+    threshold: 0.85
+    release_outputs: [btn_10=0]
+  trigger.right:
+    index: 4
+    direction: 1
+    threshold: 0.85
+    release_outputs: [btn_10=0]
+
+bindings:
+  - output: system.stop
+    when: [system.stop]
+  - output: system.start
+    when: [system.start]
+  - output: btn_1
+    when: [shoulder.right, button.west]
+  - output: btn_2
+    when: [shoulder.right, button.south]
+  - output: btn_3
+    when: [shoulder.right, button.east]
+  - output: btn_4
+    when: [shoulder.right, button.north]
+  - output: btn_5
+    when: [shoulder.left, button.west]
+  - output: btn_6
+    when: [shoulder.left, button.south]
+  - output: btn_7
+    when: [shoulder.left, button.east]
+  - output: btn_8
+    when: [shoulder.left, button.north]
+  - output: btn_9
+    when: [button.west]
+  - output: btn_10=1
+    when: [trigger.left, button.west]
+  - output: btn_10=2
+    when: [trigger.left, button.north]
+  - output: btn_10=3
+    when: [trigger.left, button.east]
+
+keyboard:
+  timeout_us: 150000
+  movement:
+    forward: w
+    backward: s
+    yaw_left: a
+    yaw_right: d
+    strafe_left: q
+    strafe_right: e
+    stop: space
+  bindings:
+    "1": btn_1
+    "2": btn_6
+    "3": btn_5
+    "4": btn_8
+    "5": btn_7
+    "6": btn_10=1
+    "7": btn_10=2
+    "8": btn_10=3
+    "0": btn_10=0
+
+system:
+  start_commands:
+    - "mkdir -p /var/log/bxi_log"
+    - "ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log 2>&1 &"
+    - "ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log 2>&1 &"
+  stop_commands:
+    - "killall -SIGINT hardware_elf3"
+    - "killall -SIGINT bxi_example_py_elf3"
+    - "killall -SIGINT bxi_example_py_elf3_demo"
+    - "killall -SIGINT bxi_bms"
+    - "killall -SIGINT bxi_example_bms"

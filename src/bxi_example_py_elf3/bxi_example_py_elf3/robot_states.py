@@ -1,0 +1,372 @@
+import math
+import os
+import pickle
+
+import numpy as np
+
+from ament_index_python.packages import get_package_share_path
+from bxi_example_py_elf3.state_machine import StateBehavior
+from bxi_example_py_elf3.utils.tfs import quaternion_to_euler_array
+
+
+class RobotControlState(StateBehavior):
+    def on_exit(self, ctx) -> None:
+        ctx.pos_last_state = ctx.qpos.copy()
+        ctx.kp_last_state = ctx.kp_last.copy()
+        ctx.kd_last_state = ctx.kd_last.copy()
+
+    def on_enter_transition(self, ctx, from_state, progress, transition) -> None:
+        if transition.enter_behavior == "hold_last_motor":
+            ctx.hold_last_motor_target()
+
+    def on_exit_transition(self, ctx, to_state, progress, transition) -> None:
+        if transition.exit_behavior == "hold_last_motor":
+            ctx.hold_last_motor_target()
+
+    def reset_loop(self, ctx) -> None:
+        ctx.loop_count = 0
+
+
+class NormalState(RobotControlState):
+    def on_prepare_enter(self, ctx, from_state, transition) -> None:
+        ctx.preheat_model(ctx.normal, with_cmd_vel=True)
+
+    def on_enter(self, ctx) -> None:
+        self.reset_loop(ctx)
+
+    def on_update(self, ctx, dt: float) -> None:
+        if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
+            print("check safe error, zero_torque!")
+            ctx.request_state("zero_torque", trigger="safety")
+            return
+
+        qpos, vel = ctx.normal.inference_step(
+            ctx.current_q,
+            ctx.current_dq,
+            ctx.current_quat_wxyz,
+            ctx.current_omega,
+            ctx.current_cmd_vel,
+        )
+        ctx.set_motor_target(qpos, ctx.normal.kps, ctx.normal.kds)
+
+
+class ZeroTorqueState(RobotControlState):
+    def on_enter(self, ctx) -> None:
+        self.reset_loop(ctx)
+
+    def on_update(self, ctx, dt: float) -> None:
+        ctx.set_motor_target(
+            ctx.joint_nominal_pos,
+            np.zeros(ctx.dof_num, dtype=np.float32),
+            np.zeros(ctx.dof_num, dtype=np.float32),
+        )
+
+
+class PdBrakeState(RobotControlState):
+    def on_enter(self, ctx) -> None:
+        self.reset_loop(ctx)
+
+    def on_update(self, ctx, dt: float) -> None:
+        soft_start = min(ctx.loop_count / (2.0 / ctx.dt), 1.0)
+        qpos = ctx.pos_last_state + (ctx.pd_pos - ctx.pos_last_state) * soft_start
+        kp = ctx.kp_last + (ctx.normal.kps - ctx.kp_last) * soft_start
+        kd = ctx.kd_last + (ctx.normal.kds - ctx.kd_last) * soft_start
+        ctx.set_motor_target(qpos, kp, kd)
+
+
+class InitialPosState(RobotControlState):
+    def on_enter(self, ctx) -> None:
+        self.reset_loop(ctx)
+
+    def on_update(self, ctx, dt: float) -> None:
+        soft_start = min(ctx.loop_count / (2.0 / ctx.dt), 1.0)
+        qpos = ctx.pos_last_state + (ctx.initial_pos - ctx.pos_last_state) * soft_start
+        kp = ctx.kp_last + (ctx.joint_kp - ctx.kp_last) * soft_start
+        kd = ctx.kd_last + (ctx.joint_kd - ctx.kd_last) * soft_start
+        ctx.set_motor_target(qpos, kp, kd)
+
+
+class DanceState(RobotControlState):
+    def on_prepare_enter(self, ctx, from_state, transition) -> None:
+        ctx.preheat_model(ctx.dance)
+
+    def on_enter(self, ctx) -> None:
+        self.reset_loop(ctx)
+        ctx.dance_mode_changed = True
+        ctx.dance.timestep = ctx.start_frame_dance
+
+    def on_update(self, ctx, dt: float) -> None:
+        if ctx.dance.timestep >= ctx.dance.motionpos.shape[0]:
+            print("Motion replay finished, resetting simulation.")
+            ctx.dance.timestep = ctx.start_frame_dance
+            ctx.request_state("normal", trigger="motion_finished")
+            return
+
+        if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
+            print("check safe error, zero_torque!")
+            ctx.request_state("zero_torque", trigger="safety")
+            return
+
+        qpos = ctx.dance.inference_step(
+            ctx.current_q,
+            ctx.current_dq,
+            ctx.current_quat_wxyz,
+            ctx.current_omega,
+        )
+        ctx.set_motor_target(qpos, ctx.dance.stiffness_array, ctx.dance.damping_array)
+
+        if ctx.dance_mode_changed:
+            ctx.dance.timestep += 1
+
+
+class FlipState(RobotControlState):
+    policy_attr = ""
+    finish_trigger = "flip_finished"
+
+    def _policy(self, ctx):
+        return getattr(ctx, self.policy_attr)
+
+    def on_prepare_enter(self, ctx, from_state, transition) -> None:
+        policy = self._policy(ctx)
+        policy.timestep = policy.start_frame
+        if hasattr(policy, "timeinit"):
+            policy.timeinit = 0.0
+        ctx.preheat_model(policy)
+
+    def on_enter(self, ctx) -> None:
+        self.reset_loop(ctx)
+        ctx.dance_mode_changed = True
+        policy = self._policy(ctx)
+        policy.timestep = policy.start_frame
+        if hasattr(policy, "timeinit"):
+            policy.timeinit = 0.0
+
+    def on_update(self, ctx, dt: float) -> None:
+        policy = self._policy(ctx)
+
+        if policy.timestep <= policy.end_frame:
+            qpos = policy.inference_step(
+                ctx.current_q,
+                ctx.current_dq,
+                ctx.current_quat_wxyz,
+                ctx.current_omega,
+            )
+            ctx.set_motor_target(qpos, policy.kps, policy.kds)
+
+            if ctx.dance_mode_changed:
+                policy.timestep += 1
+
+        if policy.timestep > policy.end_frame:
+            print("Motion replay finished, resetting simulation.")
+            policy.timestep = policy.start_frame
+            ctx.request_state("normal", trigger=self.finish_trigger, transition="soft_switch")
+
+
+class BackFlipState(FlipState):
+    policy_attr = "back_flip"
+    finish_trigger = "back_flip_finished"
+
+
+class ForwardFlipState(FlipState):
+    policy_attr = "forward_flip"
+    finish_trigger = "forward_flip_finished"
+
+
+class ApplauseState(RobotControlState):
+    def __init__(self, name, state_id):
+        super().__init__(name, state_id)
+        self.start_frame = 600
+        self.tail_trim_frames = 600
+        self.return_time = 0.5
+        self.frame = 0.0
+        self.return_elapsed = 0.0
+        self.returning = False
+        self.return_start_pos = np.zeros(14, dtype=np.float32)
+        self.applause_data, self.fps = self._load_applause_data()
+
+    def _load_applause_data(self):
+        data_path = os.path.join(
+            get_package_share_path("bxi_example_py_elf3"),
+            "data",
+            "applause.pkl",
+        )
+        if not os.path.exists(data_path):
+            package_root = os.path.dirname(os.path.dirname(__file__))
+            data_path = os.path.join(package_root, "data", "applause.pkl")
+
+        with open(data_path, "rb") as data_file:
+            data = pickle.load(data_file)
+
+        dof_pos = np.asarray(data["dof_pos"], dtype=np.float32)[:, -14:]
+        start = min(self.start_frame, dof_pos.shape[0])
+        end = max(start, dof_pos.shape[0] - self.tail_trim_frames)
+        applause_data = dof_pos[start:end]
+        if applause_data.shape[0] == 0:
+            raise ValueError(f"applause data is empty after frame trim: {data_path}")
+
+        return applause_data, float(data["fps"])
+
+    def on_prepare_enter(self, ctx, from_state, transition) -> None:
+        ctx.preheat_model(ctx.noarm, with_cmd_vel=True)
+
+    def on_enter(self, ctx) -> None:
+        self.reset_loop(ctx)
+        self.frame = 0.0
+        self.return_elapsed = 0.0
+        self.returning = False
+        self.return_start_pos = self.applause_data[0].copy()
+
+    def on_update(self, ctx, dt: float) -> None:
+        if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
+            print("check safe error, zero_torque!")
+            ctx.request_state("zero_torque", trigger="safety")
+            return
+
+        qpos, vel = ctx.noarm.inference_step(
+            ctx.current_q,
+            ctx.current_dq,
+            ctx.current_quat_wxyz,
+            ctx.current_omega,
+            ctx.current_cmd_vel,
+        )
+
+        if self.returning:
+            alpha = min(1.0, self.return_elapsed / self.return_time)
+            qpos[-14:] = self.return_start_pos + (qpos[-14:] - self.return_start_pos) * alpha
+            self.return_elapsed += dt
+            if self.return_elapsed >= self.return_time:
+                ctx.set_motor_target(qpos, ctx.noarm.kps, ctx.noarm.kds)
+                ctx.request_state("normal", trigger="applause_finished", transition="soft_switch")
+                return
+        else:
+            frame_index = int(self.frame)
+            if frame_index >= self.applause_data.shape[0]:
+                self.returning = True
+                self.return_elapsed = 0.0
+                self.return_start_pos = self.applause_data[-1].copy()
+                qpos[-14:] = self.return_start_pos
+            else:
+                qpos[-14:] = self.applause_data[frame_index]
+                self.frame += self.fps * dt
+
+        ctx.set_motor_target(qpos, ctx.noarm.kps, ctx.noarm.kds)
+
+
+class RecoverState(RobotControlState):
+    def on_prepare_enter(self, ctx, from_state, transition) -> None:
+        ctx.preheat_model(ctx.recover)
+
+    def on_enter(self, ctx) -> None:
+        self.reset_loop(ctx)
+        eu_ang = quaternion_to_euler_array(ctx.quat_xyzw)
+        eu_ang[eu_ang > math.pi] -= 2 * math.pi
+
+        if eu_ang[1] < -(math.pi / 4.0):
+            ctx.recover.end_frame = 880
+            ctx.recover.timestep = 600
+            ctx.recover.start_frame = 600
+        elif eu_ang[1] > (math.pi / 4.0):
+            ctx.recover.end_frame = 1690
+            ctx.recover.timestep = 1350
+            ctx.recover.start_frame = 1350
+        else:
+            ctx.request_state("zero_torque", trigger="recover_pose_rejected")
+
+    def on_update(self, ctx, dt: float) -> None:
+        if ctx.recover.timestep > ctx.recover.end_frame:
+            ctx.recover.timestep = ctx.recover.start_frame
+            ctx.request_state("normal", trigger="recover_finished")
+            return
+
+        qpos = ctx.recover.inference_step(
+            ctx.current_q,
+            ctx.current_dq,
+            ctx.current_quat_wxyz,
+            ctx.current_omega,
+        )
+        ctx.set_motor_target(qpos, ctx.recover.kps, ctx.recover.kds)
+
+        if ctx.dance_mode_changed:
+            ctx.recover.timestep += 1
+
+
+class AmpRunState(RobotControlState):
+    def on_prepare_enter(self, ctx, from_state, transition) -> None:
+        ctx.preheat_model(ctx.amp_run, with_cmd_vel=True)
+
+    def on_enter(self, ctx) -> None:
+        self.reset_loop(ctx)
+        ctx.amp_run.max_vel = 0.0
+        ctx.amp_run.pre_cmd_vel_run = np.array([0.0, 0.0, 0.0])
+
+    def on_update(self, ctx, dt: float) -> None:
+        if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
+            print("check safe error, zero_torque!")
+            ctx.request_state("zero_torque", trigger="safety")
+            return
+
+        ctx.amp_run.cmd_vel_run[:2] = (
+            0.98 * ctx.amp_run.pre_cmd_vel_run[:2] + 0.02 * ctx.current_cmd_vel[:2]
+        )
+        ctx.amp_run.cmd_vel_run[2] = ctx.current_cmd_vel[2]
+        qpos, vel = ctx.amp_run.inference_step(
+            ctx.current_q,
+            ctx.current_dq,
+            ctx.current_quat_wxyz,
+            ctx.current_omega,
+            ctx.amp_run.cmd_vel_run,
+        )
+
+        if vel[0] > ctx.amp_run.max_vel:
+            ctx.amp_run.max_vel = vel[0]
+        if ctx.loop_count >= 100 + int(0.3 / ctx.dt):
+            print(ctx.amp_run.max_vel)
+            ctx.loop_count = int(0.3 / ctx.dt)
+            ctx.amp_run.max_vel = 0.0
+
+        ctx.amp_run.pre_cmd_vel_run = ctx.amp_run.cmd_vel_run
+        ctx.set_motor_target(qpos, ctx.amp_run.kps, ctx.amp_run.kds)
+
+
+class NormalRunState(RobotControlState):
+    def on_prepare_enter(self, ctx, from_state, transition) -> None:
+        ctx.preheat_model(ctx.normal_run, with_cmd_vel=True)
+
+    def on_enter(self, ctx) -> None:
+        self.reset_loop(ctx)
+        ctx.normal.action = np.zeros(ctx.dof_num, dtype=np.float32)
+
+    def on_update(self, ctx, dt: float) -> None:
+        if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
+            print("check safe error, zero_torque!")
+            ctx.request_state("zero_torque", trigger="safety")
+            return
+
+        qpos = ctx.normal_run.infer_step(
+            ctx.current_q,
+            ctx.current_dq,
+            ctx.current_quat_xyzw,
+            ctx.current_omega,
+            ctx.current_cmd_vel,
+        )
+        ctx.set_motor_target(
+            qpos,
+            ctx.normal_run.joint_stiffness,
+            ctx.normal_run.joint_damping,
+        )
+
+
+def build_robot_states(state_ids):
+    return {
+        "normal": NormalState("normal", state_ids["normal"]),
+        "zero_torque": ZeroTorqueState("zero_torque", state_ids["zero_torque"]),
+        "pd_brake": PdBrakeState("pd_brake", state_ids["pd_brake"]),
+        "initial_pos": InitialPosState("initial_pos", state_ids["initial_pos"]),
+        "dance": DanceState("dance", state_ids["dance"]),
+        "recover": RecoverState("recover", state_ids["recover"]),
+        "amp_run": AmpRunState("amp_run", state_ids["amp_run"]),
+        "normal_run": NormalRunState("normal_run", state_ids["normal_run"]),
+        "back_flip": BackFlipState("back_flip", state_ids["back_flip"]),
+        "forward_flip": ForwardFlipState("forward_flip", state_ids["forward_flip"]),
+        "applause": ApplauseState("applause", state_ids["applause"]),
+    }

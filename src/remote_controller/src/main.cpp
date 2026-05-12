@@ -1,255 +1,140 @@
-#include <iostream>
-#include <string>
-#include <map>
+#include <atomic>
 #include <chrono>
-#include <termios.h>
-#include <sys/select.h>
-#include <communication/msg/motion_commands.hpp>
-#include <linux/joystick.h>
-#include <unistd.h>
+#include <cstdlib>
 #include <fcntl.h>
-#include <errno.h>
+#include <linux/joystick.h>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <sys/select.h>
+#include <termios.h>
+#include <thread>
+#include <unistd.h>
+#include <vector>
+
 #include "rclcpp/rclcpp.hpp"
+#include "remote_controller/config.hpp"
+#include "remote_controller/input_mapper.hpp"
 
 using namespace std::chrono_literals;
-using namespace std;
+using remote_controller::InputMapper;
+using remote_controller::RemoteConfig;
 
-#if 0  //PS4 JS
-#define JS_VELX_AXIS 4  // index of joystick data, used for axis contro, vel x
-#define JS_VELX_AXIS_DIR -1  // if it's reverse
-#define JS_VELY_AXIS 0
-#define JS_VELY_AXIS_DIR -1
-#define JS_VELR_AXIS 6    // index of joystick data, used for rotation contro, vel of rotation
-#define JS_VELR_AXIS_DIR -1
-
-#define JS_STOP_BT 10    // index of joystick data, used for function contro: stop
-#define JS_GAIT_STAND_BT 0
-#define JS_GAIT_WALK_BT 2
-#define JS_HEIGHT_UPPER_BT  1
-#define JS_HEIGHT_LOWER_BT  3
-#define JS_MODE_BT          5
-#define JS_START_BT 9
-
-#else //XBOX JS
-#define JS_VELX_AXIS 3
-#define JS_VELX_AXIS_DIR -1
-#define JS_VELY_AXIS 0
-#define JS_VELY_AXIS_DIR -1
-#define JS_VELR_AXIS 6
-#define JS_VELR_AXIS_DIR -1
-
-#define JS_STOP_BT          11      // 终止程序                     (button for stop programe)
-#define JS_START_BT         14      // 启动程序                     (button for start programe)
-#define JS_LB_BT            6       // LB功能                       (define LB button)
-#define JS_RB_BT            7       // RB功能                       (define RB button)
-
-#define JS_SWITCH_X         3       // 暂停或继续跳舞                 (stop or continue danceing)
-                                    // 组合LB：跳舞                   (conbine with LB for change to dance)
-                                    // 组合RB：正常模式，走路站立跑步    (conbine with RB for change to normal: walk stand and run)
-#define JS_SWITCH_A         0       // 组合LB：HOST起身               (conbine with LB for change to dance)
-                                    // 组合RB：零力                   (conbine with LB for change to dance)
-#define JS_SWITCH_B         1       // 组合LB：amp台阶
-                                    // 组合RB：pd模式                 (conbine with LB for change to dance)
-#define JS_SWITCH_Y         4       // 组合LB：amp行走
-                                    // 组合RB：初始位置模式            (conbine with LB for change to zero position)
-#define JS_START2_BT        14
-#endif
-
-#define AXIS_DEAD_ZONE  1000
-
-#define MIN_SPEED_X -1.0
-#define MAX_SPEED_X 1.0
-#define MIN_SPEED_Y -1.0
-#define MAX_SPEED_Y 1.0
-#define MIN_SPEED_R -1.0
-#define MAX_SPEED_R 1.0
-
-#define AXIS_VALUE_MAX 32767
-
-#define STAND_HEIGHT 1.0
-#define STAND_HEIGHT_MIN    1.0
-#define STAND_HEIGHT_MAX    3.0
-
-class COMPublisher : public rclcpp::Node{
+class COMPublisher : public rclcpp::Node {
 public:
-    COMPublisher(const char *_js_dev, bool use_keyboard)
-        : Node("COM_publisher"), use_keyboard_(use_keyboard), stop_flag_(false)
+    COMPublisher(const std::string &config_path, bool use_keyboard)
+        : Node("COM_publisher"),
+          mapper_(remote_controller::load_remote_config(config_path)),
+          use_keyboard_(use_keyboard)
     {
-        com_pub = this->create_publisher<communication::msg::MotionCommands>("motion_commands", 20);
+        com_pub_ = this->create_publisher<communication::msg::MotionCommands>(
+            "motion_commands", 20);
         timer_ = this->create_wall_timer(10ms, std::bind(&COMPublisher::timer_callback, this));
 
-        if (use_keyboard_){
-            printf("Keyboard mode enabled.\n");
-            printf("  W/S      : forward / backward\n");
-            printf("  A/D      : turn left / right (rotation axis)\n");
-            printf("  Q/E      : strafe left / right (Y axis)\n");
-            printf("  Space    : full stop\n");
-            // Keys 1-5 map 1-to-1 to the 5 onnx models in onnx_file_dict:
-            printf("  1        : normal   (amp_terrain.onnx)\n");
-            printf("  2        : host     (host.onnx)\n");
-            printf("  3        : dance    (dance.onnx)\n");
-            printf("  4        : amp_run  (amp_run.onnx)\n");
-            printf("  5        : normal_run (model_normal.onnx)\n");
-            printf("  ESC      : exit\n");
+        if (use_keyboard_) {
+            print_keyboard_help();
             kb_loop_thread_ = std::thread(&COMPublisher::kb_loop, this);
         } else {
-            if (strlen(_js_dev) >= 128){
-                printf("dev:%s error\n", _js_dev);
-                exit(-1);
-            }
-            strcpy(_js_dev_name, _js_dev);
-            while (1){
-                js_fd = open(_js_dev_name, O_RDONLY); // O_NONBLOCK
-                if (js_fd < 0){
-                    printf("open:%s failed\n", _js_dev_name);
-                    sleep(1);
-                }
-                else{
-                    printf("open js dev: %s\n", _js_dev_name);
-                    break;
-                }
-            }
+            open_joystick_loop();
             js_loop_thread_ = std::thread(&COMPublisher::js_loop, this);
-            js_loop_thread_.detach();
         }
     }
 
-    ~COMPublisher(){
+    ~COMPublisher()
+    {
         stop_flag_ = true;
-        if (use_keyboard_){
-            if (kb_loop_thread_.joinable()){
-                kb_loop_thread_.join();
-            }
-        } else {
-            if (js_fd >= 0){
-                close(js_fd);
-            }
+        if (js_fd_ >= 0) {
+            close(js_fd_);
+            js_fd_ = -1;
+        }
+        if (kb_loop_thread_.joinable()) {
+            kb_loop_thread_.join();
+        }
+        if (js_loop_thread_.joinable()) {
+            js_loop_thread_.join();
         }
     }
 
 private:
     mutable std::mutex lock_;
-
+    InputMapper mapper_;
     bool use_keyboard_ = false;
-    bool stop_flag_ = false;
-    char _js_dev_name[128] = {0};
-    int js_fd = -1;
-    double js_axis[20] = {0};   // original data of js axis data
-    double js_bt[20] = {0};    // original data of ja button data
+    std::atomic<bool> stop_flag_{false};
+
+    int js_fd_ = -1;
     std::thread js_loop_thread_;
     std::thread kb_loop_thread_;
     struct termios orig_termios_{};
+    bool launch_lock_ = false;
 
-    double velxy[2] = {0};                      //x y速度       (x,y speed)
-    double velxy_filt[2] = {0};                 //x y速度滤波值  (x,y speed filter)
-    double stand_height = STAND_HEIGHT;
-    double height_filt = STAND_HEIGHT;
-    double velr = 0;                            //旋转速度       (rotation speed)
-    double velr_filt = 0;
+    rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::Publisher<communication::msg::MotionCommands>::SharedPtr com_pub_;
 
-    bool launch_lock = false;           // 防止多次启动程序，True时不允许启动程序。    (launch programe lock)
-
-    bool LB_press = false;              // 长按改变状态，弹起恢复                   (pressed for change state, release for recover)
-    bool RB_press = false;              // 长按改变状态，弹起恢复
-    // 按下RB的变量
-    bool normal_mode = false;           // 按下改变状态，切换为普通模式，站立走路跑步   (change to normal state,for stand run and walk)
-    bool zero_torque_mode = false;      // 按下改变状态，切换为零力模式               (change to zero torque mode)
-    bool pd_brake_mode = false;         // 按下改变状态，切换为pd抱死模式             (change to zero torque mode)
-    bool initial_pos_mode = false;      // 按下改变状态，切换为初始位置模式            (set motors to zero position)
-    // 按下LB的变量
-    bool host_mode = false;             // 按下改变状态，切换为host起身模式           (change to host mode, for stand up)
-    bool dance_mode = false;            // 按下改变状态，切换为跳舞模式               (change to dance mode)
-    bool normal_run = false;      
-    bool amp_run_mode = false;
-
-    bool dance_flag = false;            // 按下改变状态，暂停或继续跳舞               (stop or continue dancing)
-
-    double vel_offset = 0.0;
-
-    // timer_callback to publish messages
-    void timer_callback(){                 
-        auto message = communication::msg::MotionCommands();{    // initialize a ROS2 message
-            const std::lock_guard<std::mutex> guard(lock_);
-
-            velxy[0] = (js_axis[JS_VELX_AXIS] * JS_VELX_AXIS_DIR) / (double)AXIS_VALUE_MAX;
-            velxy[1] = (js_axis[JS_VELY_AXIS] * JS_VELY_AXIS_DIR) / (double)AXIS_VALUE_MAX;
-            velr = (js_axis[JS_VELR_AXIS] * JS_VELR_AXIS_DIR) / (double)AXIS_VALUE_MAX;
-
-            velxy[0] = fabs(velxy[0]) > AXIS_DEAD_ZONE / (double)AXIS_VALUE_MAX ? velxy[0] : 0;
-            velxy[1] = fabs(velxy[1]) > AXIS_DEAD_ZONE / (double)AXIS_VALUE_MAX ? velxy[1] : 0;
-            velr = fabs(velr) > AXIS_DEAD_ZONE / (double)AXIS_VALUE_MAX ? velr : 0;
-            
-            //按定义最大速度缩放
-            if (velxy[0] > 0){
-                velxy[0] *= MAX_SPEED_X;
-            }
-            else if (velxy[0] < 0){
-                velxy[0] *= -MIN_SPEED_X;
-            }
-
-            if (velxy[1] > 0){
-                velxy[1] *= MAX_SPEED_Y;
-            }
-            else if (velxy[1] < 0){
-                velxy[1] *= -MIN_SPEED_Y;
-            }
-
-            if (velr > 0){
-                velr *= MAX_SPEED_R;
-            }
-            else if (velr < 0){
-                velr *= -MIN_SPEED_R;
-            }
-
-            velxy_filt[0] = velxy[0] * 0.03 + velxy_filt[0] * 0.97;
-            velxy_filt[1] = velxy[1] * 0.03 + velxy_filt[1] * 0.97;
-
-            velr_filt = velr * 0.05 + velr_filt *  0.95;
-
-            message.vel_des.x = velxy_filt[0] + vel_offset;
-            message.vel_des.y = velxy_filt[1];
-            message.yawdot_des = velr_filt;
-            // message.mode = mode;
-
-            // RB组合键
-            message.btn_1 = normal_mode ? 1 : 0;
-            message.btn_2 = zero_torque_mode ? 1 : 0;
-            message.btn_3 = pd_brake_mode ? 1 : 0;
-            message.btn_4 = initial_pos_mode ? 1 : 0;
-
-            // LB组合键
-            message.btn_5 = dance_mode ? 1 : 0;
-            message.btn_6 = host_mode ? 1 : 0; 
-            message.btn_7 = normal_run ? 1 : 0;
-            message.btn_8 = amp_run_mode ? 1 : 0;
-
-            // 纯按键
-            message.btn_9 = dance_flag ? 1 : 0;
-            // message.btn_10 =
-            // message.btn_11 = 
-            // message.btn_12 = 
-
-            height_filt = height_filt * 0.9 + stand_height * 0.1;
-            message.height_des = height_filt;
-        }
-
-        com_pub->publish(message);
-    }
-
-    void reset_value()
+    void timer_callback()
     {
-        const std::lock_guard<std::mutex> guard(lock_);
-        memset(js_axis, 0, sizeof(js_axis));
-        memset(velxy, 0, sizeof(velxy));
-        memset(velxy_filt, 0, sizeof(velxy_filt));
-        velr_filt = 0;
-        height_filt = STAND_HEIGHT;
+        auto message = communication::msg::MotionCommands();
+        {
+            const std::lock_guard<std::mutex> guard(lock_);
+            mapper_.fill_message(message);
+        }
+        com_pub_->publish(message);
     }
 
-    void kb_loop(){
-        // If stdin is not a tty (e.g. launched via ros2 launch), open /dev/tty directly
-        int tty_fd = isatty(STDIN_FILENO) ? STDIN_FILENO : open("/dev/tty", O_RDONLY);
-        if (tty_fd < 0){
+    void open_joystick_loop()
+    {
+        while (!stop_flag_) {
+            js_fd_ = open(mapper_.config().js_device.c_str(), O_RDONLY);
+            if (js_fd_ >= 0) {
+                printf("open js dev: %s\n", mapper_.config().js_device.c_str());
+                return;
+            }
+            printf("open:%s failed\n", mapper_.config().js_device.c_str());
+            sleep(1);
+        }
+    }
+
+    void js_loop()
+    {
+        while (!stop_flag_) {
+            struct js_event event;
+            const ssize_t len = read(js_fd_, &event, sizeof(event));
+
+            if (len == sizeof(event)) {
+                std::vector<std::string> outputs;
+                {
+                    const std::lock_guard<std::mutex> guard(lock_);
+                    if (event.type & JS_EVENT_AXIS) {
+                        outputs = mapper_.set_axis(event.number, event.value);
+                    } else if (event.type & JS_EVENT_BUTTON) {
+                        outputs = mapper_.handle_button(event.number, event.value != 0);
+                    } else {
+                        printf("unknown event:%u\n", event.type);
+                    }
+                }
+                dispatch_outputs(outputs);
+                continue;
+            }
+
+            if (stop_flag_) {
+                break;
+            }
+
+            if (len <= 0) {
+                printf("js dev lost, retry\n");
+                if (js_fd_ >= 0) {
+                    close(js_fd_);
+                    js_fd_ = -1;
+                }
+                open_joystick_loop();
+            }
+        }
+    }
+
+    void kb_loop()
+    {
+        const int tty_fd = isatty(STDIN_FILENO) ? STDIN_FILENO : open("/dev/tty", O_RDONLY);
+        if (tty_fd < 0) {
             printf("kb_loop: cannot open tty\n");
             return;
         }
@@ -266,275 +151,145 @@ private:
         std::map<char, clock::time_point> last_toggle_time;
         const auto debounce = std::chrono::milliseconds(300);
 
-        while (!stop_flag_){
+        while (!stop_flag_) {
             fd_set fds;
             FD_ZERO(&fds);
             FD_SET(tty_fd, &fds);
             struct timeval tv;
             tv.tv_sec = 0;
-            tv.tv_usec = 150000; // 150 ms — simulates key-release when no key arrives
+            tv.tv_usec = mapper_.config().keyboard.timeout_us;
 
-            int sel = select(tty_fd + 1, &fds, nullptr, nullptr, &tv);
-            if (sel < 0){
+            const int sel = select(tty_fd + 1, &fds, nullptr, nullptr, &tv);
+            if (sel < 0) {
                 break;
             }
-            if (sel == 0){
-                // Timeout: zero movement axes (key released)
+            if (sel == 0) {
                 const std::lock_guard<std::mutex> guard(lock_);
-                js_axis[JS_VELX_AXIS] = 0;
-                js_axis[JS_VELY_AXIS] = 0;
-                js_axis[JS_VELR_AXIS] = 0;
+                mapper_.zero_motion_axes();
                 continue;
             }
 
-            char c;
-            if (read(tty_fd, &c, 1) != 1){
+            char key;
+            if (read(tty_fd, &key, 1) != 1) {
+                break;
+            }
+            if (key == '\x1b') {
                 break;
             }
 
-            if (c == '\x1b'){ // ESC: exit keyboard mode
-                break;
+            std::vector<std::string> outputs;
+            {
+                const std::lock_guard<std::mutex> guard(lock_);
+                outputs = mapper_.handle_keyboard_key(key);
+            }
+            if (outputs.empty()) {
+                continue;
             }
 
-            auto now = clock::now();
-
-            switch (c){
-            case 'w': case 'W':{
-                const std::lock_guard<std::mutex> guard(lock_);
-                js_axis[JS_VELX_AXIS] = -AXIS_VALUE_MAX; // forward
-            }break;
-            case 's': case 'S':{
-                const std::lock_guard<std::mutex> guard(lock_);
-                js_axis[JS_VELX_AXIS] = AXIS_VALUE_MAX;  // backward
-            }break;
-            // A/D control rotation only (JS_VELR_AXIS), not strafe.
-            case 'a': case 'A':{
-                const std::lock_guard<std::mutex> guard(lock_);
-                js_axis[JS_VELR_AXIS] = -AXIS_VALUE_MAX; // turn left
-            }break;
-            case 'd': case 'D':{
-                const std::lock_guard<std::mutex> guard(lock_);
-                js_axis[JS_VELR_AXIS] = AXIS_VALUE_MAX;  // turn right
-            }break;
-            // Q/E take over strafe (JS_VELY_AXIS) since A/D are now rotation.
-            case 'q': case 'Q':{
-                const std::lock_guard<std::mutex> guard(lock_);
-                js_axis[JS_VELY_AXIS] = -AXIS_VALUE_MAX; // strafe left
-            }break;
-            case 'e': case 'E':{
-                const std::lock_guard<std::mutex> guard(lock_);
-                js_axis[JS_VELY_AXIS] = AXIS_VALUE_MAX;  // strafe right
-            }break;
-            case ' ':{
-                const std::lock_guard<std::mutex> guard(lock_);
-                js_axis[JS_VELX_AXIS] = 0;
-                js_axis[JS_VELY_AXIS] = 0;
-                js_axis[JS_VELR_AXIS] = 0;
-            }break;
-            // Keys 1-5 map exactly to the 5 onnx models in onnx_file_dict (example_launch_demo.py).
-            // Each key simply toggles its own bool, identical to the joystick button logic
-            // (JS_SWITCH_X/Y/A/B + LB/RB combos each do `flag = !flag` independently).
-            case '1': case '2': case '3': case '4': case '5':{
-                auto it = last_toggle_time.find(c);
-                if (it == last_toggle_time.end() || (now - it->second) > debounce){
-                    last_toggle_time[c] = now;
-                    const std::lock_guard<std::mutex> guard(lock_);
-                    switch(c){
-                    case '1': normal_mode  = !normal_mode;  printf("model: normal %d\n",      normal_mode);  break; // amp_terrain.onnx -> btn_1
-                    case '2': host_mode    = !host_mode;    printf("model: host %d\n",        host_mode);    break; // host.onnx         -> btn_6
-                    case '3': dance_mode   = !dance_mode;   printf("model: dance %d\n",       dance_mode);   break; // dance.onnx        -> btn_5
-                    case '4': amp_run_mode = !amp_run_mode; printf("model: amp_run %d\n",     amp_run_mode); break; // amp_run.onnx      -> btn_8
-                    case '5': normal_run   = !normal_run;   printf("model: normal_run %d\n",  normal_run);   break; // model_normal.onnx -> btn_7
-                    }
-                }
-            }break;
-            default:
-                break;
+            const auto now = clock::now();
+            const auto last_it = last_toggle_time.find(key);
+            if (last_it != last_toggle_time.end() && (now - last_it->second) <= debounce) {
+                continue;
             }
+            last_toggle_time[key] = now;
+            dispatch_outputs(outputs);
         }
 
         tcsetattr(tty_fd, TCSAFLUSH, &orig_termios_);
-        if (tty_fd != STDIN_FILENO){
+        if (tty_fd != STDIN_FILENO) {
             close(tty_fd);
         }
     }
 
-    void js_loop(){
-        while (1){
-            ssize_t len;
-            struct js_event event;
-            int ret;
-            (void)ret;
-            
-            // 读取js端口数据到event (read js date to event)
-            len = read(js_fd, &event, sizeof(event));
+    void print_keyboard_help()
+    {
+        const auto &keyboard = mapper_.config().keyboard;
+        printf("Keyboard mode enabled.\n");
+        printf("  %c/%c      : forward / backward\n", keyboard.forward, keyboard.backward);
+        printf("  %c/%c      : turn left / right\n", keyboard.yaw_left, keyboard.yaw_right);
+        printf("  %c/%c      : strafe left / right\n", keyboard.strafe_left, keyboard.strafe_right);
+        printf("  Space    : full stop\n");
+        for (const auto &item : keyboard.bindings) {
+            printf("  %c        : %s\n", item.first, item.second.c_str());
+        }
+        printf("  ESC      : exit\n");
+    }
 
-            if (len == sizeof(event)){
-                if (event.type & JS_EVENT_AXIS){  // axis event
-                    //printf("Axis: %d -> %d\n", (int)event.number, (int)event.value);
-                    js_axis[event.number] = event.value;
-                }
-                else if (event.type & JS_EVENT_BUTTON){ // button event
-                    //printf("Button: %d -> %d\n", (int)event.number, (int)event.value);
-                    if (event.value){
-                        switch (event.number){
-                        case JS_STOP_BT:{
-                            ret = system("killall -SIGINT hardware_elf3");
-                            ret = system("killall -SIGINT bxi_example_py_elf3");
-                            ret = system("killall -SIGINT bxi_example_py_elf3_demo");
-                            ret = system("killall -SIGINT bxi_bms");
-                            ret = system("killall -SIGINT bxi_example_bms");
-
-                            launch_lock = false;
-
-                            reset_value();
-                        }break;
-
-                        case JS_START_BT:{
-                            if(launch_lock == false){
-                                ret = system("mkdir -p /var/log/bxi_log");
-                                ret = system("ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
-                                ret = system("ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log  2>&1 &");
-                                printf("run robot\n");//robot_controller
-                            
-                                reset_value();
-
-                                launch_lock = true;
-                            }else{
-                                printf("\nprograme already exist! stop launch!!\n\n");
-                            }
-                        }break;
-
-                        case JS_LB_BT:{
-                            const std::lock_guard<std::mutex> guard(lock_);
-                            LB_press = true;
-                        }break;
-
-                        case JS_RB_BT:{
-                            const std::lock_guard<std::mutex> guard(lock_);
-                            RB_press = true;
-                        }break;
-
-                        case JS_SWITCH_X:{
-                            if(LB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                dance_mode = !dance_mode;
-                                printf("dance_mode: %d\n", dance_mode);
-                            }else if(RB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                normal_mode = !normal_mode;
-                                printf("normal mode: %d\n", normal_mode);
-                            }else{
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                dance_flag = !dance_flag;
-                                printf("dance_flag: %d\n", dance_flag);
-                            }
-                        }break;
-
-                        case JS_SWITCH_Y:{
-                            if(LB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                amp_run_mode = !amp_run_mode;
-                                printf("amp_run_mode: %d\n", amp_run_mode);
-                            }else if(RB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                initial_pos_mode = !initial_pos_mode;
-                                printf("initial_pos_mode: %d\n", initial_pos_mode);
-                            }else{
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                printf("Y\n");
-                            }
-                        }break;
-
-                        case JS_SWITCH_A:{
-                            if(LB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                host_mode = !host_mode;
-                                printf("host mode:%d\n", host_mode);
-                            }else if(RB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                zero_torque_mode = !zero_torque_mode;
-                                printf("zero torque mode:%d\n", zero_torque_mode);
-                            }else{
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                printf("A\n");
-                            }
-                        }break;
-
-                        case JS_SWITCH_B:{
-                            if(LB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                normal_run = !normal_run;
-                                printf("normal run mode:%d\n", normal_run);
-                            }else if(RB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                pd_brake_mode = !pd_brake_mode;
-                                printf("pd brake mode:%d\n", pd_brake_mode);
-                            }else{
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                printf("B\n");
-                            }
-                        }break;
-
-                        default:
-                            break;
-                        }
-                    }
-                    else if(!event.value){
-                        switch(event.number){
-                        case JS_LB_BT:{
-                            const std::lock_guard<std::mutex> guard(lock_);
-                            LB_press = false;
-                        }break;
-
-                        case JS_RB_BT:{
-                            const std::lock_guard<std::mutex> guard(lock_);
-                            RB_press = false;
-                        }break;
-                        
-                        default:
-                            break;
-                        }
-                    }
-                }
-                else{
-                    printf("unknown event:%u\n", event.type);
-                }
+    void dispatch_outputs(const std::vector<std::string> &outputs)
+    {
+        for (const auto &output : outputs) {
+            bool consumed = false;
+            {
+                const std::lock_guard<std::mutex> guard(lock_);
+                consumed = mapper_.apply_button_output(output);
             }
-            if (len <= 0){
-                printf("js dev lost, retry\n");
-                close(js_fd);
-                while (1){
-                    js_fd = open(_js_dev_name, O_RDONLY); // O_NONBLOCK
-                    if (js_fd < 0){
-                        printf("open:%s failed\n", _js_dev_name);
-                        sleep(1);
-                    }
-                    else{
-                        printf("open js dev: %s\n", _js_dev_name);
-                        break;
-                    }
-                }
+            if (consumed) {
+                continue;
+            }
+
+            if (output == "system.stop") {
+                stop_robot_processes();
+            } else if (output == "system.start") {
+                start_robot_processes();
+            } else if (!output.empty()) {
+                RCLCPP_WARN(this->get_logger(), "unknown binding output: %s", output.c_str());
             }
         }
     }
 
-    rclcpp::TimerBase::SharedPtr timer_;
-    rclcpp::Publisher<communication::msg::MotionCommands>::SharedPtr com_pub;
+    void stop_robot_processes()
+    {
+        run_commands(mapper_.config().stop_commands);
+        launch_lock_ = false;
+        const std::lock_guard<std::mutex> guard(lock_);
+        mapper_.reset_motion();
+    }
+
+    void start_robot_processes()
+    {
+        if (launch_lock_) {
+            printf("\nprograme already exist! stop launch!!\n\n");
+            return;
+        }
+
+        run_commands(mapper_.config().start_commands);
+        printf("run robot\n");
+        launch_lock_ = true;
+        const std::lock_guard<std::mutex> guard(lock_);
+        mapper_.reset_motion();
+    }
+
+    void run_commands(const std::vector<std::string> &commands)
+    {
+        for (const auto &command : commands) {
+            const int ret = std::system(command.c_str());
+            (void)ret;
+        }
+    }
 };
 
-int main(int argc, const char *argv[]){
+int main(int argc, const char *argv[])
+{
     bool use_keyboard = false;
-    for (int i = 1; i < argc; ++i){
-        if (std::string(argv[i]) == "--keyboard"){
+    std::string config_path;
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--keyboard") {
             printf("in keyboard input mode\n");
             use_keyboard = true;
-            break;
+        } else if (arg == "--config" && i + 1 < argc) {
+            config_path = argv[++i];
         }
+    }
+
+    if (config_path.empty()) {
+        fprintf(stderr, "remote_controller requires --config <yaml_path>\n");
+        return 1;
     }
 
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<COMPublisher>("/dev/input/js0", use_keyboard));
+    rclcpp::spin(std::make_shared<COMPublisher>(config_path, use_keyboard));
     rclcpp::shutdown();
 
     return 0;

@@ -4,8 +4,10 @@
 build/
 install/
 log/
+.cache/
 !.gitignore
 # proxsuite/
 bxi_hw_release/
 __pycache__/
 MUJOCO_LOG.TXT
+.*/
