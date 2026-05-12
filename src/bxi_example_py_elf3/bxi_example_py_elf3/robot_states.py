@@ -87,18 +87,23 @@ class InitialPosState(RobotControlState):
 
 
 class DanceState(RobotControlState):
+    def __init__(self, name: str, state_id: int, start_frame: int = 100):
+        super().__init__(name, state_id)
+        self.start_frame = start_frame
+        self.playing = True
+
     def on_prepare_enter(self, ctx, from_state, transition) -> None:
         ctx.preheat_model(ctx.dance)
 
     def on_enter(self, ctx) -> None:
         self.reset_loop(ctx)
-        ctx.dance_mode_changed = True
-        ctx.dance.timestep = ctx.start_frame_dance
+        self.playing = True
+        ctx.dance.timestep = self.start_frame
 
     def on_update(self, ctx, dt: float) -> None:
         if ctx.dance.timestep >= ctx.dance.motionpos.shape[0]:
             print("Motion replay finished, resetting simulation.")
-            ctx.dance.timestep = ctx.start_frame_dance
+            ctx.dance.timestep = self.start_frame
             ctx.request_state("normal", trigger="motion_finished")
             return
 
@@ -115,19 +120,40 @@ class DanceState(RobotControlState):
         )
         ctx.set_motor_target(qpos, ctx.dance.stiffness_array, ctx.dance.damping_array)
 
-        if ctx.dance_mode_changed:
+        if self.playing:
             ctx.dance.timestep += 1
+
+    def on_action(self, ctx, action_name: str) -> bool:
+        if action_name != "toggle_dance_pause":
+            return False
+
+        self.playing = not self.playing
+        return True
 
 
 class FlipState(RobotControlState):
     policy_attr = ""
     finish_trigger = "flip_finished"
+    end_frame_trim = 0
+
+    def __init__(self, name: str, state_id: int):
+        super().__init__(name, state_id)
+        self.playing = True
+        self.policy_configured = False
 
     def _policy(self, ctx):
         return getattr(ctx, self.policy_attr)
 
+    def _configure_policy(self, policy) -> None:
+        if self.policy_configured:
+            return
+        if self.end_frame_trim > 0:
+            policy.end_frame = max(policy.start_frame, policy.end_frame - self.end_frame_trim)
+        self.policy_configured = True
+
     def on_prepare_enter(self, ctx, from_state, transition) -> None:
         policy = self._policy(ctx)
+        self._configure_policy(policy)
         policy.timestep = policy.start_frame
         if hasattr(policy, "timeinit"):
             policy.timeinit = 0.0
@@ -135,7 +161,7 @@ class FlipState(RobotControlState):
 
     def on_enter(self, ctx) -> None:
         self.reset_loop(ctx)
-        ctx.dance_mode_changed = True
+        self.playing = True
         policy = self._policy(ctx)
         policy.timestep = policy.start_frame
         if hasattr(policy, "timeinit"):
@@ -153,7 +179,7 @@ class FlipState(RobotControlState):
             )
             ctx.set_motor_target(qpos, policy.kps, policy.kds)
 
-            if ctx.dance_mode_changed:
+            if self.playing:
                 policy.timestep += 1
 
         if policy.timestep > policy.end_frame:
@@ -165,6 +191,7 @@ class FlipState(RobotControlState):
 class BackFlipState(FlipState):
     policy_attr = "back_flip"
     finish_trigger = "back_flip_finished"
+    end_frame_trim = 20
 
 
 class ForwardFlipState(FlipState):
@@ -253,11 +280,16 @@ class ApplauseState(RobotControlState):
 
 
 class RecoverState(RobotControlState):
+    def __init__(self, name: str, state_id: int):
+        super().__init__(name, state_id)
+        self.playing = True
+
     def on_prepare_enter(self, ctx, from_state, transition) -> None:
         ctx.preheat_model(ctx.recover)
 
     def on_enter(self, ctx) -> None:
         self.reset_loop(ctx)
+        self.playing = True
         eu_ang = quaternion_to_euler_array(ctx.quat_xyzw)
         eu_ang[eu_ang > math.pi] -= 2 * math.pi
 
@@ -286,18 +318,25 @@ class RecoverState(RobotControlState):
         )
         ctx.set_motor_target(qpos, ctx.recover.kps, ctx.recover.kds)
 
-        if ctx.dance_mode_changed:
+        if self.playing:
             ctx.recover.timestep += 1
 
 
 class AmpRunState(RobotControlState):
+    def __init__(self, name: str, state_id: int):
+        super().__init__(name, state_id)
+        self.max_vel = 0.0
+        self.pre_cmd_vel_run = np.array([0.0, 0.0, 0.0])
+        self.cmd_vel_run = np.array([0.0, 0.0, 0.0])
+
     def on_prepare_enter(self, ctx, from_state, transition) -> None:
         ctx.preheat_model(ctx.amp_run, with_cmd_vel=True)
 
     def on_enter(self, ctx) -> None:
         self.reset_loop(ctx)
-        ctx.amp_run.max_vel = 0.0
-        ctx.amp_run.pre_cmd_vel_run = np.array([0.0, 0.0, 0.0])
+        self.max_vel = 0.0
+        self.pre_cmd_vel_run = np.array([0.0, 0.0, 0.0])
+        self.cmd_vel_run = np.array([0.0, 0.0, 0.0])
 
     def on_update(self, ctx, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
@@ -305,26 +344,26 @@ class AmpRunState(RobotControlState):
             ctx.request_state("zero_torque", trigger="safety")
             return
 
-        ctx.amp_run.cmd_vel_run[:2] = (
-            0.98 * ctx.amp_run.pre_cmd_vel_run[:2] + 0.02 * ctx.current_cmd_vel[:2]
+        self.cmd_vel_run[:2] = (
+            0.98 * self.pre_cmd_vel_run[:2] + 0.02 * ctx.current_cmd_vel[:2]
         )
-        ctx.amp_run.cmd_vel_run[2] = ctx.current_cmd_vel[2]
+        self.cmd_vel_run[2] = ctx.current_cmd_vel[2]
         qpos, vel = ctx.amp_run.inference_step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
             ctx.current_omega,
-            ctx.amp_run.cmd_vel_run,
+            self.cmd_vel_run,
         )
 
-        if vel[0] > ctx.amp_run.max_vel:
-            ctx.amp_run.max_vel = vel[0]
+        if vel[0] > self.max_vel:
+            self.max_vel = vel[0]
         if ctx.loop_count >= 100 + int(0.3 / ctx.dt):
-            print(ctx.amp_run.max_vel)
+            print(self.max_vel)
             ctx.loop_count = int(0.3 / ctx.dt)
-            ctx.amp_run.max_vel = 0.0
+            self.max_vel = 0.0
 
-        ctx.amp_run.pre_cmd_vel_run = ctx.amp_run.cmd_vel_run
+        self.pre_cmd_vel_run = self.cmd_vel_run.copy()
         ctx.set_motor_target(qpos, ctx.amp_run.kps, ctx.amp_run.kds)
 
 
@@ -334,7 +373,8 @@ class NormalRunState(RobotControlState):
 
     def on_enter(self, ctx) -> None:
         self.reset_loop(ctx)
-        ctx.normal.action = np.zeros(ctx.dof_num, dtype=np.float32)
+        if hasattr(ctx.normal_run, "action"):
+            ctx.normal_run.action = np.zeros_like(ctx.normal_run.action)
 
     def on_update(self, ctx, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):

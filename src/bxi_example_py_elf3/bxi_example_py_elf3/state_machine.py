@@ -79,6 +79,9 @@ class StateBehavior:
     ) -> None:
         pass
 
+    def on_action(self, ctx, action_name: str) -> bool:
+        return False
+
 
 @dataclass(frozen=True)
 class TransitionProfile:
@@ -301,9 +304,14 @@ class RobotStateMachine:
 
     def _run_action(self, action_name: str) -> None:
         handler = self._actions.get(action_name)
-        if handler is None:
-            raise ValueError(f"state machine action has no handler: {action_name}")
-        handler()
+        if handler is not None:
+            handler()
+            return
+
+        if self.current.on_action(self._ctx, action_name):
+            return
+
+        raise ValueError(f"state machine action has no handler: {action_name}")
 
     def _parse_profiles(self, raw_profiles: Dict) -> Dict[str, TransitionProfile]:
         profiles = {
