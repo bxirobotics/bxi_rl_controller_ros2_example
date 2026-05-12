@@ -66,7 +66,7 @@ private:
     std::thread js_loop_thread_;
     std::thread kb_loop_thread_;
     struct termios orig_termios_{};
-    bool launch_lock_ = false;
+    std::map<std::string, bool> system_mutex_locked_;
 
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::Publisher<communication::msg::MotionCommands>::SharedPtr com_pub_;
@@ -227,36 +227,66 @@ private:
                 continue;
             }
 
-            if (output == "system.stop") {
-                stop_robot_processes();
-            } else if (output == "system.start") {
-                start_robot_processes();
+            if (remote_controller::starts_with(output, "system.")) {
+                run_system_action(output.substr(std::string("system.").size()));
             } else if (!output.empty()) {
                 RCLCPP_WARN(this->get_logger(), "unknown binding output: %s", output.c_str());
             }
         }
     }
 
-    void stop_robot_processes()
+    void run_system_action(const std::string &action)
     {
-        run_commands(mapper_.config().stop_commands);
-        launch_lock_ = false;
-        const std::lock_guard<std::mutex> guard(lock_);
-        mapper_.reset_motion();
-    }
-
-    void start_robot_processes()
-    {
-        if (launch_lock_) {
-            printf("\nprograme already exist! stop launch!!\n\n");
+        const std::string blocked_by = blocking_system_mutex(action);
+        if (!blocked_by.empty()) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "system.%s ignored because mutex '%s' is already acquired",
+                action.c_str(),
+                blocked_by.c_str());
             return;
         }
 
-        run_commands(mapper_.config().start_commands);
-        printf("run robot\n");
-        launch_lock_ = true;
-        const std::lock_guard<std::mutex> guard(lock_);
-        mapper_.reset_motion();
+        const auto &system_commands = mapper_.config().system_commands;
+        const auto command_it = system_commands.find(action);
+        if (command_it == system_commands.end()) {
+            RCLCPP_WARN(this->get_logger(), "unknown system output: system.%s", action.c_str());
+            return;
+        }
+
+        run_commands(command_it->second);
+        update_system_mutexes(action);
+
+        if (mapper_.config().reset_motion_after_system.count(action) > 0) {
+            const std::lock_guard<std::mutex> guard(lock_);
+            mapper_.reset_motion();
+        }
+    }
+
+    std::string blocking_system_mutex(const std::string &action) const
+    {
+        for (const auto &mutex : mapper_.config().system_mutexes) {
+            if (mutex.acquire != action) {
+                continue;
+            }
+            const auto lock_it = system_mutex_locked_.find(mutex.name);
+            if (lock_it != system_mutex_locked_.end() && lock_it->second) {
+                return mutex.name;
+            }
+        }
+        return "";
+    }
+
+    void update_system_mutexes(const std::string &action)
+    {
+        for (const auto &mutex : mapper_.config().system_mutexes) {
+            if (mutex.release == action) {
+                system_mutex_locked_[mutex.name] = false;
+            }
+            if (mutex.acquire == action) {
+                system_mutex_locked_[mutex.name] = true;
+            }
+        }
     }
 
     void run_commands(const std::vector<std::string> &commands)

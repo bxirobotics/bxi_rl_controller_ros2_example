@@ -47,6 +47,12 @@ struct KeyboardConfig {
     std::map<char, std::string> bindings;
 };
 
+struct SystemMutexConfig {
+    std::string name;
+    std::string acquire;
+    std::string release;
+};
+
 struct RemoteConfig {
     std::string js_device = "/dev/input/js0";
     double vel_offset = 0.0;
@@ -59,8 +65,9 @@ struct RemoteConfig {
     std::vector<AxisButtonConfig> axis_buttons;
     std::vector<Binding> bindings;
     KeyboardConfig keyboard;
-    std::vector<std::string> start_commands;
-    std::vector<std::string> stop_commands;
+    std::map<std::string, std::vector<std::string>> system_commands;
+    std::vector<SystemMutexConfig> system_mutexes;
+    std::set<std::string> reset_motion_after_system;
 };
 
 RemoteConfig load_remote_config(const std::string &path);

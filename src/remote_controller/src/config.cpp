@@ -40,6 +40,50 @@ std::vector<std::string> load_string_list(const YAML::Node &node)
     return values;
 }
 
+void load_system_commands(const YAML::Node &node, RemoteConfig &config)
+{
+    if (!node) {
+        return;
+    }
+    if (!node.IsMap()) {
+        throw std::runtime_error("system must be a YAML map");
+    }
+
+    for (const auto &item : node) {
+        const std::string action = item.first.as<std::string>();
+        const YAML::Node action_node = item.second;
+
+        if (!action_node.IsSequence()) {
+            throw std::runtime_error("system." + action + " must be a command list");
+        }
+        config.system_commands[action] = load_string_list(action_node);
+    }
+}
+
+void load_system_mutexes(const YAML::Node &node, RemoteConfig &config)
+{
+    if (!node) {
+        return;
+    }
+    if (!node.IsMap()) {
+        throw std::runtime_error("system_mutexes must be a YAML map");
+    }
+
+    for (const auto &item : node) {
+        SystemMutexConfig mutex;
+        mutex.name = item.first.as<std::string>();
+        if (!item.second.IsMap()) {
+            throw std::runtime_error("system_mutexes." + mutex.name + " must be a YAML map");
+        }
+        mutex.acquire = get_or<std::string>(item.second, "acquire", "");
+        mutex.release = get_or<std::string>(item.second, "release", "");
+        if (mutex.name.empty() || mutex.acquire.empty() || mutex.release.empty()) {
+            throw std::runtime_error("system_mutexes." + mutex.name + " must contain acquire and release");
+        }
+        config.system_mutexes.push_back(mutex);
+    }
+}
+
 }  // namespace
 
 bool starts_with(const std::string &value, const std::string &prefix)
@@ -143,8 +187,11 @@ RemoteConfig load_remote_config(const std::string &path)
         }
     }
 
-    config.start_commands = load_string_list(root["system"]["start_commands"]);
-    config.stop_commands = load_string_list(root["system"]["stop_commands"]);
+    load_system_commands(root["system"], config);
+    load_system_mutexes(root["system_mutexes"], config);
+    for (const auto &action : load_string_list(root["system_reset_motion_after"])) {
+        config.reset_motion_after_system.insert(action);
+    }
 
     return config;
 }
