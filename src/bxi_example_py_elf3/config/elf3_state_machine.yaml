@@ -133,6 +133,35 @@ states:
         toggle_dance_pause:
           action: toggle_dance_pause
 
+  recover:
+    behavior: RecoverState
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+        zero_torque: zero_torque
+        pd_brake: pd_brake
+        initial_pos: initial_pos
+
+  amp_run:
+    behavior: AmpRunState
+    speed_profile: amp_run
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+
+  normal_run:
+    behavior: NormalRunState
+    speed_profile: normal_run
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition: soft_switch
+
   back_flip:
     behavior: BackFlipState
     transitions:
@@ -160,32 +189,3 @@ states:
           to: normal
           transition: soft_switch
         zero_torque: zero_torque
-
-  amp_run:
-    behavior: AmpRunState
-    speed_profile: amp_run
-    transitions:
-      on_event:
-        normal:
-          to: normal
-          transition: soft_switch
-
-  normal_run:
-    behavior: NormalRunState
-    speed_profile: normal_run
-    transitions:
-      on_event:
-        normal:
-          to: normal
-          transition: soft_switch
-
-  recover:
-    behavior: RecoverState
-    transitions:
-      on_event:
-        normal:
-          to: normal
-          transition: soft_switch
-        zero_torque: zero_torque
-        pd_brake: pd_brake
-        initial_pos: initial_pos

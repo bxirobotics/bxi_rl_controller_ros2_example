@@ -113,21 +113,6 @@ kd_recover = np.array([  # 跌到起身腰部手部pd加大(add pd for hands and
     2,2,2,2, 1,2,2],
     dtype=np.float32)
 
-class robotState:
-    normal      = 0     # 站、走、跑(stand walk run)
-    zero_torque = 1     # 零力模式(zero torque mode)
-    pd_brake    = 2     # pd模式(pd mode)
-    initial_pos = 3     # 初始模式(zero position mode)
-
-    dance       = 4
-    recover     = 5
-
-    amp_run    = 6
-    normal_run  = 7
-    back_flip   = 8
-    forward_flip = 9
-    applause = 10
-
 def quaternion_to_euler_array(quat):
     # Ensure quaternion is in the correct format [x, y, z, w]
     x, y, z, w = quat
@@ -202,24 +187,13 @@ class BxiExample(Node):
         self.joint_kp = joint_kp
         self.joint_kd = joint_kd
         self.loop_count = 0
-        self.state_id_by_name = {
-            "normal": robotState.normal,
-            "zero_torque": robotState.zero_torque,
-            "pd_brake": robotState.pd_brake,
-            "initial_pos": robotState.initial_pos,
-            "dance": robotState.dance,
-            "recover": robotState.recover,
-            "amp_run": robotState.amp_run,
-            "normal_run": robotState.normal_run,
-            "back_flip": robotState.back_flip,
-            "forward_flip": robotState.forward_flip,
-            "applause": robotState.applause,
-        }
+        robot_states = build_robot_states(self.state_machine_config)
+        self.state_id_by_name = {name: state.state_id for name, state in robot_states.items()}
         self.state_name_by_id = {value: key for key, value in self.state_id_by_name.items()}
         self.state_machine = RobotStateMachine(
             self,
             self.state_machine_config,
-            build_robot_states(self.state_id_by_name),
+            robot_states,
         )
         self.remote_event_adapter = RemoteEventAdapter(self.state_machine_config.get("remote_events", {}))
         self.speed_profiles = self.state_machine_config.get("speed_profiles", {})

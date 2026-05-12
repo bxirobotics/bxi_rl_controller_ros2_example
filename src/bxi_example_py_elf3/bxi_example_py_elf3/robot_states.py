@@ -212,12 +212,16 @@ class ApplauseState(RobotControlState):
         self.applause_data, self.fps = self._load_applause_data()
 
     def _load_applause_data(self):
-        data_path = os.path.join(
-            get_package_share_path("bxi_example_py_elf3"),
-            "data",
-            "applause.pkl",
-        )
-        if not os.path.exists(data_path):
+        try:
+            data_path = os.path.join(
+                get_package_share_path("bxi_example_py_elf3"),
+                "data",
+                "applause.pkl",
+            )
+        except Exception:
+            data_path = ""
+
+        if not data_path or not os.path.exists(data_path):
             package_root = os.path.dirname(os.path.dirname(__file__))
             data_path = os.path.join(package_root, "data", "applause.pkl")
 
@@ -396,17 +400,54 @@ class NormalRunState(RobotControlState):
         )
 
 
-def build_robot_states(state_ids):
-    return {
-        "normal": NormalState("normal", state_ids["normal"]),
-        "zero_torque": ZeroTorqueState("zero_torque", state_ids["zero_torque"]),
-        "pd_brake": PdBrakeState("pd_brake", state_ids["pd_brake"]),
-        "initial_pos": InitialPosState("initial_pos", state_ids["initial_pos"]),
-        "dance": DanceState("dance", state_ids["dance"]),
-        "recover": RecoverState("recover", state_ids["recover"]),
-        "amp_run": AmpRunState("amp_run", state_ids["amp_run"]),
-        "normal_run": NormalRunState("normal_run", state_ids["normal_run"]),
-        "back_flip": BackFlipState("back_flip", state_ids["back_flip"]),
-        "forward_flip": ForwardFlipState("forward_flip", state_ids["forward_flip"]),
-        "applause": ApplauseState("applause", state_ids["applause"]),
-    }
+def _state_behavior_classes():
+    def walk_subclasses(base_class):
+        for subclass in base_class.__subclasses__():
+            yield subclass
+            yield from walk_subclasses(subclass)
+
+    return {cls.__name__: cls for cls in walk_subclasses(RobotControlState)}
+
+
+def _allocate_state_id(state_name, state_config, used_ids, next_id):
+    configured_id = (state_config or {}).get("id")
+    if configured_id is not None:
+        state_id = int(configured_id)
+        if state_id in used_ids:
+            raise ValueError(f"duplicate state id {state_id} for state: {state_name}")
+        used_ids.add(state_id)
+        next_id = max(next_id, state_id + 1)
+        return state_id, next_id
+
+    while next_id in used_ids:
+        next_id += 1
+    state_id = next_id
+    used_ids.add(state_id)
+    return state_id, next_id + 1
+
+
+def build_robot_states(config):
+    states_config = config.get("states", {})
+    if not states_config:
+        raise ValueError("state machine config must define states")
+
+    behavior_classes = _state_behavior_classes()
+    states = {}
+    used_ids = set()
+    next_id = 0
+
+    for state_name, state_config in states_config.items():
+        state_config = state_config or {}
+        behavior_name = state_config.get("behavior")
+        if not behavior_name:
+            raise ValueError(f"state '{state_name}' must define behavior")
+
+        behavior_class = behavior_classes.get(behavior_name)
+        if behavior_class is None:
+            raise ValueError(f"unknown state behavior '{behavior_name}' for state '{state_name}'")
+
+        state_id, next_id = _allocate_state_id(state_name, state_config, used_ids, next_id)
+        params = state_config.get("params", {}) or {}
+        states[state_name] = behavior_class(state_name, state_id, **params)
+
+    return states
