@@ -107,13 +107,24 @@ keyboard:
     "0": btn_10=0
 
 system:
-  start_commands:
+  start:
     - "mkdir -p /var/log/bxi_log"
     - "ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log 2>&1 &"
     - "ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log 2>&1 &"
-  stop_commands:
+  stop:
     - "killall -SIGINT hardware_elf3"
     - "killall -SIGINT bxi_example_py_elf3"
     - "killall -SIGINT bxi_example_py_elf3_demo"
     - "killall -SIGINT bxi_bms"
     - "killall -SIGINT bxi_example_bms"
+
+#互斥，例如只能start一次
+system_mutexes:
+  robot_process:
+    acquire: start
+    release: stop
+
+#重置遥控器的滤波值
+system_reset_motion_after:
+  - start
+  - stop

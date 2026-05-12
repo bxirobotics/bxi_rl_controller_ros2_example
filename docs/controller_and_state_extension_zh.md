@@ -241,18 +241,17 @@ bindings:
 
 - `bindings`：手柄按钮/组合键到输出命令的列表。
 - `bindings[].output`：触发后产生的输出命令。
-- `bindings[].when`：触发条件。列表最后一个控件是触发键，前面的控件是必须已按住的修饰/组合控件。
-- `output: system.stop`：执行 `system.stop_commands`。
-- `output: system.start`：执行 `system.start_commands`。
+- `bindings[].when`：触发条件。可以写一个或多个控件，不限制为两个键。列表最后一个控件是触发键，前面的所有控件都必须已经按住。
+- `output: system.<action>`：执行 `system` 下同名动作的命令列表。例如 `system.stop` 会执行 `system.stop` 里配置的命令。
 - `output: btn_N`：切换 `MotionCommands.btn_N` 的 0/1 状态。
-- `output: btn_N=value`：把 `MotionCommands.btn_N` 设置成指定整数值。当前 `btn_10=1/2/3` 分别表示后空翻、前空翻、鼓掌。
+- `output: btn_N=value`：把 `MotionCommands.btn_N` 设置成指定整数值。当前 `btn_10=1/2/3/4` 分别表示后空翻、前空翻、鼓掌、打招呼。
 
 当前手柄绑定含义：
 
 | output | when | 业务含义 |
 | --- | --- | --- |
-| `system.stop` | `[system.stop]` | 执行 `stop_commands` |
-| `system.start` | `[system.start]` | 执行 `start_commands` |
+| `system.stop` | `[system.stop]` | 执行 `system.stop` |
+| `system.start` | `[system.start]` | 执行 `system.start` |
 | `btn_1` | `[shoulder.right, button.west]` | RB + X，进入 `normal` |
 | `btn_2` | `[shoulder.right, button.south]` | RB + A，进入 `zero_torque` |
 | `btn_3` | `[shoulder.right, button.east]` | RB + B，进入 `pd_brake` |
@@ -265,6 +264,7 @@ bindings:
 | `btn_10=1` | `[trigger.left, button.west]` | LT + X，进入 `back_flip` |
 | `btn_10=2` | `[trigger.left, button.north]` | LT + Y，进入 `forward_flip` |
 | `btn_10=3` | `[trigger.right, button.east]` | RT + B，进入 `applause` |
+| `btn_10=4` | `[trigger.right, button.south]` | RT + A，进入 `hello` |
 | `btn_10=0` | `trigger.left/right release_outputs` | 松开 LT/RT 时复位 `btn_10` |
 
 `keyboard`：
@@ -308,11 +308,59 @@ bindings:
 
 `system`：
 
-- `system.start_commands`：收到 `system.start` 输出后依次执行的 shell 命令。当前用于创建日志目录并后台启动硬件 demo 和 BMS。
-- `system.stop_commands`：收到 `system.stop` 输出后依次执行的 shell 命令。当前用于向相关进程发送 `SIGINT`。
+- `system`：系统命令动作表。每个子字段名都是一个动作名，对应 `output: system.<action>`。
+- `system.<action>`：动作命令列表。收到 `output: system.<action>` 后，会按 YAML 顺序依次执行这里的 shell 命令。
+- `system.start`：当前用于创建日志目录并后台启动硬件 demo 和 BMS。
+- `system.stop`：当前用于向相关进程发送 `SIGINT`。
 - 命令通过 `std::system()` 执行，按 YAML 顺序逐条运行；这里写的是原生 shell 命令字符串。
 
-当前 `start_commands`：
+`system_mutexes`：
+
+- `system_mutexes`：系统动作互斥配置表。用于表达某个动作执行后进入“已占用”状态，直到另一个动作释放它。
+- `system_mutexes.<name>`：一个互斥组名，例如当前的 `robot_process`。
+- `system_mutexes.<name>.acquire`：获取互斥锁的 system 动作名。当前是 `start`，表示执行 `system.start` 后 `robot_process` 进入已占用状态；再次触发 `system.start` 会被忽略。
+- `system_mutexes.<name>.release`：释放互斥锁的 system 动作名。当前是 `stop`，表示执行 `system.stop` 后允许再次执行 `system.start`。
+
+`system_reset_motion_after`：
+
+- `system_reset_motion_after`：动作名列表。列表里的 system 动作执行后会调用 `reset_motion()`，清空遥控器速度轴和滤波状态。
+- 当前配置包含 `start` 和 `stop`，所以启动或停止流程后都会清空遥控运动输出。
+
+配置格式：
+
+```yaml
+bindings:
+  - output: system.stop
+    when: [system.stop]
+
+system:
+  stop:
+    - "killall -SIGINT hardware_elf3"
+    - "killall -SIGINT bxi_example_py_elf3"
+
+system_mutexes:
+  robot_process:
+    acquire: start
+    release: stop
+
+system_reset_motion_after:
+  - start
+  - stop
+```
+
+这里 `output: system.stop` 会取 `system` 下的 `stop` 列表执行。新增系统动作时，保持这个命名关系即可，例如 `output: system.calibrate` 对应 `system.calibrate`。
+
+三键或更多组合键也直接写在 `when` 里：
+
+```yaml
+bindings:
+  - output: system.calibrate
+    when: [shoulder.left, shoulder.right, button.north]
+```
+
+上面表示同时按住 `shoulder.left` 和 `shoulder.right`，再按 `button.north` 才触发。匹配时会优先选择控件数量最多的绑定，因此三键绑定会优先于同一触发键的两键绑定。
+
+当前 `system.start`：
 
 ```bash
 mkdir -p /var/log/bxi_log
@@ -320,7 +368,7 @@ ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py > /var/log/bxi_log/$(d
 ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log 2>&1 &
 ```
 
-当前 `stop_commands`：
+当前 `system.stop`：
 
 ```bash
 killall -SIGINT hardware_elf3
@@ -347,6 +395,7 @@ btn_9 -> toggle_dance_pause
 btn_10 == 1 -> back_flip
 btn_10 == 2 -> forward_flip
 btn_10 == 3 -> applause
+btn_10 == 4 -> hello
 ```
 
 这些业务含义不是写在 `remote_controller` 里的，而是在状态机配置里解释：
@@ -365,6 +414,9 @@ remote_events:
   applause:
     slot: btn_10
     value: 3
+  hello:
+    slot: btn_10
+    value: 4
 ```
 
 所以新增遥控器时，通常只需要保证输出仍然是相同的 `btn_N`。如果一个槽位承载多个业务动作，使用 `btn_N=value`，状态机里用 `slot/value` 区分。
@@ -388,6 +440,8 @@ keyboard:
     "1": btn_1
     "2": btn_6
     "3": btn_5
+    "4": btn_8
+    "5": btn_7
     "6": btn_10=1
     "7": btn_10=2
     "8": btn_10=3
@@ -521,6 +575,7 @@ toggle_dance_pause   <- btn_9
 back_flip            <- btn_10 == 1
 forward_flip         <- btn_10 == 2
 applause             <- btn_10 == 3
+hello                <- btn_10 == 4
 ```
 
 `transition_profiles`：
@@ -562,7 +617,7 @@ applause             <- btn_10 == 3
 - `states.<state>.behavior`：状态类名，必须在 `robot_states.py` 中存在，例如 `NormalState`。
 - `states.<state>.id`：可选固定数字 ID。通常不要写；不写时按 `states` 顺序自动分配。
 - `states.<state>.params`：可选构造参数，会作为关键字参数传给状态类构造函数。例如 `params: {start_frame: 100}`。
-- `states.<state>.speed_profile`：可选速度 profile 名。当前 `normal`、`amp_run`、`normal_run`、`applause` 会读取速度命令；没有该字段的状态会忽略摇杆速度。
+- `states.<state>.speed_profile`：可选速度 profile 名。当前 `normal`、`amp_run`、`normal_run`、`applause`、`hello` 会读取速度命令；没有该字段的状态会忽略摇杆速度。
 - `states.<state>.transitions`：该状态下允许的状态转移规则。
 - `states.<state>.transitions.on_event`：按事件触发的规则表，key 是 `remote_events` 里定义的业务事件名。
 - `states.<state>.transitions.on_event.<event>: <target>`：简写形式，收到事件后立即切换到目标状态，使用 `instant` 过渡。
@@ -590,13 +645,14 @@ normal_run   -> NormalRunState，普通跑
 back_flip    -> BackFlipState，后空翻
 forward_flip -> ForwardFlipState，前空翻
 applause     -> ApplauseState，鼓掌
+hello        -> HelloState，打招呼
 ```
 
 当前 `states` 明细：
 
 | state | behavior | speed_profile | on_event 转移/action |
 | --- | --- | --- | --- |
-| `normal` | `NormalState` | `normal` | `zero_torque -> zero_torque`；`pd_brake -> pd_brake`；`initial_pos -> initial_pos`；`amp_run -> amp_run, soft_switch`；`normal_run -> normal_run, soft_switch`；`dance -> dance, soft_switch`；`recover -> recover, soft_switch`；`back_flip -> back_flip, soft_switch`；`forward_flip -> forward_flip, soft_switch`；`applause -> applause, soft_switch` |
+| `normal` | `NormalState` | `normal` | `zero_torque -> zero_torque`；`pd_brake -> pd_brake`；`initial_pos -> initial_pos`；`amp_run -> amp_run, soft_switch`；`normal_run -> normal_run, soft_switch`；`dance -> dance, soft_switch`；`recover -> recover, soft_switch`；`back_flip -> back_flip, soft_switch`；`forward_flip -> forward_flip, soft_switch`；`applause -> applause, soft_switch`；`hello -> hello, soft_switch` |
 | `zero_torque` | `ZeroTorqueState` | 未配置 | `normal -> normal, soft_switch`；`pd_brake -> pd_brake`；`initial_pos -> initial_pos`；`recover -> recover, soft_switch` |
 | `pd_brake` | `PdBrakeState` | 未配置 | `normal -> normal, soft_switch`；`zero_torque -> zero_torque`；`initial_pos -> initial_pos`；`recover -> recover, soft_switch` |
 | `initial_pos` | `InitialPosState` | 未配置 | `normal -> normal, soft_switch`；`pd_brake -> pd_brake`；`zero_torque -> zero_torque`；`recover -> recover, soft_switch` |
@@ -606,7 +662,8 @@ applause     -> ApplauseState，鼓掌
 | `normal_run` | `NormalRunState` | `normal_run` | `normal -> normal, soft_switch` |
 | `back_flip` | `BackFlipState` | 未配置 | `normal -> normal, soft_switch`；`zero_torque -> zero_torque` |
 | `forward_flip` | `ForwardFlipState` | 未配置 | `normal -> normal, soft_switch`；`zero_torque -> zero_torque` |
-| `applause` | `ApplauseState` | `normal` | `normal -> normal, soft_switch`；`zero_torque -> zero_torque` |
+| `applause` | `ApplauseState` | `normal` | `normal -> normal, soft_switch`；`toggle_dance_pause -> action: toggle_dance_pause` |
+| `hello` | `HelloState` | `normal` | `normal -> normal, soft_switch`；`toggle_dance_pause -> action: toggle_dance_pause` |
 
 表里没有写 `transition` 的简写转移会使用默认 `instant` profile。当前 YAML 没有使用 `id`、`params`、`delay`、`after`，这些字段是状态机支持的扩展字段，新增状态时可以按需要添加。
 
@@ -773,13 +830,13 @@ class WaveState(RobotControlState):
 src/bxi_example_py_elf3/config/elf3_state_machine.yaml
 ```
 
-新增事件映射。如果使用 `btn_10=4` 触发：
+新增事件映射。如果使用 `btn_10=5` 触发：
 
 ```yaml
 remote_events:
   wave:
     slot: btn_10
-    value: 4
+    value: 5
 ```
 
 新增状态：
@@ -894,13 +951,13 @@ class WaveState(RobotControlState):
 
 ## 4. 把新遥控器事件接到新状态
 
-如果新增状态 `wave` 也想复用 `btn_10`，应该使用一个新的值，而不是覆盖已有的 `1/2/3`：
+如果新增状态 `wave` 也想复用 `btn_10`，应该使用一个新的值，而不是覆盖已有的 `1/2/3/4`：
 
-1. 遥控器配置输出 `btn_10=4`，并在释放动作时复位：
+1. 遥控器配置输出 `btn_10=5`，并在释放动作时复位：
 
 ```yaml
 bindings:
-  - output: btn_10=4
+  - output: btn_10=5
     when: [button.north]
 ```
 
@@ -910,7 +967,7 @@ bindings:
 remote_events:
   wave:
     slot: btn_10
-    value: 4
+    value: 5
 ```
 
 3. 状态转移表允许进入 `wave`：
