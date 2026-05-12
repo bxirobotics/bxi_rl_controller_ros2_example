@@ -20,10 +20,18 @@ from collections import deque
 from std_msgs.msg import Header
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
+from ament_index_python.packages import get_package_share_directory
 
-from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicy
+from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicy, DanceMotionPolicyGravityIsaaclab
 from bxi_example_py_elf3.inference.normal import NormalMotionPolicy
 from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicyLite
+from bxi_example_py_elf3.state_machine import (
+    RobotStateMachine,
+    RemoteEventAdapter,
+    load_state_machine_config,
+)
+from bxi_example_py_elf3.robot_states import build_robot_states
+from bxi_example_py_elf3.utils.tfs import quaternion_to_euler_array
 
 robot_name = "elf3"
 
@@ -116,6 +124,9 @@ class robotState:
 
     amp_run    = 6
     normal_run  = 7
+    back_flip   = 8
+    forward_flip = 9
+    applause = 10
 
 def quaternion_to_euler_array(quat):
     # Ensure quaternion is in the correct format [x, y, z, w]
@@ -153,6 +164,18 @@ class BxiExample(Node):
         self.dance = DanceMotionPolicy(self.npz_file_dict["dance"], self.onnx_file_dict["dance"])
         self.amp_run = HumanoidGaitPolicyLite(self.onnx_file_dict["amp_run"])
         self.normal_run = NormalMotionPolicy(self.onnx_file_dict["normal_run"])
+        self.back_flip = DanceMotionPolicyGravityIsaaclab(
+            self.npz_file_dict["back_flip"],
+            self.onnx_file_dict["back_flip"],
+            start_frame=40,
+        )
+        self.forward_flip = DanceMotionPolicyGravityIsaaclab(
+            self.npz_file_dict["forward_flip"],
+            self.onnx_file_dict["forward_flip"],
+            start_frame=150,
+        )
+        self.noarm = HumanoidGaitPolicyLite(self.onnx_file_dict["noarm"])
+        self.back_flip.end_frame = self.back_flip.end_frame - 20
 
         self.initial_pos = np.zeros(dof_num, dtype=np.double)
         self.pd_pos = self.normal.default_dof_pos
@@ -175,23 +198,45 @@ class BxiExample(Node):
         self.kd_last_state = np.zeros(dof_num, dtype=np.float32)
 
         # 状态切换参数
-        self.state = robotState.zero_torque
-        self.next_state = self.state
-        self.last_state = self.state
-        self.change_state = 1
+        self.dof_num = dof_num
+        self.joint_nominal_pos = joint_nominal_pos
+        self.joint_kp = joint_kp
+        self.joint_kd = joint_kd
+        self.loop_count = 0
+        self.state_id_by_name = {
+            "normal": robotState.normal,
+            "zero_torque": robotState.zero_torque,
+            "pd_brake": robotState.pd_brake,
+            "initial_pos": robotState.initial_pos,
+            "dance": robotState.dance,
+            "recover": robotState.recover,
+            "amp_run": robotState.amp_run,
+            "normal_run": robotState.normal_run,
+            "back_flip": robotState.back_flip,
+            "forward_flip": robotState.forward_flip,
+            "applause": robotState.applause,
+        }
+        self.state_name_by_id = {value: key for key, value in self.state_id_by_name.items()}
+        self.state_machine = RobotStateMachine(
+            self,
+            self.state_machine_config,
+            build_robot_states(self.state_id_by_name),
+            action_handlers={
+                "toggle_dance_pause": self.toggle_dance_pause,
+            },
+        )
+        self.remote_event_adapter = RemoteEventAdapter(self.state_machine_config.get("remote_events", {}))
+        self.speed_profiles = self.state_machine_config.get("speed_profiles", {})
 
-        # 遥控器参数
-        self.normal_mode_prev = False
-        self.zero_torque_prev = False
-        self.pd_brake_prev = False
-        self.initial_pos_prev = False
-
-        self.dance_mode_prev = False
-        self.recover_mode_prev = False
-        self.amp_run_mode_prev = False
-        self.normal_run_mode_prev = False
-
-        self.dance_flag_prev = False
+        self.state = self.state_machine.current_state_id
+        self.pending_remote_events = deque()
+        self.motor_target = None
+        self.current_q = np.zeros(dof_num, dtype=np.double)
+        self.current_dq = np.zeros(dof_num, dtype=np.double)
+        self.current_omega = np.zeros(3, dtype=np.double)
+        self.current_quat_xyzw = np.zeros(4, dtype=np.double)
+        self.current_quat_wxyz = np.zeros(4, dtype=np.double)
+        self.current_cmd_vel = np.zeros(3, dtype=np.double)
 
         self.dance_mode_changed = True  # False: 暂停跳舞(stop dancing)  True： 继续跳舞(continue dancing)
 
@@ -202,7 +247,6 @@ class BxiExample(Node):
 
         # 定时器初始化
         self.step = 0
-        self.loop_count = 0
         self.dt = 0.02  # loop @100Hz
         self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
 
@@ -223,6 +267,23 @@ class BxiExample(Node):
         self.declare_parameter('/onnx_file_dict', json.dumps({}))
         onnx_file_json = self.get_parameter('/onnx_file_dict').value
         self.onnx_file_dict = json.loads(onnx_file_json)
+
+        default_state_machine_config = self.default_state_machine_config_path()
+        self.declare_parameter('/state_machine_config', default_state_machine_config)
+        self.state_machine_config_path = self.get_parameter('/state_machine_config').value
+        self.state_machine_config = load_state_machine_config(self.state_machine_config_path)
+
+    def default_state_machine_config_path(self):
+        try:
+            package_share = get_package_share_directory("bxi_example_py_elf3")
+            config_path = os.path.join(package_share, "config", "elf3_state_machine.yaml")
+            if os.path.exists(config_path):
+                return config_path
+        except Exception:
+            pass
+
+        package_root = os.path.dirname(os.path.dirname(__file__))
+        return os.path.join(package_root, "config", "elf3_state_machine.yaml")
 
     def init_pub_sub(self):
         # 订阅和发布主题
@@ -246,106 +307,6 @@ class BxiExample(Node):
         self.lock_in = Lock()
         self.lock_ou = self.lock_in #Lock()
 
-    def enter_state(self):
-        match self.next_state:
-            case robotState.normal:
-                self.loop_count = 0
-                return
-
-            case robotState.pd_brake:
-                self.loop_count = 0
-                return
-
-            case robotState.zero_torque:
-                self.loop_count = 0
-                return
-
-            case robotState.initial_pos:
-                self.loop_count = 0
-                return
-
-            case robotState.amp_run:
-                self.loop_count = 0
-                self.amp_run.max_vel = 0.0
-                self.amp_run.pre_cmd_vel_run = np.array([0., 0., 0.])
-                return
-
-            case robotState.normal_run:
-                self.loop_count = 0
-                self.normal.action = np.zeros(dof_num, dtype=np.float32)
-                return
-
-            case robotState.dance:
-                self.loop_count = 0
-                self.dance_mode_changed = True
-                self.dance.timestep = self.start_frame_dance
-                return
-            
-            case robotState.recover:
-                self.loop_count = 0
-                # self.preheat_steps = 20
-                eu_ang = quaternion_to_euler_array(self.quat_xyzw)
-                eu_ang[eu_ang > math.pi] -= 2 * math.pi
-
-                if (eu_ang[1] < -(math.pi/4.0)):
-                    self.recover.end_frame = 880
-                    self.recover.timestep = 600
-                    self.recover.start_frame = 600
-                elif (eu_ang[1] > (math.pi/4.0)):
-                    self.recover.end_frame = 1690
-                    self.recover.timestep = 1350
-                    self.recover.start_frame = 1350
-                else:
-                    self.next_state = robotState.zero_torque
-                return
-            
-        return
-
-    def exit_state(self):
-        self.pos_last_state = self.qpos
-        self.kp_last_state = self.kp_last
-        self.kd_last_state = self.kd_last
-
-        match self.next_state:
-            case robotState.normal:
-                self.preheat_model(self.normal, with_cmd_vel=True)
-                self.change_state = 1
-                return
-
-            case robotState.pd_brake:
-                self.change_state = 1
-                return
-
-            case robotState.zero_torque:
-                self.change_state = 1
-                return
-
-            case robotState.initial_pos:
-                self.change_state = 1
-                return
-
-            case robotState.amp_run:
-                self.preheat_model(self.amp_run, with_cmd_vel=True)
-                self.change_state = 1
-                return
-
-            case robotState.normal_run:
-                self.preheat_model(self.normal_run, with_cmd_vel=True)
-                self.change_state = 1
-                return
-
-            case robotState.dance:
-                self.preheat_model(self.dance)
-                self.change_state = 1
-                return
-
-            case robotState.recover:
-                self.preheat_model(self.recover)
-                self.change_state = 1
-                return
-
-        return
-
     def timer_callback(self):
         # ptyhon 与 rclpy 多线程不太友好，这里使用定时间+简易状态机运行a
         if self.step == 0:
@@ -362,159 +323,29 @@ class BxiExample(Node):
 
         if self.step == 2:
             with self.lock_in:
-                q = self.qpos
-                dq = self.qvel
-                quat = self.quat_xyzw
-                quat_wxyz = self.quat_wxyz
-                omega = self.omega
+                self.current_q = self.qpos.copy()
+                self.current_dq = self.qvel.copy()
+                self.current_quat_xyzw = self.quat_xyzw.copy()
+                self.current_quat_wxyz = self.quat_wxyz.copy()
+                self.current_omega = self.omega.copy()
+                self.current_cmd_vel = np.array([self.vx, self.vy, self.dyaw])
+                events = list(self.pending_remote_events)
+                self.pending_remote_events.clear()
 
-                # x_vel_cmd = self.vx
-                # y_vel_cmd = self.vy
-                # yaw_vel_cmd = self.dyaw
-                cmd_vel = np.array([self.vx, self.vy, self.dyaw])
+            self.motor_target = None
+            transition_active = self.state_machine.update(self.dt, events)
+            self.state = self.state_machine.current_state_id
 
-            if(self.next_state != self.state):
-                self.exit_state()
-                if(self.change_state == 1):
-                    self.enter_state()
-                    self.last_state = self.state
-                    self.state = self.next_state
+            if not transition_active:
+                self.state_machine.update_current_state(self.dt)
+                self.state = self.state_machine.current_state_id
 
-            if self.state == robotState.normal:
-                eu_ang = quaternion_to_euler_array(quat)
-                eu_ang[eu_ang > math.pi] -= 2 * math.pi
-
-                #check safe
-                if (np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0)):
-                    print("check safe error, zero_torque!")
-
-                    self.next_state = robotState.zero_torque
-                    return
-
-                qpos, vel = self.normal.inference_step(q, dq, quat_wxyz, omega, cmd_vel)
-
-                kp = self.normal.kps
-                kd = self.normal.kds
-
-            elif self.state == robotState.zero_torque:      # kp,kd 均给0
-                qpos = joint_nominal_pos
-                kp = np.zeros(dof_num, dtype=np.float32)
-                kd = np.zeros(dof_num, dtype=np.float32)
-
-            elif self.state == robotState.pd_brake:
-                soft_start = self.loop_count/(2./self.dt) # 1秒关节缓启动
-                if soft_start > 1:
-                    soft_start = 1
-
-                qpos = self.pos_last_state + (self.pd_pos - self.pos_last_state) * soft_start
-
-                kp = self.kp_last + (self.normal.kps  - self.kp_last) * soft_start
-                kd = self.kd_last + (self.normal.kds - self.kd_last) * soft_start
-
-            elif self.state == robotState.initial_pos:
-                soft_start = self.loop_count/(2./self.dt)
-                if soft_start > 1:
-                    soft_start = 1
-
-                qpos = self.pos_last_state + (self.initial_pos- self.pos_last_state) * soft_start
-
-                kp = self.kp_last + (joint_kp  - self.kp_last) * soft_start
-                kd = self.kd_last + (joint_kd - self.kd_last) * soft_start
-
-            elif self.state == robotState.amp_run:
-                eu_ang = quaternion_to_euler_array(quat)
-                eu_ang[eu_ang > math.pi] -= 2 * math.pi
-
-                #check safe
-                if (np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0)):
-                    print("check safe error, zero_torque!")
-
-                    self.next_state = robotState.zero_torque
-                    return
-
-                self.amp_run.cmd_vel_run[:2] = 0.98 * self.amp_run.pre_cmd_vel_run[:2] + 0.02 * cmd_vel[:2]
-                self.amp_run.cmd_vel_run[2] = cmd_vel[2]
-                qpos, vel = self.amp_run.inference_step(q, dq, quat_wxyz, omega, self.amp_run.cmd_vel_run)
-
-                if(vel[0] > self.amp_run.max_vel):
-                    self.amp_run.max_vel = vel[0]
-                if(self.loop_count >= 100 + int(0.3/self.dt)):
-                    print(self.amp_run.max_vel)
-                    self.loop_count = int(0.3/self.dt)
-                    self.amp_run.max_vel = 0.0
-
-                self.amp_run.pre_cmd_vel_run = self.amp_run.cmd_vel_run
-
-                kp = self.amp_run.kps
-                kd = self.amp_run.kds
-
-            elif self.state == robotState.normal_run:
-                eu_ang = quaternion_to_euler_array(quat)
-                eu_ang[eu_ang > math.pi] -= 2 * math.pi
-
-                #check safe
-                if (np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0)):
-                    print("check safe error, zero_torque!")
-
-                    self.next_state = robotState.zero_torque
-                    return
-
-                # cmd = [x_vel_cmd, y_vel_cmd, yaw_vel_cmd]
-                qpos = self.normal_run.infer_step(q, dq, quat, omega, cmd_vel)
-
-                kp = self.normal_run.joint_stiffness
-                kd = self.normal_run.joint_damping
-
-            elif self.state == robotState.dance:
-                if self.dance.timestep < self.dance.motionpos.shape[0]:
-                    eu_ang = quaternion_to_euler_array(quat)
-                    eu_ang[eu_ang > math.pi] -= 2 * math.pi
-
-                    #check safe
-                    if (np.abs(eu_ang[0]) > (math.pi/3.0)) or (np.abs(eu_ang[1]) > (math.pi/3.0)):
-                        print("check safe error, zero_torque!")
-
-                        self.next_state = robotState.zero_torque
-                        return
-
-                    qpos = self.dance.inference_step(q, dq, quat_wxyz, omega)
-
-                    kp = self.dance.stiffness_array
-                    kd = self.dance.damping_array
-
-                if self.dance_mode_changed == True:
-                    self.dance.timestep += 1
-
-                # 动作结束检测
-                if self.dance.timestep >= self.dance.motionpos.shape[0]:
-                    print("Motion replay finished, resetting simulation.")
-                    self.dance.timestep = self.start_frame_dance
-                    self.next_state = robotState.normal
-
-            elif self.state == robotState.recover:
-                if self.recover.timestep <= self.recover.end_frame:
-                    # print(self.recover.end_frame)
-                    qpos = self.recover.inference_step(q, dq, quat_wxyz, omega)
-
-                    kp = self.recover.kps
-                    kd = self.recover.kds
-                else:
-                    print("error",self.recover.timestep, self.recover.end_frame)
-
-                    # 动作管理
-                if self.dance_mode_changed == True:
-                    self.recover.timestep += 1
-                    
-                # 动作结束检测    
-                if self.recover.timestep > self.recover.end_frame:
-                    self.recover.timestep = self.recover.start_frame #停止动作
-
-                    self.next_state = robotState.normal
-
-            self.pos_last = qpos
-            self.kp_last = kp
-            self.kd_last = kd
-            self.send_to_motor(qpos, kp, kd)
+            if self.motor_target is not None:
+                qpos, kp, kd = self.motor_target
+                self.pos_last = qpos
+                self.kp_last = kp
+                self.kd_last = kd
+                self.send_to_motor(qpos, kp, kd)
 
         self.loop_count += 1
 
@@ -588,199 +419,46 @@ class BxiExample(Node):
             self.qpos[:] = np.array(joint_pos[:])
             self.qvel[:] = np.array(joint_vel[:])
 
+    def toggle_dance_pause(self):
+        self.dance_mode_changed = not self.dance_mode_changed
+
+    def set_motor_target(self, qpos, kp, kd):
+        self.motor_target = (qpos, kp, kd)
+
+    def hold_last_motor_target(self):
+        self.set_motor_target(self.pos_last, self.kp_last, self.kd_last)
+
+    def request_state(self, state_name, trigger="code", transition="instant", delay=0.0):
+        self.state_machine.request_transition(state_name, trigger=trigger, transition=transition, delay=delay)
+
+    def is_orientation_unsafe(self, quat_xyzw):
+        eu_ang = quaternion_to_euler_array(quat_xyzw)
+        eu_ang[eu_ang > math.pi] -= 2 * math.pi
+        return (np.abs(eu_ang[0]) > (math.pi / 3.0)) or (np.abs(eu_ang[1]) > (math.pi / 3.0))
+
+    def apply_velocity_profile(self, msg):
+        profile = self.speed_profiles.get(self.state_machine.current_state_name)
+        if profile is None:
+            return
+
+        vx_scale = float(profile.get("vx_scale", 1.0))
+        vy_scale = float(profile.get("vy_scale", 1.0))
+        yaw_scale = float(profile.get("yaw_scale", 1.0))
+        vx_min = float(profile.get("vx_min", -np.inf))
+        vx_max = float(profile.get("vx_max", np.inf))
+
+        self.vx = np.clip(msg.vel_des.x * vx_scale, vx_min, vx_max)
+        self.vy = msg.vel_des.y * vy_scale
+        self.dyaw = msg.yawdot_des * yaw_scale
+
     def joy_callback(self, msg):
         with self.lock_in:
-            if self.state == robotState.normal:
-                self.vx = msg.vel_des.x * 1.0                 # * 3
-                self.vx = np.clip(self.vx, -1.0, 1.0)       # -2.0  3.0
-                self.vy = msg.vel_des.y * 0.5
-                self.dyaw = msg.yawdot_des * 1.5
-
-            elif self.state == robotState.normal_run:
-                self.vx = msg.vel_des.x * 2.0
-                self.vx = np.clip(self.vx, -1.0, 2.0)
-                self.vy = msg.vel_des.y * 0.5
-                self.dyaw = msg.yawdot_des * 1.0
-
-            elif self.state == robotState.amp_run:
-                self.vx = msg.vel_des.x * 4.0
-                self.vx = np.clip(self.vx, -2.0, 4.0)
-                self.vy = msg.vel_des.y * 0.5
-                self.dyaw = msg.yawdot_des * 1.5
-
-            normal_mode = msg.btn_1             # RB+X 切换为普通模式
-            zero_torque_mode = msg.btn_2        # RB+A 切换为零力模式
-            pd_brake_mode = msg.btn_3           # RB+B 切换为pd模式
-            initial_pos_mode = msg.btn_4        # RB+Y 切换为初始状态
-
-            dance_mode = msg.btn_5              # LB+X 切换为跳舞模式
-            recover_mode = msg.btn_6               # LB+A 切换为recover模式
-            normal_run_mode = msg.btn_7        # LB+B 切换为普通跑步模式
-            amp_run_mode = msg.btn_8           # LB+Y 切换为高速跑步
-
-            dance_flag = msg.btn_9              # X 暂停或继续跳舞
-            # = msg.btn_10
-            # = msg.btn_11
-            # = msg.btn_12
+            self.apply_velocity_profile(msg)
+            events = self.remote_event_adapter.extract_events(msg, sync_only=self.step < 2)
+            self.pending_remote_events.extend(events)
 
         if self.step < 2:
-            self.normal_mode_prev = normal_mode
-            self.zero_torque_prev = zero_torque_mode
-            self.pd_brake_prev = pd_brake_mode
-            self.initial_pos_prev = initial_pos_mode
-
-            self.dance_mode_prev = dance_mode
-            self.recover_mode_prev = recover_mode
-            self.amp_run_mode_prev = amp_run_mode
-            self.normal_run_mode_prev = normal_run_mode
-
-            self.dance_flag_prev = dance_flag
-
-        #按键状态变化检测
-        match self.state:
-            case robotState.normal:
-                if zero_torque_mode != self.zero_torque_prev:
-                    self.next_state = robotState.zero_torque
-                    print("switch to zero_torque")
-
-                elif pd_brake_mode != self.pd_brake_prev:
-                    self.next_state = robotState.pd_brake
-                    print("switch to pd_mode")
-
-                elif initial_pos_mode != self.initial_pos_prev:
-                    self.next_state = robotState.initial_pos
-                    print("switch to initial")
-
-                elif amp_run_mode != self.amp_run_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.amp_run
-                    print("switch to amp_run")
-
-                elif normal_run_mode != self.normal_run_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.normal_run
-                    print("switch to normal_run")
-
-                elif dance_mode != self.dance_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.dance
-                    print("switch to dance")
-
-                elif recover_mode != self.recover_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.recover
-                    print("switch to recover")
-
-            case robotState.zero_torque:
-                if normal_mode != self.normal_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.normal
-                    print("switch to normal")
-
-                elif pd_brake_mode != self.pd_brake_prev:
-                    self.next_state = robotState.pd_brake
-                    print("switch to pd_mode")
-
-                elif initial_pos_mode != self.initial_pos_prev:
-                    self.next_state = robotState.initial_pos
-                    print("switch to initial")
-
-                elif recover_mode != self.recover_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.recover
-                    print("switch to recover")
-
-            case robotState.pd_brake:
-                if normal_mode != self.normal_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.normal
-                    print("switch to normal")
-
-                elif zero_torque_mode != self.zero_torque_prev:
-                    self.next_state = robotState.zero_torque
-                    print("switch to zero_torque")
-
-                elif initial_pos_mode != self.initial_pos_prev:
-                    self.next_state = robotState.initial_pos
-                    print("switch to initial")
-
-                elif recover_mode != self.recover_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.recover
-                    print("switch to recover")
-
-            case robotState.initial_pos:
-                if normal_mode != self.normal_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.normal
-                    print("switch to normal")
-
-                elif pd_brake_mode != self.pd_brake_prev:
-                    self.next_state = robotState.pd_brake
-                    print("switch to pd_mode")
-
-                elif zero_torque_mode != self.zero_torque_prev:
-                    self.next_state = robotState.zero_torque
-                    print("switch to zero_torque")
-
-                elif recover_mode != self.recover_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.recover
-                    print("switch to recover")
-
-            case robotState.dance:
-                if normal_mode != self.normal_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.normal
-                    print("switch to normal")
-
-                if dance_flag != self.dance_flag_prev:
-                    self.dance_mode_changed = not self.dance_mode_changed
-
-            case robotState.amp_run:
-                if normal_mode != self.normal_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.normal
-                    print("switch to normal")
-
-            case robotState.normal_run:
-                if normal_mode != self.normal_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.normal
-                    print("switch to normal")
-
-            case robotState.recover:
-                if normal_mode != self.normal_mode_prev:
-                    # self.preheat_steps = 20
-                    self.next_state = robotState.normal
-                    print("switch to normal")
-
-                elif zero_torque_mode != self.zero_torque_prev:
-                    self.next_state = robotState.zero_torque
-                    print("switch to zero_torque")
-
-                elif pd_brake_mode != self.pd_brake_prev:
-                    self.next_state = robotState.pd_brake
-                    print("switch to pd_mode")
-
-                elif initial_pos_mode != self.initial_pos_prev:
-                    self.next_state = robotState.initial_pos
-                    print("switch to initial")
-
-        if self.state != self.next_state:
-            self.change_state = 0
-
-        self.normal_mode_prev = normal_mode
-        self.zero_torque_prev = zero_torque_mode
-        self.pd_brake_prev = pd_brake_mode
-        self.initial_pos_prev = initial_pos_mode
-
-        self.dance_mode_prev = dance_mode
-        self.recover_mode_prev = recover_mode
-        self.normal_run_mode_prev = normal_run_mode
-        self.amp_run_mode_prev = amp_run_mode
-
-        self.dance_flag_prev = dance_flag
+            return
 
     def imu_callback(self, msg):
         quat = msg.orientation
@@ -831,9 +509,8 @@ class BxiExample(Node):
         quat_wxyz = self.quat_wxyz.copy()
         cmd_vel = np.array([self.vx, self.vy, self.dyaw], dtype=np.float32)
 
-        if self.next_state == robotState.normal_run:
+        if model is self.normal_run:
             model.infer_step(q, dq, quat_xyzw, omega, cmd_vel)
-
         else:
             if with_cmd_vel:
                 model.inference_step(q, dq, quat_wxyz, omega, cmd_vel)
@@ -862,4 +539,3 @@ def main(args=None):
         
 if __name__ == '__main__':
     main()
-

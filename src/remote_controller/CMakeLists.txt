@@ -20,6 +20,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(communication REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -36,12 +37,21 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-add_executable(${PROJECT_NAME} src/main.cpp)
+add_executable(${PROJECT_NAME}
+  src/main.cpp
+  src/config.cpp
+  src/input_mapper.cpp
+)
+target_include_directories(${PROJECT_NAME} PRIVATE include)
 ament_target_dependencies(${PROJECT_NAME} rclcpp std_msgs communication)
+target_link_libraries(${PROJECT_NAME} yaml-cpp)
 
 install(TARGETS ${PROJECT_NAME} DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch
+         DESTINATION share/${PROJECT_NAME})
+
+install(DIRECTORY config
          DESTINATION share/${PROJECT_NAME})
 
 ament_package()

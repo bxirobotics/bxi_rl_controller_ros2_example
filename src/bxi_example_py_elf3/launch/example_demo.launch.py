@@ -10,10 +10,16 @@ def generate_launch_description():
 
     xml_file_name = "data/elf3.xml"
     xml_file = os.path.join(get_package_share_path("bxi_example_py_elf3"), xml_file_name)
+    state_machine_config = os.path.join(
+        get_package_share_path("bxi_example_py_elf3"),
+        "config/elf3_state_machine.yaml",
+    )
 
     npz_file_dict = {
         "recover": "data/recover.npz",
         "dance": "data/dance.npz",
+        "back_flip": "data/back_flip.npz",
+        "forward_flip": "data/forward_flip.npz",
     }  
     onnx_file_dict = {
         "normal": "data/amp_terrain.onnx",
@@ -21,6 +27,9 @@ def generate_launch_description():
         "dance": "data/dance.onnx",
         "amp_run": "data/amp_run.onnx",
         "normal_run": "data/model_normal.onnx",
+        "back_flip": "data/back_flip.onnx",
+        "forward_flip": "data/forward_flip.onnx",
+        "noarm": "data/arm8.onnx",
     }
 
     for key, value in npz_file_dict.items():
@@ -51,6 +60,7 @@ def generate_launch_description():
                     {"/topic_prefix": "simulation/"},
                     {"/npz_file_dict": json.dumps(npz_file_dict)},
                     {"/onnx_file_dict": json.dumps(onnx_file_dict)},
+                    {"/state_machine_config": state_machine_config},
                 ],
                 emulate_tty=True,
                 arguments=[("__log_level:=debug")],
