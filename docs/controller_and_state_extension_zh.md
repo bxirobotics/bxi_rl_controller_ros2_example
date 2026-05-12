@@ -164,6 +164,172 @@ bindings:
 
 含义是：按住 `shoulder.right`，再按下 `button.west` 时触发 `btn_1`。
 
+### 遥控器配置字段完整说明
+
+本节逐项说明 `src/remote_controller/config/xbox_default.yaml` 当前使用到的所有字段。
+
+`device`：
+
+- `device.js`：Linux joystick 设备路径。默认是 `/dev/input/js0`，如果系统里手柄是 `js1/js2`，改这里即可。
+- `device.vel_offset`：发布到 `MotionCommands.vel_des.x` 前额外叠加的速度偏置。通常保持 `0.0`。
+
+`axes`：
+
+- `axes.vx`：前进/后退速度轴配置，最终写到 `MotionCommands.vel_des.x`。
+- `axes.vy`：左右平移速度轴配置，最终写到 `MotionCommands.vel_des.y`。
+- `axes.yaw`：转向角速度轴配置，最终写到 `MotionCommands.yawdot_des`。
+- `axes.<axis>.index`：物理 joystick 轴编号。
+- `axes.<axis>.direction`：轴方向，`1` 表示保持设备原始方向，`-1` 表示反向。
+- `axes.<axis>.deadzone`：死区阈值，原始轴范围按 `-32767..32767` 处理，小于死区的输入当作 0。
+- `axes.<axis>.min`：归一化输入为负时的最小输出幅度。例如 `axes.vx.min: -1.0` 表示最大后退速度是 `-1.0`。
+- `axes.<axis>.max`：归一化输入为正时的最大输出幅度。
+- `axes.<axis>.alpha`：一阶低通滤波系数。越大响应越快，越小越平滑。
+
+当前轴配置：
+
+| 字段 | index | direction | deadzone | min | max | alpha | 输出 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `axes.vx` | 3 | -1 | 1000.0 | -1.0 | 1.0 | 0.03 | `vel_des.x` |
+| `axes.vy` | 0 | -1 | 1000.0 | -1.0 | 1.0 | 0.03 | `vel_des.y` |
+| `axes.yaw` | 6 | -1 | 1000.0 | -1.0 | 1.0 | 0.05 | `yawdot_des` |
+
+`buttons`：
+
+- `buttons.<control>`：把物理按钮编号映射成标准控件名。后续 `bindings.when` 只使用标准控件名，不直接写数字。
+- `buttons.system.stop`：停止机器人相关进程的按钮。
+- `buttons.system.start`：启动机器人相关进程的按钮。
+- `buttons.shoulder.left` / `buttons.shoulder.right`：左右肩键，默认对应 Xbox `LB/RB`。
+- `buttons.button.south`：南向按钮，默认对应 Xbox `A`。
+- `buttons.button.east`：东向按钮，默认对应 Xbox `B`。
+- `buttons.button.west`：西向按钮，默认对应 Xbox `X`。
+- `buttons.button.north`：北向按钮，默认对应 Xbox `Y`。
+
+当前按钮配置：
+
+| 控件名 | 物理编号 | 默认含义 |
+| --- | ---: | --- |
+| `system.stop` | 11 | 停止相关进程 |
+| `system.start` | 14 | 启动相关进程 |
+| `shoulder.left` | 6 | Xbox LB |
+| `shoulder.right` | 7 | Xbox RB |
+| `button.south` | 0 | Xbox A |
+| `button.east` | 1 | Xbox B |
+| `button.west` | 3 | Xbox X |
+| `button.north` | 4 | Xbox Y |
+
+`modifiers`：
+
+- `modifiers`：修饰键列表。这里面的控件按下时，普通单键绑定会被屏蔽，只匹配带修饰键的组合键。
+- 当前配置包含 `shoulder.left`、`shoulder.right`、`trigger.left`、`trigger.right`。
+
+`axis_buttons`：
+
+- `axis_buttons.<control>`：把某个轴包装成“按下/松开”的标准控件名，例如 `trigger.left`。
+- `axis_buttons.<control>.index`：物理轴编号。
+- `axis_buttons.<control>.direction`：轴方向，先乘这个方向再判断阈值。
+- `axis_buttons.<control>.threshold`：按下阈值。归一化后的轴值大于等于该值时认为控件按下。
+- `axis_buttons.<control>.release_outputs`：轴按钮从按下变为松开时自动输出的命令列表。当前用 `[btn_10=0]` 复位翻转/鼓掌命令槽。
+
+当前轴按钮配置：
+
+| 控件名 | index | direction | threshold | release_outputs |
+| --- | ---: | ---: | ---: | --- |
+| `trigger.left` | 5 | 1 | 0.85 | `[btn_10=0]` |
+| `trigger.right` | 4 | 1 | 0.85 | `[btn_10=0]` |
+
+`bindings`：
+
+- `bindings`：手柄按钮/组合键到输出命令的列表。
+- `bindings[].output`：触发后产生的输出命令。
+- `bindings[].when`：触发条件。列表最后一个控件是触发键，前面的控件是必须已按住的修饰/组合控件。
+- `output: system.stop`：执行 `system.stop_commands`。
+- `output: system.start`：执行 `system.start_commands`。
+- `output: btn_N`：切换 `MotionCommands.btn_N` 的 0/1 状态。
+- `output: btn_N=value`：把 `MotionCommands.btn_N` 设置成指定整数值。当前 `btn_10=1/2/3` 分别表示后空翻、前空翻、鼓掌。
+
+当前手柄绑定含义：
+
+| output | when | 业务含义 |
+| --- | --- | --- |
+| `system.stop` | `[system.stop]` | 执行 `stop_commands` |
+| `system.start` | `[system.start]` | 执行 `start_commands` |
+| `btn_1` | `[shoulder.right, button.west]` | RB + X，进入 `normal` |
+| `btn_2` | `[shoulder.right, button.south]` | RB + A，进入 `zero_torque` |
+| `btn_3` | `[shoulder.right, button.east]` | RB + B，进入 `pd_brake` |
+| `btn_4` | `[shoulder.right, button.north]` | RB + Y，进入 `initial_pos` |
+| `btn_5` | `[shoulder.left, button.west]` | LB + X，进入 `dance` |
+| `btn_6` | `[shoulder.left, button.south]` | LB + A，进入 `recover` |
+| `btn_7` | `[shoulder.left, button.east]` | LB + B，进入 `normal_run` |
+| `btn_8` | `[shoulder.left, button.north]` | LB + Y，进入 `amp_run` |
+| `btn_9` | `[button.west]` | X，触发 `toggle_dance_pause` |
+| `btn_10=1` | `[trigger.left, button.west]` | LT + X，进入 `back_flip` |
+| `btn_10=2` | `[trigger.left, button.north]` | LT + Y，进入 `forward_flip` |
+| `btn_10=3` | `[trigger.right, button.east]` | RT + B，进入 `applause` |
+| `btn_10=0` | `trigger.left/right release_outputs` | 松开 LT/RT 时复位 `btn_10` |
+
+`keyboard`：
+
+- `keyboard.timeout_us`：键盘读取超时时间，单位微秒。超时没有收到移动键时，会把移动轴清零，用来模拟按键释放。
+- `keyboard.movement`：键盘移动控制映射。
+- `keyboard.movement.forward`：前进键，写入 `vx` 轴负满量程，再经过轴方向和速度缩放。
+- `keyboard.movement.backward`：后退键。
+- `keyboard.movement.yaw_left`：左转键。
+- `keyboard.movement.yaw_right`：右转键。
+- `keyboard.movement.strafe_left`：左平移键。
+- `keyboard.movement.strafe_right`：右平移键。
+- `keyboard.movement.stop`：停止移动键。`space` 表示空格。
+- `keyboard.bindings`：键盘按键到输出命令的映射，输出格式和 `bindings[].output` 相同。
+
+当前键盘移动键：
+
+| 字段 | 当前按键 | 含义 |
+| --- | --- | --- |
+| `keyboard.movement.forward` | `w` | 前进 |
+| `keyboard.movement.backward` | `s` | 后退 |
+| `keyboard.movement.yaw_left` | `a` | 左转 |
+| `keyboard.movement.yaw_right` | `d` | 右转 |
+| `keyboard.movement.strafe_left` | `q` | 左平移 |
+| `keyboard.movement.strafe_right` | `e` | 右平移 |
+| `keyboard.movement.stop` | `space` | 清零移动命令 |
+
+当前键盘绑定含义：
+
+| keyboard.bindings key | output | 业务含义 |
+| --- | --- | --- |
+| `"1"` | `btn_1` | 进入 `normal` |
+| `"2"` | `btn_6` | 进入 `recover` |
+| `"3"` | `btn_5` | 进入 `dance` |
+| `"4"` | `btn_8` | 进入 `amp_run` |
+| `"5"` | `btn_7` | 进入 `normal_run` |
+| `"6"` | `btn_10=1` | 进入 `back_flip` |
+| `"7"` | `btn_10=2` | 进入 `forward_flip` |
+| `"8"` | `btn_10=3` | 进入 `applause` |
+| `"0"` | `btn_10=0` | 复位 `btn_10` |
+
+`system`：
+
+- `system.start_commands`：收到 `system.start` 输出后依次执行的 shell 命令。当前用于创建日志目录并后台启动硬件 demo 和 BMS。
+- `system.stop_commands`：收到 `system.stop` 输出后依次执行的 shell 命令。当前用于向相关进程发送 `SIGINT`。
+- 命令通过 `std::system()` 执行，按 YAML 顺序逐条运行；这里写的是原生 shell 命令字符串。
+
+当前 `start_commands`：
+
+```bash
+mkdir -p /var/log/bxi_log
+ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log 2>&1 &
+ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log 2>&1 &
+```
+
+当前 `stop_commands`：
+
+```bash
+killall -SIGINT hardware_elf3
+killall -SIGINT bxi_example_py_elf3
+killall -SIGINT bxi_example_py_elf3_demo
+killall -SIGINT bxi_bms
+killall -SIGINT bxi_example_bms
+```
+
 ### 2.3 配置组合键输出
 
 当前默认业务事件约定如下：
@@ -324,6 +490,125 @@ src/bxi_example_py_elf3/bxi_example_py_elf3/robot_states.py
 ```text
 src/bxi_example_py_elf3/bxi_example_py_elf3/state_machine.py
 ```
+
+### 状态机配置字段完整说明
+
+本节逐项说明 `src/bxi_example_py_elf3/config/elf3_state_machine.yaml` 当前使用到的所有字段。
+
+`initial_state`：
+
+- `initial_state`：状态机初始化后进入的第一个状态名。必须是 `states` 下已定义的状态。当前是 `zero_torque`。
+
+`remote_events`：
+
+- `remote_events`：把 `MotionCommands.btn_1..btn_10` 转换成业务事件名。状态转移表只看业务事件名，不直接看 `btn_N`。
+- `remote_events.<event>: btn_N`：简写形式。只要对应 `btn_N` 的值发生变化，就触发 `<event>`。
+- `remote_events.<event>.slot`：完整形式的槽位名，例如 `btn_10`。
+- `remote_events.<event>.value`：完整形式的期望值。只有 `slot` 变化到该值时才触发事件。
+
+当前事件映射含义：
+
+```text
+normal               <- btn_1
+zero_torque          <- btn_2
+pd_brake             <- btn_3
+initial_pos          <- btn_4
+dance                <- btn_5
+recover              <- btn_6
+normal_run           <- btn_7
+amp_run              <- btn_8
+toggle_dance_pause   <- btn_9
+back_flip            <- btn_10 == 1
+forward_flip         <- btn_10 == 2
+applause             <- btn_10 == 3
+```
+
+`transition_profiles`：
+
+- `transition_profiles`：过渡配置表。状态切换规则里的 `transition` 字段引用这里的 profile 名。
+- `transition_profiles.<profile>.duration`：过渡时长，单位秒。`0.0` 表示立即切换。
+- `transition_profiles.<profile>.exit_behavior`：过渡期间旧状态的行为。
+- `transition_profiles.<profile>.enter_behavior`：过渡期间新状态的行为。
+- `hold_last_motor`：保持上一帧电机目标，避免过渡期间没有输出。
+- `none`：不做额外处理。
+
+当前 profile：
+
+| profile | duration | exit_behavior | enter_behavior | 含义 |
+| --- | ---: | --- | --- | --- |
+| `instant` | `0.0` | `hold_last_motor` | `none` | 立即切换；离开旧状态时保留最后一帧电机目标，进入新状态不做额外过渡处理 |
+| `soft_switch` | `0.02` | `hold_last_motor` | `hold_last_motor` | 用 0.02 秒软切换；退出侧和进入侧都保持上一帧电机目标，避免过渡期间输出断档 |
+
+`speed_profiles`：
+
+- `speed_profiles`：不同运动状态的速度缩放表。状态配置里的 `speed_profile` 引用这里的 profile 名。
+- `speed_profiles.<profile>.vx_scale`：遥控器 `vel_des.x` 进入业务层后的倍率。
+- `speed_profiles.<profile>.vx_min`：`vx` 缩放后的下限。
+- `speed_profiles.<profile>.vx_max`：`vx` 缩放后的上限。
+- `speed_profiles.<profile>.vy_scale`：遥控器 `vel_des.y` 的倍率。
+- `speed_profiles.<profile>.yaw_scale`：遥控器 `yawdot_des` 的倍率。
+
+当前 profile：
+
+| profile | vx_scale | vx_min | vx_max | vy_scale | yaw_scale | 含义 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `normal` | `1.0` | `-1.0` | `1.0` | `0.5` | `1.5` | 普通站走速度 |
+| `normal_run` | `2.0` | `-1.0` | `2.0` | `0.5` | `1.0` | 普通跑步速度 |
+| `amp_run` | `4.0` | `-2.0` | `4.0` | `0.5` | `1.5` | 高速跑步速度 |
+
+`states`：
+
+- `states`：状态定义表。每个 key 是状态名，例如 `normal`、`dance`、`applause`。
+- `states.<state>.behavior`：状态类名，必须在 `robot_states.py` 中存在，例如 `NormalState`。
+- `states.<state>.id`：可选固定数字 ID。通常不要写；不写时按 `states` 顺序自动分配。
+- `states.<state>.params`：可选构造参数，会作为关键字参数传给状态类构造函数。例如 `params: {start_frame: 100}`。
+- `states.<state>.speed_profile`：可选速度 profile 名。当前 `normal`、`amp_run`、`normal_run`、`applause` 会读取速度命令；没有该字段的状态会忽略摇杆速度。
+- `states.<state>.transitions`：该状态下允许的状态转移规则。
+- `states.<state>.transitions.on_event`：按事件触发的规则表，key 是 `remote_events` 里定义的业务事件名。
+- `states.<state>.transitions.on_event.<event>: <target>`：简写形式，收到事件后立即切换到目标状态，使用 `instant` 过渡。
+- `states.<state>.transitions.on_event.<event>.to`：完整形式的目标状态名。
+- `states.<state>.transitions.on_event.<event>.transition`：切换使用的过渡 profile 名，默认 `instant`。
+- `states.<state>.transitions.on_event.<event>.delay`：收到事件后延迟多少秒再执行切换或 action，默认 `0.0`。
+- `states.<state>.transitions.on_event.<event>.action`：只执行动作，不切换状态。当前 `toggle_dance_pause` 由 `DanceState.on_action()` 处理。
+- `states.<state>.transitions.after`：可选自动转移规则列表，进入当前状态后计时触发。
+- `states.<state>.transitions.after[].seconds`：进入当前状态多少秒后触发；也支持写成 `after`。
+- `states.<state>.transitions.after[].to`：自动转移目标状态。
+- `states.<state>.transitions.after[].transition`：自动转移使用的过渡 profile。
+- `states.<state>.transitions.after[].action`：到时只执行 action，不切换状态。
+
+当前状态说明：
+
+```text
+normal       -> NormalState，普通站走，可进入其他业务状态
+zero_torque  -> ZeroTorqueState，零力矩
+pd_brake     -> PdBrakeState，PD 刹车/保持
+initial_pos  -> InitialPosState，回初始位置
+dance        -> DanceState，舞蹈，可用 btn_9 暂停/继续
+recover      -> RecoverState，倒地恢复
+amp_run      -> AmpRunState，高速跑
+normal_run   -> NormalRunState，普通跑
+back_flip    -> BackFlipState，后空翻
+forward_flip -> ForwardFlipState，前空翻
+applause     -> ApplauseState，鼓掌
+```
+
+当前 `states` 明细：
+
+| state | behavior | speed_profile | on_event 转移/action |
+| --- | --- | --- | --- |
+| `normal` | `NormalState` | `normal` | `zero_torque -> zero_torque`；`pd_brake -> pd_brake`；`initial_pos -> initial_pos`；`amp_run -> amp_run, soft_switch`；`normal_run -> normal_run, soft_switch`；`dance -> dance, soft_switch`；`recover -> recover, soft_switch`；`back_flip -> back_flip, soft_switch`；`forward_flip -> forward_flip, soft_switch`；`applause -> applause, soft_switch` |
+| `zero_torque` | `ZeroTorqueState` | 未配置 | `normal -> normal, soft_switch`；`pd_brake -> pd_brake`；`initial_pos -> initial_pos`；`recover -> recover, soft_switch` |
+| `pd_brake` | `PdBrakeState` | 未配置 | `normal -> normal, soft_switch`；`zero_torque -> zero_torque`；`initial_pos -> initial_pos`；`recover -> recover, soft_switch` |
+| `initial_pos` | `InitialPosState` | 未配置 | `normal -> normal, soft_switch`；`pd_brake -> pd_brake`；`zero_torque -> zero_torque`；`recover -> recover, soft_switch` |
+| `dance` | `DanceState` | 未配置 | `normal -> normal, soft_switch`；`toggle_dance_pause -> action: toggle_dance_pause` |
+| `recover` | `RecoverState` | 未配置 | `normal -> normal, soft_switch`；`zero_torque -> zero_torque`；`pd_brake -> pd_brake`；`initial_pos -> initial_pos` |
+| `amp_run` | `AmpRunState` | `amp_run` | `normal -> normal, soft_switch` |
+| `normal_run` | `NormalRunState` | `normal_run` | `normal -> normal, soft_switch` |
+| `back_flip` | `BackFlipState` | 未配置 | `normal -> normal, soft_switch`；`zero_torque -> zero_torque` |
+| `forward_flip` | `ForwardFlipState` | 未配置 | `normal -> normal, soft_switch`；`zero_torque -> zero_torque` |
+| `applause` | `ApplauseState` | `normal` | `normal -> normal, soft_switch`；`zero_torque -> zero_torque` |
+
+表里没有写 `transition` 的简写转移会使用默认 `instant` profile。当前 YAML 没有使用 `id`、`params`、`delay`、`after`，这些字段是状态机支持的扩展字段，新增状态时可以按需要添加。
 
 ### 3.1 状态生命周期
 
@@ -562,7 +847,7 @@ after:
 ```yaml
 transition_profiles:
   soft_switch:
-    duration: 0.2
+    duration: 0.02
     exit_behavior: hold_last_motor
     enter_behavior: hold_last_motor
 ```
