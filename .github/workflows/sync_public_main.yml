@@ -1,0 +1,82 @@
+name: Sync Public Main
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-public-main
+  cancel-in-progress: true
+
+env:
+  PUBLIC_DIR: dist/public_release
+  MAIN_DIR: dist/public_main
+
+jobs:
+  sanitize-and-push:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Dev Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check Public Release Token
+        env:
+          PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+        run: |
+          if [ -z "${PUBLIC_RELEASE_TOKEN}" ]; then
+            echo "::error::Set repository secret PUBLIC_RELEASE_TOKEN. Pushes made with GITHUB_TOKEN do not trigger main branch workflows."
+            exit 1
+          fi
+
+      - name: Install Sanitizer Dependencies
+        run: python3 -m pip install --user PyYAML
+
+      - name: Generate Public Release Tree
+        run: |
+          python3 tools/sanitize_release.py \
+            --manifest src/bxi_example_py_elf3/config/release_protection.yaml \
+            --out "${PUBLIC_DIR}" \
+            --self-check
+
+      - name: Verify Public Workflow Layout
+        run: |
+          test -f "${PUBLIC_DIR}/.github/workflows/auto_release.yml"
+          test ! -f "${PUBLIC_DIR}/.github/workflows/sync_public_main.yml"
+          test ! -f "${PUBLIC_DIR}/release_protection.yaml"
+          test ! -f "${PUBLIC_DIR}/src/bxi_example_py_elf3/config/release_protection.yaml"
+          test ! -f "${PUBLIC_DIR}/tools/sanitize_release.py"
+
+      - name: Checkout Public Main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: ${{ env.MAIN_DIR }}
+          token: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          fetch-depth: 0
+
+      - name: Sync Public Tree Into Main Checkout
+        run: |
+          rsync -a --delete --exclude ".git" "${PUBLIC_DIR}/" "${MAIN_DIR}/"
+
+      - name: Commit And Push Public Main
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          cd "${MAIN_DIR}"
+          git config user.name "bxi-public-release-bot"
+          git config user.email "bxi-public-release-bot@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No public changes to push."
+            exit 0
+          fi
+          git commit -m "Sync public release from ${SOURCE_SHA}"
+          git push origin HEAD:main
