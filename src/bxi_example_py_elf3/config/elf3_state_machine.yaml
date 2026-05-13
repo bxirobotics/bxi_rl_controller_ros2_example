@@ -41,12 +41,20 @@ remote_events:
 transition_profiles:
   instant:
     duration: 0.0
-    exit_behavior: hold_last_motor
+    exit_behavior: none
     enter_behavior: none
   soft_switch:
     duration: 0.02
     exit_behavior: hold_last_motor
     enter_behavior: hold_last_motor
+  first_frame_switch:
+    exit_duration: 0.02
+    enter_duration: 0.1
+    exit_behavior: hold_last_motor
+    enter_behavior: first_frame_ramp_kp
+    data:
+      kp_start: zero
+      kd_start: target
 speed_profiles:
   normal:
     vx_scale: 1.0
@@ -104,7 +112,9 @@ states:
         initial_pos: initial_pos
         recover:
           to: recover
-          transition: soft_switch
+          transition:
+            base: first_frame_switch
+            enter_duration: 1.0
   pd_brake:
     behavior: PdBrakeState
     transitions:
@@ -116,7 +126,9 @@ states:
         initial_pos: initial_pos
         recover:
           to: recover
-          transition: soft_switch
+          transition:
+            base: first_frame_switch
+            enter_duration: 1.0
   initial_pos:
     behavior: InitialPosState
     transitions:
@@ -135,7 +147,7 @@ states:
       on_event:
         normal:
           to: normal
-          transition: soft_switch
+          transition: first_frame_switch
         toggle_dance_pause:
           action: toggle_dance_pause
   recover:
@@ -171,7 +183,7 @@ states:
       on_event:
         normal:
           to: normal
-          transition: soft_switch
+          transition: first_frame_switch
         toggle_dance_pause:
           action: toggle_dance_pause
   hello:
@@ -181,6 +193,6 @@ states:
       on_event:
         normal:
           to: normal
-          transition: soft_switch
+          transition: first_frame_switch
         toggle_dance_pause:
           action: toggle_dance_pause
