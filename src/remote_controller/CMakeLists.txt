@@ -41,6 +41,7 @@ add_library(${PROJECT_NAME}_core
   src/config.cpp
   src/input_driver.cpp
   src/input_mapper.cpp
+  src/motion_commands_adapter.cpp
 )
 target_include_directories(${PROJECT_NAME}_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

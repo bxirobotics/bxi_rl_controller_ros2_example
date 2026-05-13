@@ -69,11 +69,6 @@ private:
     bool parse_button_output(const std::string &output, int &slot, int &value) const;
     double read_analog_output(const AnalogOutputConfig &output) const;
     double read_analog_control(const std::string &control) const;
-    bool set_message_field(
-        communication::msg::MotionCommands &message,
-        const std::string &field,
-        double value);
-    void set_button_slot(communication::msg::MotionCommands &message, int slot, int value);
 };
 
 }  // namespace remote_controller

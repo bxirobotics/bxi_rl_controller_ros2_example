@@ -9,6 +9,8 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include "remote_controller/motion_commands_adapter.hpp"
+
 namespace remote_controller {
 namespace {
 
@@ -814,15 +816,6 @@ void warn_unknown_root_keys(const YAML::Node &root, RemoteConfig &config)
     }
 }
 
-bool is_supported_message_field(const std::string &field)
-{
-    return field == "vel_des.x" ||
-           field == "vel_des.y" ||
-           field == "vel_des.z" ||
-           field == "yawdot_des" ||
-           field == "height_des";
-}
-
 void collect_condition_controls(
     const std::vector<std::vector<BindingCondition>> &groups,
     std::set<std::string> &controls)
@@ -1020,7 +1013,7 @@ void validate_config(RemoteConfig &config)
     std::set<std::string> used_controls;
     std::set<std::string> output_fields;
     for (const auto &output : config.analog_outputs) {
-        if (!is_supported_message_field(output.field)) {
+        if (!is_motion_command_field_supported(output.field)) {
             throw std::runtime_error("continuous output contains unknown MotionCommands field: " + output.field);
         }
         if (output_fields.count(output.field) > 0) {

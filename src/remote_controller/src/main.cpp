@@ -49,6 +49,8 @@ private:
     InputMapper mapper_;
     std::unique_ptr<remote_controller::InputDriver> input_driver_;
     std::map<std::string, bool> system_mutex_locked_;
+    bool has_last_published_payload_ = false;
+    communication::msg::MotionCommands last_published_payload_;
 
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::Publisher<communication::msg::MotionCommands>::SharedPtr com_pub_;
@@ -74,6 +76,15 @@ private:
             mapper_.fill_message(message);
         }
         dispatch_outputs(outputs);
+        if (has_last_published_payload_ && message == last_published_payload_) {
+            return;
+        }
+
+        last_published_payload_ = message;
+        has_last_published_payload_ = true;
+
+        message.header.stamp = this->now();
+        message.header.frame_id = "remote_controller";
         com_pub_->publish(message);
     }
 
