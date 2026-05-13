@@ -76,12 +76,14 @@ private:
             mapper_.fill_message(message);
         }
         dispatch_outputs(outputs);
-        if (has_last_published_payload_ && message == last_published_payload_) {
-            return;
-        }
+        if (mapper_.config().publish_on_change) {
+            if (has_last_published_payload_ && message == last_published_payload_) {
+                return;
+            }
 
-        last_published_payload_ = message;
-        has_last_published_payload_ = true;
+            last_published_payload_ = message;
+            has_last_published_payload_ = true;
+        }
 
         message.header.stamp = this->now();
         message.header.frame_id = "remote_controller";

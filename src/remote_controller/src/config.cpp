@@ -713,6 +713,7 @@ void load_outputs(const YAML::Node &node, RemoteConfig &config)
     require_map(node, "outputs");
     const std::set<std::string> allowed = {
         "conflict_policy",
+        "publish_on_change",
         "analog",
         "level",
         "edge",
@@ -732,6 +733,10 @@ void load_outputs(const YAML::Node &node, RemoteConfig &config)
         config.output_conflict_policy != "error") {
         throw std::runtime_error("outputs.conflict_policy must be last_wins, first_wins, or error");
     }
+    config.publish_on_change = get_or<bool>(
+        node,
+        "publish_on_change",
+        config.publish_on_change);
     load_analog_outputs(node["analog"], config, "outputs.analog");
     load_bindings(node["level"], config, "level");
     load_bindings(node["edge"], config, "edge");

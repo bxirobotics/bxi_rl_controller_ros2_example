@@ -277,6 +277,7 @@ controls:
 `outputs` 是最终输出层，分三类：
 
 - `outputs.conflict_policy`：多个 level binding 同时写同一个 `btn_N` 且值不同时的处理策略。
+- `outputs.publish_on_change`：是否只在 `MotionCommands` payload 变化时发布。默认 `true`；设为 `false` 时按节点 timer 固定频率发布。
 - `outputs.analog`：连续量，写到 `MotionCommands.vel_des` 或 `yawdot_des`。
 - `outputs.level`：电平量，条件满足就保持，条件不满足就回 `0`。`btn_*` 推荐用这个。
 - `outputs.edge`：边沿量，条件从不满足变成满足时触发一次。`system.*` 推荐用这个，`btn_*` 放这里会变成一次脉冲。
@@ -292,6 +293,7 @@ analog 示例：
 ```yaml
 outputs:
   conflict_policy: first_wins
+  publish_on_change: true
 
   analog:
     vx: move.vx
@@ -409,7 +411,7 @@ outputs:
 条件先回 false 再到 true     -> 再次触发一帧脉冲
 ```
 
-`remote_controller` 发布 `/motion_commands` 时会填写 `header.stamp` 和 `header.frame_id=remote_controller`。节点只在 `MotionCommands` 除 header 外的 payload 发生变化时发布；只有 header 时间戳变化不会触发发布。这样遥控器输入稳定时不会持续占用 `/motion_commands`，其他节点可以在这段时间发布自己的命令。
+`remote_controller` 发布 `/motion_commands` 时会填写 `header.stamp` 和 `header.frame_id=remote_controller`。`outputs.publish_on_change: true` 时，节点只在 `MotionCommands` 除 header 外的 payload 发生变化时发布；只有 header 时间戳变化不会触发发布。这样遥控器输入稳定时不会持续占用 `/motion_commands`，其他节点可以在这段时间发布自己的命令。`outputs.publish_on_change: false` 时关闭这个节流逻辑，节点恢复固定频率发布。
 
 ### 2.6 system
 
