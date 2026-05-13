@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
-from typing import Callable, Dict, Generic, Iterable, List, Optional, Set, Tuple, TypeVar
+from typing import Any, Callable, Dict, Generic, Iterable, List, Optional, Set, Tuple, TypeVar
 
 import yaml
 
@@ -96,8 +96,29 @@ class StateBehavior(Generic[CtxT]):
 class TransitionProfile:
     name: str
     duration: float = 0.0
+    exit_duration: Optional[float] = None
+    enter_duration: Optional[float] = None
     exit_behavior: str = "hold_last_motor"
     enter_behavior: str = "none"
+    data: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        exit_duration = self.duration if self.exit_duration is None else self.exit_duration
+        enter_duration = self.duration if self.enter_duration is None else self.enter_duration
+        duration = max(float(self.duration), float(exit_duration), float(enter_duration))
+        data = self._copy_data(self.data)
+        object.__setattr__(self, "duration", duration)
+        object.__setattr__(self, "exit_duration", float(exit_duration))
+        object.__setattr__(self, "enter_duration", float(enter_duration))
+        object.__setattr__(self, "data", data)
+
+    @staticmethod
+    def _copy_data(value: object) -> Dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError(f"transition data must be a YAML map: {value}")
+        return dict(value)
 
 
 @dataclass(frozen=True)
@@ -108,6 +129,7 @@ class TransitionRule:
     delay: float = 0.0
     action: Optional[str] = None
     transition: str = "instant"
+    profile: Optional[TransitionProfile] = None
 
 
 @dataclass
@@ -228,10 +250,20 @@ class RobotStateMachine(Generic[CtxT]):
         self,
         to_state: str,
         trigger: str = "code",
-        transition: str = "instant",
+        transition: Any = "instant",
         delay: float = 0.0,
     ) -> None:
-        rule = TransitionRule(to_state=to_state, delay=delay, transition=transition)
+        transition_name, profile = self._parse_transition_spec(
+            transition,
+            {},
+            f"request:{trigger}:{to_state}",
+        )
+        rule = TransitionRule(
+            to_state=to_state,
+            delay=delay,
+            transition=transition_name,
+            profile=profile,
+        )
         if delay > 0.0:
             self._pending = PendingTransition(rule=rule, trigger=trigger)
         else:
@@ -285,7 +317,7 @@ class RobotStateMachine(Generic[CtxT]):
             return
 
         to_state = self._states[rule.to_state]
-        profile = self._profiles.get(rule.transition, self._profiles["instant"])
+        profile = rule.profile or self._profiles.get(rule.transition, self._profiles["instant"])
 
         print(f"switch {self.current.name} -> {to_state.name} via {profile.name} ({trigger})")
         self.current.on_exit(self._ctx)
@@ -306,24 +338,31 @@ class RobotStateMachine(Generic[CtxT]):
             return
 
         self._active.elapsed += dt
-        duration = max(self._active.profile.duration, 1e-6)
-        progress = min(self._active.elapsed / duration, 1.0)
+        profile = self._active.profile
+        progress = self._progress(self._active.elapsed, profile.duration)
+        exit_progress = self._progress(self._active.elapsed, float(profile.exit_duration or 0.0))
+        enter_progress = self._progress(self._active.elapsed, float(profile.enter_duration or 0.0))
 
         self._active.from_state.on_exit_transition(
             self._ctx,
             self._active.to_state,
-            progress,
-            self._active.profile,
+            exit_progress,
+            profile,
         )
         self._active.to_state.on_enter_transition(
             self._ctx,
             self._active.from_state,
-            progress,
-            self._active.profile,
+            enter_progress,
+            profile,
         )
 
         if progress >= 1.0:
             self._finish_active_transition()
+
+    def _progress(self, elapsed: float, duration: float) -> float:
+        if duration <= 0.0:
+            return 1.0
+        return min(float(elapsed) / duration, 1.0)
 
     def _finish_active_transition(self) -> None:
         if self._active is None:
@@ -358,11 +397,11 @@ class RobotStateMachine(Generic[CtxT]):
         if self._active is None:
             return None
 
-        duration = float(self._active.profile.duration)
-        if duration <= 0.0:
-            progress = 1.0
-        else:
-            progress = min(float(self._active.elapsed) / duration, 1.0)
+        profile = self._active.profile
+        duration = float(profile.duration)
+        progress = self._progress(float(self._active.elapsed), duration)
+        exit_duration = float(profile.exit_duration or 0.0)
+        enter_duration = float(profile.enter_duration or 0.0)
 
         return {
             "from": {
@@ -373,13 +412,18 @@ class RobotStateMachine(Generic[CtxT]):
                 "name": self._active.to_state.name,
                 "id": self._active.to_state.state_id,
             },
-            "profile": self._active.profile.name,
+            "profile": profile.name,
             "trigger": self._active.trigger,
             "elapsed": float(self._active.elapsed),
             "duration": duration,
             "progress": progress,
-            "exit_behavior": self._active.profile.exit_behavior,
-            "enter_behavior": self._active.profile.enter_behavior,
+            "exit_duration": exit_duration,
+            "exit_progress": self._progress(float(self._active.elapsed), exit_duration),
+            "exit_behavior": profile.exit_behavior,
+            "enter_duration": enter_duration,
+            "enter_progress": self._progress(float(self._active.elapsed), enter_duration),
+            "enter_behavior": profile.enter_behavior,
+            "data": dict(profile.data),
         }
 
     def _pending_snapshot(self) -> Optional[Dict[str, object]]:
@@ -415,11 +459,7 @@ class RobotStateMachine(Generic[CtxT]):
                 for state in self._states.values()
             ],
             "transition_profiles": {
-                name: {
-                    "duration": float(profile.duration),
-                    "exit_behavior": profile.exit_behavior,
-                    "enter_behavior": profile.enter_behavior,
-                }
+                name: self._profile_snapshot(profile)
                 for name, profile in self._profiles.items()
             },
             "remote_events": list((self._config.get("remote_events", {}) or {}).keys()),
@@ -433,10 +473,25 @@ class RobotStateMachine(Generic[CtxT]):
                     "delay": float(rule.delay),
                     "action": rule.action,
                     "transition": rule.transition,
+                    "transition_profile": self._profile_snapshot(self._rule_profile(rule)),
                 }
                 for from_state, to_state, label, rule in self._graph_edges()
             ],
         }
+
+    def _profile_snapshot(self, profile: TransitionProfile) -> Dict[str, object]:
+        return {
+            "name": profile.name,
+            "duration": float(profile.duration),
+            "exit_duration": float(profile.exit_duration or 0.0),
+            "enter_duration": float(profile.enter_duration or 0.0),
+            "exit_behavior": profile.exit_behavior,
+            "enter_behavior": profile.enter_behavior,
+            "data": dict(profile.data),
+        }
+
+    def _rule_profile(self, rule: TransitionRule) -> TransitionProfile:
+        return rule.profile or self._profiles.get(rule.transition, self._profiles["instant"])
 
     def _parse_profiles(self, raw_profiles: Dict) -> Dict[str, TransitionProfile]:
         profiles = {
@@ -444,15 +499,59 @@ class RobotStateMachine(Generic[CtxT]):
         }
 
         for name, raw_profile in raw_profiles.items():
-            raw_profile = raw_profile or {}
-            profiles[name] = TransitionProfile(
-                name=name,
-                duration=float(raw_profile.get("duration", 0.0) or 0.0),
-                exit_behavior=raw_profile.get("exit_behavior", "hold_last_motor"),
-                enter_behavior=raw_profile.get("enter_behavior", "none"),
-            )
+            profiles[name] = self._build_transition_profile(name, raw_profile or {}, profiles["instant"])
 
         return profiles
+
+    def _build_transition_profile(
+        self,
+        name: str,
+        raw_profile: Dict[str, object],
+        base: TransitionProfile,
+    ) -> TransitionProfile:
+        has_duration = "duration" in raw_profile
+        has_side_duration = "exit_duration" in raw_profile or "enter_duration" in raw_profile
+        if has_duration:
+            duration = float(raw_profile.get("duration") or 0.0)
+        elif has_side_duration:
+            duration = 0.0
+        else:
+            duration = float(base.duration or 0.0)
+        exit_duration = self._optional_float(raw_profile.get("exit_duration"))
+        enter_duration = self._optional_float(raw_profile.get("enter_duration"))
+        if exit_duration is None:
+            exit_duration = duration if has_duration else float(base.exit_duration or 0.0)
+        if enter_duration is None:
+            enter_duration = duration if has_duration else float(base.enter_duration or 0.0)
+        data = self._merge_transition_data(base.data, raw_profile.get("data"))
+
+        return TransitionProfile(
+            name=name,
+            duration=duration,
+            exit_duration=exit_duration,
+            enter_duration=enter_duration,
+            exit_behavior=raw_profile.get("exit_behavior", base.exit_behavior),
+            enter_behavior=raw_profile.get("enter_behavior", base.enter_behavior),
+            data=data,
+        )
+
+    def _optional_float(self, value: object) -> Optional[float]:
+        if value is None:
+            return None
+        return float(value)
+
+    def _merge_transition_data(
+        self,
+        base_data: Dict[str, Any],
+        raw_data: object,
+    ) -> Dict[str, Any]:
+        data = dict(base_data or {})
+        if raw_data is None:
+            return data
+        if not isinstance(raw_data, dict):
+            raise ValueError(f"transition data must be a YAML map: {raw_data}")
+        data.update(raw_data)
+        return data
 
     def _parse_state_rules(self, states_config: Dict) -> Dict[str, List[TransitionRule]]:
         rules: Dict[str, List[TransitionRule]] = {}
@@ -462,13 +561,13 @@ class RobotStateMachine(Generic[CtxT]):
 
             transitions = (state_config or {}).get("transitions", {})
             state_rules: List[TransitionRule] = []
-            state_rules.extend(self._parse_event_rules(transitions.get("on_event", {})))
-            state_rules.extend(self._parse_after_rules(transitions.get("after", [])))
+            state_rules.extend(self._parse_event_rules(state_name, transitions.get("on_event", {})))
+            state_rules.extend(self._parse_after_rules(state_name, transitions.get("after", [])))
             rules[state_name] = state_rules
 
         return rules
 
-    def _parse_event_rules(self, raw_rules: Dict) -> List[TransitionRule]:
+    def _parse_event_rules(self, state_name: str, raw_rules: Dict) -> List[TransitionRule]:
         rules: List[TransitionRule] = []
         for event_name, raw_rule in raw_rules.items():
             if isinstance(raw_rule, str):
@@ -476,31 +575,96 @@ class RobotStateMachine(Generic[CtxT]):
                 continue
 
             raw_rule = raw_rule or {}
+            transition, profile = self._parse_transition_spec(
+                raw_rule.get("transition", "instant"),
+                raw_rule,
+                f"{state_name}.{event_name}",
+            )
             rules.append(
                 TransitionRule(
                     to_state=raw_rule.get("to"),
                     event=event_name,
                     delay=float(raw_rule.get("delay", 0.0) or 0.0),
                     action=raw_rule.get("action"),
-                    transition=raw_rule.get("transition", "instant"),
+                    transition=transition,
+                    profile=profile,
                 )
             )
         return rules
 
-    def _parse_after_rules(self, raw_rules: List[Dict]) -> List[TransitionRule]:
+    def _parse_after_rules(self, state_name: str, raw_rules: List[Dict]) -> List[TransitionRule]:
         rules: List[TransitionRule] = []
-        for raw_rule in raw_rules:
+        for index, raw_rule in enumerate(raw_rules):
             raw_rule = raw_rule or {}
             seconds = raw_rule.get("seconds", raw_rule.get("after"))
+            transition, profile = self._parse_transition_spec(
+                raw_rule.get("transition", "instant"),
+                raw_rule,
+                f"{state_name}.after[{index}]",
+            )
             rules.append(
                 TransitionRule(
                     to_state=raw_rule.get("to"),
                     after=float(seconds),
                     action=raw_rule.get("action"),
-                    transition=raw_rule.get("transition", "instant"),
+                    transition=transition,
+                    profile=profile,
                 )
             )
         return rules
+
+    def _parse_transition_spec(
+        self,
+        transition_spec: object,
+        raw_rule: Dict[str, object],
+        context: str,
+    ) -> Tuple[str, Optional[TransitionProfile]]:
+        profile_fields = {
+            "duration",
+            "exit_duration",
+            "enter_duration",
+            "exit_behavior",
+            "enter_behavior",
+            "data",
+        }
+        inline_overrides = {
+            key: raw_rule[key]
+            for key in profile_fields
+            if key in raw_rule
+        }
+
+        if isinstance(transition_spec, dict):
+            raw_profile = dict(transition_spec)
+            base_name = raw_profile.pop("profile", None)
+            if base_name is None:
+                base_name = raw_profile.pop("base", None)
+            if base_name is None:
+                base_name = raw_profile.pop("extends", "instant")
+            base_name = str(base_name)
+            base = self._profiles.get(base_name)
+            if base is None:
+                raise ValueError(f"transition '{context}' references unknown base profile '{base_name}'")
+            inline_name = str(raw_profile.pop("name", f"inline:{context}"))
+            merged_data = None
+            if "data" in raw_profile and "data" in inline_overrides:
+                merged_data = self._merge_transition_data(
+                    TransitionProfile._copy_data(raw_profile["data"]),
+                    inline_overrides["data"],
+                )
+            raw_profile.update(inline_overrides)
+            if merged_data is not None:
+                raw_profile["data"] = merged_data
+            return inline_name, self._build_transition_profile(inline_name, raw_profile, base)
+
+        transition_name = str(transition_spec or "instant")
+        if not inline_overrides:
+            return transition_name, None
+
+        base = self._profiles.get(transition_name)
+        if base is None:
+            raise ValueError(f"transition '{context}' references unknown profile '{transition_name}'")
+        inline_name = f"{transition_name}@{context}"
+        return inline_name, self._build_transition_profile(inline_name, inline_overrides, base)
 
     def _graph_config(self) -> Dict:
         graph_config = self._config.get("graph", {}) or {}
@@ -548,7 +712,7 @@ class RobotStateMachine(Generic[CtxT]):
                     "error",
                     f"state '{from_state}' transition '{label}' targets unknown state '{to_state}'",
                 ))
-            if rule.transition not in self._profiles:
+            if rule.profile is None and rule.transition not in self._profiles:
                 diagnostics.append(GraphDiagnostic(
                     "error",
                     f"state '{from_state}' transition '{label}' references unknown profile '{rule.transition}'",

@@ -42,6 +42,7 @@ RobotStateMachine
 - 遥控器节点：`src/remote_controller/src/main.cpp`
 - 状态机配置：`src/bxi_example_py_elf3/config/elf3_state_machine.yaml`
 - 状态机引擎：`src/bxi_example_py_elf3/bxi_example_py_elf3/state_machine.py`
+- 机器人状态基类：`src/bxi_example_py_elf3/bxi_example_py_elf3/robot_state_base.py`
 - 机器人状态类：`src/bxi_example_py_elf3/bxi_example_py_elf3/robot_states.py`
 
 `remote_controller` 的核心解析、输入驱动和映射代码已经做成 `remote_controller_core` 库。以后写 CRSF、串口、UDP，可以新增 `InputDriver`，也可以单独写节点复用 `RemoteConfig` 和 `InputMapper`。
@@ -633,6 +634,14 @@ if (payload_changed(msg)) {
 src/bxi_example_py_elf3/bxi_example_py_elf3/robot_states.py
 ```
 
+机器人状态基类放在：
+
+```text
+src/bxi_example_py_elf3/bxi_example_py_elf3/robot_state_base.py
+```
+
+通常新增状态只改 `robot_states.py`。`robot_state_base.py` 只放所有状态共享的机器人控制逻辑，例如 `RobotControlState`、`get_first_frame(ctx)` 的默认行为、进入过渡时的 `first_frame_ramp_kp` 执行逻辑。
+
 状态机配置在：
 
 ```text
@@ -690,11 +699,21 @@ graph:
 
 `transition_profiles`：
 
-- `transition_profiles.<profile>.duration`：过渡时长，单位秒。`0.0` 表示立即切换。
+- `transition_profiles.<profile>.duration`：过渡时长，单位秒。`0.0` 表示立即切换。只写 `duration` 时，`exit_duration` 和 `enter_duration` 都等于它。
+- `transition_profiles.<profile>.exit_duration`：旧状态退出过渡时长。旧状态的 `on_exit_transition(..., progress, ...)` 按这个时长计算 `progress`。
+- `transition_profiles.<profile>.enter_duration`：新状态进入过渡时长。新状态的 `on_enter_transition(..., progress, ...)` 按这个时长计算 `progress`。
 - `transition_profiles.<profile>.exit_behavior`：过渡期间旧状态默认行为。
 - `transition_profiles.<profile>.enter_behavior`：过渡期间新状态默认行为。
+- `transition_profiles.<profile>.data`：过渡私有数据，必须是 map。状态机不理解里面的字段，只负责透传给 `on_exit_transition()` / `on_enter_transition()`。
 - `hold_last_motor`：保持上一帧电机目标。
 - `none`：不做额外处理。
+- `first_frame_ramp_kp`：进入新状态时，目标角度固定为新状态 `get_first_frame(ctx)` 返回的第一帧角度，`kp` 按 `enter_progress` 从 `data.kp_start` 缓慢变化到第一帧 `kp`，`kd` 按 `data.kd_start` 变化到第一帧 `kd`。如果目标状态没有实现 `get_first_frame(ctx)`，会退回保持上一帧电机目标。
+- `first_frame_ramp_kp` 的 `data.kp_start`：可选 `current`、`target`、`zero`，默认 `current`。
+- `first_frame_ramp_kp` 的 `data.kd_start`：可选 `current`、`target`、`zero`，默认 `target`。
+
+状态机实际过渡总时长是 `duration`、`exit_duration`、`enter_duration` 的最大值。这样可以让旧状态先完成退出，新状态继续进入，或者反过来。
+
+从已有 profile 继承时，如果只覆盖 `exit_duration` 或 `enter_duration`，并且不写 `duration`，总过渡时长会用覆盖后的两侧时长重新计算。需要保留一个更长的总过渡时间时，显式写 `duration`。
 
 `speed_profiles`：
 
@@ -704,23 +723,110 @@ graph:
 - `speed_profiles.<profile>.vy_scale`：`vel_des.y` 倍率。
 - `speed_profiles.<profile>.yaw_scale`：`yawdot_des` 倍率。
 
+速度 profile 只会通过 `states.<state>.speed_profile` 显式引用，不会按状态名自动匹配。状态没有写 `speed_profile` 时，遥控器速度输入会被清零；写了不存在的 profile 名时，也会清零速度，并且节点会输出一次 warning。
+
 `states`：
 
 - `states.<state>.behavior`：状态类名，必须在 `robot_states.py` 中存在。
 - `states.<state>.id`：可选固定数字 ID。通常不要写，不写时按 YAML 顺序自动分配。
 - `states.<state>.params`：可选构造参数，会作为关键字参数传给状态类。
-- `states.<state>.speed_profile`：可选速度 profile 名。
+- `states.<state>.speed_profile`：可选速度 profile 名，必须指向 `speed_profiles` 下的某个 key。没有配置时，该状态不接收遥控器速度控制，内部 `vx / vy / dyaw` 会被置为 `0`。
 - `states.<state>.transitions.on_event`：事件触发转移表。
 - `states.<state>.transitions.on_event.<event>: <target>`：简写，立即切换。
 - `states.<state>.transitions.on_event.<event>.to`：目标状态。
 - `states.<state>.transitions.on_event.<event>.transition`：过渡 profile，默认 `instant`。
+- `states.<state>.transitions.on_event.<event>.duration`：内联过渡总时长，不需要先在 `transition_profiles` 里定义 profile。
+- `states.<state>.transitions.on_event.<event>.exit_duration`：内联旧状态退出过渡时长。
+- `states.<state>.transitions.on_event.<event>.enter_duration`：内联新状态进入过渡时长。
+- `states.<state>.transitions.on_event.<event>.exit_behavior`：内联旧状态退出行为。
+- `states.<state>.transitions.on_event.<event>.enter_behavior`：内联新状态进入行为。
+- `states.<state>.transitions.on_event.<event>.data`：内联过渡私有数据，会合并到最终 `TransitionProfile.data`。
 - `states.<state>.transitions.on_event.<event>.delay`：延迟多少秒后执行。
 - `states.<state>.transitions.on_event.<event>.action`：只执行 action，不切换状态。
 - `states.<state>.transitions.after`：进入该状态后自动触发的规则列表。
 - `states.<state>.transitions.after[].seconds`：进入该状态多少秒后触发；也支持写成 `after`。
 - `states.<state>.transitions.after[].to`：自动转移目标状态。
 - `states.<state>.transitions.after[].transition`：自动转移使用的过渡 profile。
+- `states.<state>.transitions.after[].duration / exit_duration / enter_duration / exit_behavior / enter_behavior / data`：和 `on_event` 下的内联过渡字段相同。
 - `states.<state>.transitions.after[].action`：到时只执行 action，不切换状态。
+
+常用过渡可以继续定义成 profile：
+
+```yaml
+transition_profiles:
+  soft_switch:
+    duration: 0.02
+    exit_behavior: hold_last_motor
+    enter_behavior: hold_last_motor
+
+  first_frame_switch:
+    exit_duration: 0.02
+    enter_duration: 0.20
+    exit_behavior: hold_last_motor
+    enter_behavior: first_frame_ramp_kp
+    data:
+      kp_start: current
+      kd_start: target
+
+states:
+  normal:
+    transitions:
+      on_event:
+        dance:
+          to: dance
+          transition: soft_switch
+```
+
+个别状态可以直接内联写，不需要专门新增一个 profile：
+
+```yaml
+states:
+  normal:
+    transitions:
+      on_event:
+        hello:
+          to: hello
+          exit_duration: 0.02
+          enter_duration: 0.12
+          exit_behavior: hold_last_motor
+          enter_behavior: first_frame_ramp_kp
+          data:
+            kp_start: current
+            kd_start: target
+```
+
+也可以把 `transition` 写成 map，必要时从已有 profile 继承：
+
+```yaml
+states:
+  normal:
+    transitions:
+      on_event:
+        applause:
+          to: applause
+          transition:
+            base: soft_switch
+            enter_duration: 0.10
+```
+
+Python 代码主动切换状态时也可以传同样的内联 transition：
+
+```python
+ctx.request_state(
+    "hello",
+    trigger="code",
+    transition={
+        "exit_duration": 0.02,
+        "enter_duration": 0.12,
+        "exit_behavior": "hold_last_motor",
+        "enter_behavior": "first_frame_ramp_kp",
+        "data": {
+            "kp_start": "current",
+            "kd_start": "target",
+        },
+    },
+)
+```
 
 ### 5.2 状态生命周期
 
@@ -746,6 +852,9 @@ class MyState(RobotControlState):
     def on_enter_transition(self, ctx, from_state, progress, transition):
         pass
 
+    def get_first_frame(self, ctx):
+        return None
+
     def on_action(self, ctx, action_name):
         return False
 ```
@@ -757,13 +866,19 @@ class MyState(RobotControlState):
   -> 旧状态.on_exit()
   -> 新状态.on_prepare_enter()
   -> 过渡期间每个控制周期:
-       旧状态.on_exit_transition(progress)
-       新状态.on_enter_transition(progress)
+       旧状态.on_exit_transition(exit_progress)
+       新状态.on_enter_transition(enter_progress)
   -> 新状态.on_enter()
   -> 新状态.on_update()
 ```
 
-如果 `duration: 0.0`，状态机会直接进入新状态，不跑逐帧过渡钩子。
+`exit_progress` 按 `exit_duration` 计算，`enter_progress` 按 `enter_duration` 计算。如果某一侧 duration 为 `0.0`，对应 progress 直接是 `1.0`。如果总 `duration` 为 `0.0`，状态机会直接进入新状态，不跑逐帧过渡钩子。
+
+`get_first_frame(ctx)` 是给 `first_frame_ramp_kp` 用的可选接口。需要这个进入过渡效果的状态，返回 `(qpos, kp, kd)`；不需要时返回 `None` 或不重写。状态内部可以自由决定“第一帧”是什么，例如动作数据的起始帧、预热模型后的第一帧输出，或者某个固定姿态。
+
+自定义过渡行为不要把私有字段加到 `state_machine.py`。把行为需要的参数放进 YAML 的 `data`，然后在状态类里通过 `transition.data` 读取，例如 `transition.data.get("kp_start", "current")`。这样状态机库只负责调度和透传，不关心具体机器人控制策略。
+
+如果状态重写了 `on_prepare_enter()` 或 `on_exit()`，并且还想使用 `RobotControlState` 默认的第一帧缓存清理逻辑，先调用对应的 `super()`。
 
 ### 5.3 状态机信息话题
 
@@ -780,7 +895,7 @@ ros2 topic echo /simulation/state_machine_info
 - `mode`：`state`、`pending` 或 `transition`。
 - `current`：当前状态的 `name`、`id` 和已运行时间 `elapsed`。
 - `pending`：延迟切换中的目标、触发源、延迟时间和进度；没有延迟切换时为 `null`。
-- `transition`：正在执行的过渡，包括 `from`、`to`、`profile`、`trigger`、`elapsed`、`duration`、`progress`。
+- `transition`：正在执行的过渡，包括 `from`、`to`、`profile`、`trigger`、`elapsed`、`duration`、`progress`、`exit_duration`、`exit_progress`、`enter_duration`、`enter_progress`、`data`。
 - `events`：本控制周期从遥控器解析到的状态机事件。
 - `cmd_vel`：当前业务层使用的速度命令。
 - `graph`：状态列表、过渡 profile、遥控事件名和状态转移边，方便外部工具画状态图或做调试 UI。
@@ -810,6 +925,13 @@ class WaveState(RobotControlState):
             ctx.current_omega,
         )
         ctx.set_motor_target(qpos, ctx.dance.stiffness_array, ctx.dance.damping_array)
+
+    def get_first_frame(self, ctx):
+        return (
+            ctx.dance.target_dof_pos,
+            ctx.dance.stiffness_array,
+            ctx.dance.damping_array,
+        )
 ```
 
 注册状态：
