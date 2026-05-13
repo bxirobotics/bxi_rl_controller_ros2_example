@@ -169,6 +169,22 @@ class RobotStateMachine:
     def in_transition(self) -> bool:
         return self._active is not None
 
+    def snapshot(self, include_graph: bool = False) -> Dict[str, object]:
+        data: Dict[str, object] = {
+            "mode": self._runtime_mode(),
+            "current": {
+                "name": self.current.name,
+                "id": self.current.state_id,
+                "elapsed": float(self.state_elapsed),
+            },
+            "in_transition": self._active is not None,
+            "transition": self._active_snapshot(),
+            "pending": self._pending_snapshot(),
+        }
+        if include_graph:
+            data["graph"] = self._graph_snapshot()
+        return data
+
     def update(self, dt: float, events: Iterable[str]) -> bool:
         if self._active is not None:
             self._update_active_transition(dt)
@@ -322,6 +338,97 @@ class RobotStateMachine:
             return
 
         raise ValueError(f"state machine action has no handler: {action_name}")
+
+    def _runtime_mode(self) -> str:
+        if self._active is not None:
+            return "transition"
+        if self._pending is not None:
+            return "pending"
+        return "state"
+
+    def _active_snapshot(self) -> Optional[Dict[str, object]]:
+        if self._active is None:
+            return None
+
+        duration = float(self._active.profile.duration)
+        if duration <= 0.0:
+            progress = 1.0
+        else:
+            progress = min(float(self._active.elapsed) / duration, 1.0)
+
+        return {
+            "from": {
+                "name": self._active.from_state.name,
+                "id": self._active.from_state.state_id,
+            },
+            "to": {
+                "name": self._active.to_state.name,
+                "id": self._active.to_state.state_id,
+            },
+            "profile": self._active.profile.name,
+            "trigger": self._active.trigger,
+            "elapsed": float(self._active.elapsed),
+            "duration": duration,
+            "progress": progress,
+            "exit_behavior": self._active.profile.exit_behavior,
+            "enter_behavior": self._active.profile.enter_behavior,
+        }
+
+    def _pending_snapshot(self) -> Optional[Dict[str, object]]:
+        if self._pending is None:
+            return None
+
+        delay = float(self._pending.rule.delay)
+        if delay <= 0.0:
+            progress = 1.0
+        else:
+            progress = min(float(self._pending.elapsed) / delay, 1.0)
+
+        return {
+            "to": self._pending.rule.to_state,
+            "event": self._pending.rule.event,
+            "after": self._pending.rule.after,
+            "trigger": self._pending.trigger,
+            "elapsed": float(self._pending.elapsed),
+            "delay": delay,
+            "progress": progress,
+            "action": self._pending.rule.action,
+            "transition": self._pending.rule.transition,
+        }
+
+    def _graph_snapshot(self) -> Dict[str, object]:
+        return {
+            "states": [
+                {
+                    "name": state.name,
+                    "id": state.state_id,
+                    "behavior": state.__class__.__name__,
+                }
+                for state in self._states.values()
+            ],
+            "transition_profiles": {
+                name: {
+                    "duration": float(profile.duration),
+                    "exit_behavior": profile.exit_behavior,
+                    "enter_behavior": profile.enter_behavior,
+                }
+                for name, profile in self._profiles.items()
+            },
+            "remote_events": list((self._config.get("remote_events", {}) or {}).keys()),
+            "transitions": [
+                {
+                    "from": from_state,
+                    "to": to_state,
+                    "label": label,
+                    "event": rule.event,
+                    "after": rule.after,
+                    "delay": float(rule.delay),
+                    "action": rule.action,
+                    "transition": rule.transition,
+                }
+                for from_state, to_state, label, rule in self._graph_edges()
+            ],
+        }
 
     def _parse_profiles(self, raw_profiles: Dict) -> Dict[str, TransitionProfile]:
         profiles = {

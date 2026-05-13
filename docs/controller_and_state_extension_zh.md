@@ -755,7 +755,27 @@ class MyState(RobotControlState):
 
 如果 `duration: 0.0`，状态机会直接进入新状态，不跑逐帧过渡钩子。
 
-### 5.3 新增状态示例
+### 5.3 状态机信息话题
+
+`bxi_example_demo.py` 会把状态机运行信息发布成 JSON 字符串：
+
+```bash
+ros2 topic echo /simulation/state_machine_info
+```
+
+默认话题名是 `<topic_prefix>state_machine_info`，例如 launch 里 `/topic_prefix: simulation/` 时就是 `/simulation/state_machine_info`。可以用参数 `/state_machine_info_topic` 覆盖话题名，用 `/state_machine_info_hz` 调整发布频率；频率小于等于 `0` 时关闭发布。
+
+消息类型是 `std_msgs/msg/String`，`data` 字段是 JSON。主要字段：
+
+- `mode`：`state`、`pending` 或 `transition`。
+- `current`：当前状态的 `name`、`id` 和已运行时间 `elapsed`。
+- `pending`：延迟切换中的目标、触发源、延迟时间和进度；没有延迟切换时为 `null`。
+- `transition`：正在执行的过渡，包括 `from`、`to`、`profile`、`trigger`、`elapsed`、`duration`、`progress`。
+- `events`：本控制周期从遥控器解析到的状态机事件。
+- `cmd_vel`：当前业务层使用的速度命令。
+- `graph`：状态列表、过渡 profile、遥控事件名和状态转移边，方便外部工具画状态图或做调试 UI。
+
+### 5.4 新增状态示例
 
 新增 `WaveState`：
 
@@ -820,7 +840,7 @@ outputs:
       when: [mode.switch=high]
 ```
 
-### 5.4 action
+### 5.5 action
 
 如果配置里写：
 
