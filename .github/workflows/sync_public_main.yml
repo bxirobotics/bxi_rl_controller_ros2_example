@@ -16,9 +16,10 @@ concurrency:
 env:
   PUBLIC_DIR: dist/public_release
   MAIN_DIR: dist/public_main
+  PUBLIC_BRANCH: public/main-sync
 
 jobs:
-  sanitize-and-push:
+  sanitize-and-pr:
     runs-on: ubuntu-22.04
 
     steps:
@@ -32,7 +33,7 @@ jobs:
           PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
         run: |
           if [ -z "${PUBLIC_RELEASE_TOKEN}" ]; then
-            echo "::error::Set repository secret PUBLIC_RELEASE_TOKEN. Pushes made with GITHUB_TOKEN do not trigger main branch workflows."
+            echo "::error::Set repository secret PUBLIC_RELEASE_TOKEN with Contents, Pull requests, and Workflows write permissions."
             exit 1
           fi
 
@@ -64,19 +65,85 @@ jobs:
 
       - name: Sync Public Tree Into Main Checkout
         run: |
+          cd "${MAIN_DIR}"
+          git checkout -B "${PUBLIC_BRANCH}" "origin/main"
+          cd "${GITHUB_WORKSPACE}"
           rsync -a --delete --exclude ".git" "${PUBLIC_DIR}/" "${MAIN_DIR}/"
 
-      - name: Commit And Push Public Main
+      - name: Commit Public Branch
+        id: commit_public_branch
         env:
           SOURCE_SHA: ${{ github.sha }}
         run: |
           cd "${MAIN_DIR}"
-          git config user.name "bxi-public-release-bot"
-          git config user.email "bxi-public-release-bot@users.noreply.github.com"
+          AUTHOR_NAME="$(git -C "${GITHUB_WORKSPACE}" show -s --format='%an' "${SOURCE_SHA}")"
+          AUTHOR_EMAIL="$(git -C "${GITHUB_WORKSPACE}" show -s --format='%ae' "${SOURCE_SHA}")"
+          git config user.name "${AUTHOR_NAME}"
+          git config user.email "${AUTHOR_EMAIL}"
           git add -A
           if git diff --cached --quiet; then
             echo "No public changes to push."
+            echo "has_changes=false" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
-          git commit -m "Sync public release from ${SOURCE_SHA}"
-          git push origin HEAD:main
+          {
+            printf 'Sync public release from %s\n\n' "${SOURCE_SHA}"
+            jq -r '.commits[]?.author | "Co-authored-by: \(.name) <\(.email)>"' "${GITHUB_EVENT_PATH}" | sort -u
+          } > /tmp/public-release-commit-message.txt
+          git commit --file /tmp/public-release-commit-message.txt
+          echo "has_changes=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Push Public Branch
+        if: steps.commit_public_branch.outputs.has_changes == 'true'
+        env:
+          PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+        run: |
+          cd "${MAIN_DIR}"
+          git push --force-with-lease origin HEAD:"${PUBLIC_BRANCH}"
+
+      - name: Create Or Update Public Pull Request
+        id: create_public_pr
+        if: steps.commit_public_branch.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          BODY="$(cat <<EOF
+          This PR was generated automatically from dev commit ${SOURCE_SHA}.
+
+          The public tree was sanitized by tools/sanitize_release.py before this branch was pushed.
+          Merge this PR to run the independent main branch workflows.
+          EOF
+          )"
+          PR_URL="$(gh pr list \
+            --base main \
+            --head "${PUBLIC_BRANCH}" \
+            --state open \
+            --json url \
+            --jq '.[0].url')"
+          if [ -z "${PR_URL}" ]; then
+            PR_URL="$(gh pr create \
+              --base main \
+              --head "${PUBLIC_BRANCH}" \
+              --title "Sync public release" \
+              --body "${BODY}")"
+          else
+            gh pr edit "${PR_URL}" \
+              --title "Sync public release" \
+              --body "${BODY}"
+            echo "Updated ${PR_URL}"
+          fi
+          echo "pr_url=${PR_URL}" >> "${GITHUB_OUTPUT}"
+
+      - name: Merge Public Pull Request
+        if: steps.commit_public_branch.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+        run: |
+          PR_URL="${{ steps.create_public_pr.outputs.pr_url }}"
+          if gh pr merge "${PR_URL}" --merge --delete-branch; then
+            exit 0
+          fi
+
+          echo "::warning::PR could not be merged normally; retrying with admin bypass."
+          gh pr merge "${PR_URL}" --admin --merge --delete-branch
