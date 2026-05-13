@@ -17,7 +17,7 @@ import os
 import math
 import json
 from collections import deque
-from std_msgs.msg import Header
+from std_msgs.msg import Header, String
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
@@ -216,6 +216,7 @@ class BxiExample(Node):
         # 定时器初始化
         self.step = 0
         self.dt = 0.02  # loop @100Hz
+        self.state_machine_info_elapsed = 0.0
         self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
 
     def load_files(self):
@@ -236,6 +237,12 @@ class BxiExample(Node):
         self.state_machine_config_path = self.get_parameter('/state_machine_config').value
         self.state_machine_config = load_state_machine_config(self.state_machine_config_path)
 
+        self.declare_parameter('/state_machine_info_topic', '')
+        self.state_machine_info_topic = self.get_parameter('/state_machine_info_topic').get_parameter_value().string_value
+
+        self.declare_parameter('/state_machine_info_hz', 10.0)
+        self.state_machine_info_hz = float(self.get_parameter('/state_machine_info_hz').value)
+
     def default_state_machine_config_path(self):
         try:
             package_share = get_package_share_directory("bxi_example_py_elf3")
@@ -253,6 +260,8 @@ class BxiExample(Node):
         qos = QoSProfile(depth=1, durability=qos_profile_sensor_data.durability, reliability=qos_profile_sensor_data.reliability)
 
         self.act_pub = self.create_publisher(bxiMsg.ActuatorCmds, self.topic_prefix+'actuators_cmds', qos)  # CHANGE
+        state_machine_info_topic = self.state_machine_info_topic or (self.topic_prefix + 'state_machine_info')
+        self.state_machine_info_pub = self.create_publisher(String, state_machine_info_topic, 10)
 
         self.odom_sub = self.create_subscription(nav_msgs.msg.Odometry, self.topic_prefix+'odom', self.odom_callback, qos)
         # self.joint_sub = self.create_subscription(sensor_msgs.msg.JointState, self.topic_prefix+'joint_states', self.joint_callback, qos)
@@ -272,6 +281,7 @@ class BxiExample(Node):
 
     def timer_callback(self):
         # ptyhon 与 rclpy 多线程不太友好，这里使用定时间+简易状态机运行a
+        events = []
         if self.step == 0:
             self.robot_reset(1, False) # first reset
             print('robot reset 1!')
@@ -311,6 +321,7 @@ class BxiExample(Node):
                 self.send_to_motor(qpos, kp, kd)
 
         self.loop_count += 1
+        self.publish_state_machine_info_if_due(events)
 
     def send_to_motor(self, dof_pos_target, joint_kp, joint_kd):
         msg = bxiMsg.ActuatorCmds()
@@ -323,6 +334,43 @@ class BxiExample(Node):
         msg.kp = joint_kp.tolist()
         msg.kd = joint_kd.tolist()
         self.act_pub.publish(msg)
+
+    def publish_state_machine_info_if_due(self, events):
+        if self.state_machine_info_hz <= 0.0:
+            return
+
+        self.state_machine_info_elapsed += self.dt
+        period = 1.0 / self.state_machine_info_hz
+        if self.state_machine_info_elapsed + 1e-9 < period:
+            return
+
+        self.state_machine_info_elapsed = 0.0
+        self.publish_state_machine_info(events)
+
+    def publish_state_machine_info(self, events):
+        now = self.get_clock().now()
+        current_cmd_vel = self.current_cmd_vel.tolist()
+        info = self.state_machine.snapshot(include_graph=True)
+        info.update(
+            {
+                "stamp": {
+                    "sec": int(now.nanoseconds // 1000000000),
+                    "nanosec": int(now.nanoseconds % 1000000000),
+                },
+                "step": int(self.step),
+                "loop_count": int(self.loop_count),
+                "events": list(events),
+                "cmd_vel": {
+                    "x": float(current_cmd_vel[0]),
+                    "y": float(current_cmd_vel[1]),
+                    "yaw": float(current_cmd_vel[2]),
+                },
+            }
+        )
+
+        msg = String()
+        msg.data = json.dumps(info, ensure_ascii=False, sort_keys=True)
+        self.state_machine_info_pub.publish(msg)
 
     def robot_reset(self, reset_step, release):
         req = bxiSrv.RobotReset.Request()
