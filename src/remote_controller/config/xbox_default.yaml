@@ -1,0 +1,282 @@
+sources:
+  gamepad:
+    type: joystick
+    device: /dev/input/js0
+    signals:
+      gamepad.left_y:
+        from: js.axis.3
+        timeout_ms: 1000
+        failsafe: 0.0
+      gamepad.left_x:
+        from: js.axis.0
+        timeout_ms: 1000
+        failsafe: 0.0
+      gamepad.yaw:
+        from: js.axis.6
+        timeout_ms: 1000
+        failsafe: 0.0
+      gamepad.trigger_left:
+        from: js.axis.5
+      gamepad.trigger_right:
+        from: js.axis.4
+      gamepad.stop:
+        from: js.button.11
+      gamepad.start:
+        from: js.button.14
+      gamepad.lb:
+        from: js.button.6
+      gamepad.rb:
+        from: js.button.7
+      gamepad.a:
+        from: js.button.0
+      gamepad.b:
+        from: js.button.1
+      gamepad.x:
+        from: js.button.3
+      gamepad.y:
+        from: js.button.4
+  keyboard:
+    type: keyboard
+    poll_timeout_us: 20000
+    hold_ms: 200
+    stop: space
+    signals:
+      keyboard.vx:
+        from: keyboard.axis
+        negative: s
+        positive: w
+      keyboard.vy:
+        from: keyboard.axis
+        negative: d
+        positive: a
+      keyboard.yaw:
+        from: keyboard.axis
+        negative: e
+        positive: q
+      keyboard.normal:
+        from: keyboard.key
+        key: '1'
+        hold_ms: 200
+      keyboard.recover:
+        from: keyboard.key
+        key: '2'
+      keyboard.dance:
+        from: keyboard.key
+        key: '3'
+      keyboard.amp_run:
+        from: keyboard.key
+        key: '4'
+      keyboard.normal_run:
+        from: keyboard.key
+        key: '5'
+      keyboard.applause:
+        from: keyboard.key
+        key: '8'
+      keyboard.hello:
+        from: keyboard.key
+        key: '9'
+curves:
+  stick:
+    type: expo
+    deadzone: 0.03
+    expo: 0.0
+    limit:
+    - -1.0
+    - 1.0
+    calibration:
+      input:
+      - -1.0
+      - 0.0
+      - 1.0
+      output:
+      - -1.0
+      - 0.0
+      - 1.0
+controls:
+  move.vx:
+    type: analog
+    mix: max_abs
+    sources:
+    - source: gamepad.left_y
+      direction: -1
+      curve: stick
+    - source: keyboard.vx
+    deadzone: 0.03
+    min: -1.0
+    max: 1.0
+    alpha: 0.03
+  move.vy:
+    type: analog
+    mix: max_abs
+    sources:
+    - source: gamepad.left_x
+      direction: -1
+      curve: stick
+    - source: keyboard.vy
+    deadzone: 0.03
+    min: -1.0
+    max: 1.0
+    alpha: 0.03
+  move.yaw:
+    type: analog
+    mix: max_abs
+    sources:
+    - source: gamepad.yaw
+      direction: -1
+      curve: stick
+    - source: keyboard.yaw
+    deadzone: 0.03
+    min: -1.0
+    max: 1.0
+    alpha: 0.05
+  system.stop:
+    type: bool
+    source: gamepad.stop
+  system.start:
+    type: bool
+    source: gamepad.start
+  shoulder.left:
+    type: bool
+    source: gamepad.lb
+  shoulder.right:
+    type: bool
+    source: gamepad.rb
+  button.south:
+    type: bool
+    source: gamepad.a
+  button.east:
+    type: bool
+    source: gamepad.b
+  button.west:
+    type: bool
+    source: gamepad.x
+  button.north:
+    type: bool
+    source: gamepad.y
+  trigger.left:
+    type: bool
+    source: gamepad.trigger_left
+    threshold: 0.85
+    hysteresis: 0.05
+  trigger.right:
+    type: bool
+    source: gamepad.trigger_right
+    threshold: 0.85
+    hysteresis: 0.05
+  keyboard.normal:
+    type: bool
+    source: keyboard.normal
+  keyboard.recover:
+    type: bool
+    source: keyboard.recover
+  keyboard.dance:
+    type: bool
+    source: keyboard.dance
+  keyboard.amp_run:
+    type: bool
+    source: keyboard.amp_run
+  keyboard.normal_run:
+    type: bool
+    source: keyboard.normal_run
+  keyboard.applause:
+    type: bool
+    source: keyboard.applause
+  keyboard.hello:
+    type: bool
+    source: keyboard.hello
+outputs:
+  conflict_policy: first_wins
+  publish_on_change: true
+  analog:
+    vx: move.vx
+    vy: move.vy
+    yaw: move.yaw
+  edge:
+  - output: system.stop
+    when:
+    - system.stop
+  - output: system.start
+    when:
+    - system.start
+  level:
+  - output: btn_1=1
+    when:
+      any:
+      - - shoulder.right
+        - button.west
+      - - keyboard.normal
+  - output: btn_2=1
+    when:
+    - shoulder.right
+    - button.south
+  - output: btn_3=1
+    when:
+    - shoulder.right
+    - button.east
+  - output: btn_4=1
+    when:
+    - shoulder.right
+    - button.north
+  - output: btn_5=1
+    when:
+      any:
+      - - shoulder.left
+        - button.west
+      - - keyboard.dance
+  - output: btn_6=1
+    when:
+      any:
+      - - shoulder.left
+        - button.south
+      - - keyboard.recover
+  - output: btn_7=1
+    when:
+      any:
+      - - shoulder.left
+        - button.east
+      - - keyboard.normal_run
+  - output: btn_8=1
+    when:
+      any:
+      - - shoulder.left
+        - button.north
+      - - keyboard.amp_run
+  - output: btn_9=1
+    when:
+    - button.west
+    - released: shoulder.left
+    - released: shoulder.right
+    - released: trigger.left
+    - released: trigger.right
+  - output: btn_10=3
+    when:
+      any:
+      - - trigger.right
+        - button.east
+      - - keyboard.applause
+  - output: btn_10=4
+    when:
+      any:
+      - - trigger.right
+        - button.south
+      - - keyboard.hello
+system:
+  start:
+  - mkdir -p /var/log/bxi_log
+  - ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py > /var/log/bxi_log/$(date
+    +%Y-%m-%d_%H-%M-%S)_elf.log 2>&1 &
+  - ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log
+    2>&1 &
+  stop:
+  - killall -SIGINT hardware_elf3
+  - killall -SIGINT bxi_example_py_elf3
+  - killall -SIGINT bxi_example_py_elf3_demo
+  - killall -SIGINT bxi_bms
+  - killall -SIGINT bxi_example_bms
+system_mutexes:
+  robot_process:
+    acquire: start
+    release: stop
+system_reset_motion_after:
+- start
+- stop
