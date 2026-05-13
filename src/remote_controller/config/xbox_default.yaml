@@ -23,9 +23,9 @@ sources:
     hold_ms: 200
     stop: space
     signals:
-      keyboard.vx: {from: keyboard.axis, negative: w, positive: s}
-      keyboard.vy: {from: keyboard.axis, negative: q, positive: e}
-      keyboard.yaw: {from: keyboard.axis, negative: a, positive: d}
+      keyboard.vx: {from: keyboard.axis, negative: s, positive: w}
+      keyboard.vy: {from: keyboard.axis, negative: d, positive: a}
+      keyboard.yaw: {from: keyboard.axis, negative: e, positive: q}
       keyboard.normal: {from: keyboard.key, key: "1", hold_ms: 200}
       keyboard.recover: {from: keyboard.key, key: "2"}
       keyboard.dance: {from: keyboard.key, key: "3"}
