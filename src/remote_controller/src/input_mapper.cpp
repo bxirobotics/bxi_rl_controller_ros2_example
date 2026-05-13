@@ -9,6 +9,8 @@
 #include <string>
 #include <utility>
 
+#include "remote_controller/motion_commands_adapter.hpp"
+
 namespace remote_controller {
 namespace {
 
@@ -254,14 +256,14 @@ void InputMapper::fill_message(communication::msg::MotionCommands &message)
     bool height_written = false;
     for (const auto &output : config_.analog_outputs) {
         const double value = read_analog_output(output);
-        if (set_message_field(message, output.field, value) && output.field == "height_des") {
+        if (set_motion_command_field(message, output.field, value) && output.field == "height_des") {
             height_written = true;
         }
     }
 
     for (int slot = 1; slot <= kButtonSlotCount; ++slot) {
         const int value = edge_pulse_slots_[slot] != 0 ? edge_pulse_slots_[slot] : output_slots_[slot];
-        set_button_slot(message, slot, value);
+        set_motion_command_button_slot(message, slot, value);
         edge_pulse_slots_[slot] = 0;
     }
 
@@ -684,52 +686,6 @@ double InputMapper::read_analog_control(const std::string &control) const
         return 0.0;
     }
     return control_it->second.analog;
-}
-
-bool InputMapper::set_message_field(
-    communication::msg::MotionCommands &message,
-    const std::string &field,
-    double value)
-{
-    const float float_value = static_cast<float>(value);
-    if (field == "vel_des.x") {
-        message.vel_des.x = float_value;
-        return true;
-    }
-    if (field == "vel_des.y") {
-        message.vel_des.y = float_value;
-        return true;
-    }
-    if (field == "vel_des.z") {
-        message.vel_des.z = float_value;
-        return true;
-    }
-    if (field == "yawdot_des") {
-        message.yawdot_des = float_value;
-        return true;
-    }
-    if (field == "height_des") {
-        message.height_des = float_value;
-        return true;
-    }
-    return false;
-}
-
-void InputMapper::set_button_slot(communication::msg::MotionCommands &message, int slot, int value)
-{
-    switch (slot) {
-    case 1: message.btn_1 = value; break;
-    case 2: message.btn_2 = value; break;
-    case 3: message.btn_3 = value; break;
-    case 4: message.btn_4 = value; break;
-    case 5: message.btn_5 = value; break;
-    case 6: message.btn_6 = value; break;
-    case 7: message.btn_7 = value; break;
-    case 8: message.btn_8 = value; break;
-    case 9: message.btn_9 = value; break;
-    case 10: message.btn_10 = value; break;
-    default: break;
-    }
 }
 
 }  // namespace remote_controller

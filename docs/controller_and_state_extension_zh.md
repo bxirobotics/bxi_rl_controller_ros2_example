@@ -409,6 +409,8 @@ outputs:
 条件先回 false 再到 true     -> 再次触发一帧脉冲
 ```
 
+`remote_controller` 发布 `/motion_commands` 时会填写 `header.stamp` 和 `header.frame_id=remote_controller`。节点只在 `MotionCommands` 除 header 外的 payload 发生变化时发布；只有 header 时间戳变化不会触发发布。这样遥控器输入稳定时不会持续占用 `/motion_commands`，其他节点可以在这段时间发布自己的命令。
+
 ### 2.6 system
 
 `system` 定义 `system.<action>` 要执行的命令。
@@ -580,12 +582,18 @@ dispatch_outputs(outputs);
 
 communication::msg::MotionCommands msg;
 mapper.fill_message(msg);
-publisher->publish(msg);
+if (payload_changed(msg)) {
+    msg.header.stamp = node->now();
+    msg.header.frame_id = "my_controller";
+    publisher->publish(msg);
+}
 ```
 
 `tick()` 要周期调用，用来处理键盘保持时间、source 超时/failsafe、edge 条件更新。
 
-不要让两个节点同时发布同一个 `/motion_commands`。
+如果多个节点都发布 `/motion_commands`，至少要做到“输出没变不重复发布”，否则高频发布的一方会持续覆盖其他节点。更稳的做法还是给上层做一个仲裁节点。
+
+`MotionCommands` 的字段适配集中在 `remote_controller/motion_commands_adapter.*`。如果以后底层消息结构变化，优先改这个 adapter：支持哪些字段路径、字段路径怎么写入消息、`btn_N` 兼容槽位怎么落到新消息。发布节流使用 ROS2 生成消息自带的整包相等比较，并且保存的是 header 为空的 payload，所以新增消息字段后一般不需要再手写比较逻辑。
 
 ## 4. 当前能力边界
 
