@@ -197,6 +197,11 @@ class BxiExample(Node):
         )
         self.remote_event_adapter = RemoteEventAdapter(self.state_machine_config.get("remote_events", {}))
         self.speed_profiles = self.state_machine_config.get("speed_profiles", {})
+        self.state_speed_profiles = {
+            name: (state_config or {}).get("speed_profile")
+            for name, state_config in self.state_machine_config.get("states", {}).items()
+        }
+        self.missing_speed_profile_warnings = set()
 
         self.state = self.state_machine.current_state_id
         self.pending_remote_events = deque()
@@ -445,8 +450,20 @@ class BxiExample(Node):
         return (np.abs(eu_ang[0]) > (math.pi / 3.0)) or (np.abs(eu_ang[1]) > (math.pi / 3.0))
 
     def apply_velocity_profile(self, msg):
-        profile = self.speed_profiles.get(self.state_machine.current_state_name)
+        state_name = self.state_machine.current_state_name
+        profile_name = self.state_speed_profiles.get(state_name)
+        if not profile_name:
+            self.clear_velocity_command()
+            return
+
+        profile = self.speed_profiles.get(profile_name)
         if profile is None:
+            if profile_name not in self.missing_speed_profile_warnings:
+                self.get_logger().warning(
+                    f"state '{state_name}' references unknown speed_profile '{profile_name}'"
+                )
+                self.missing_speed_profile_warnings.add(profile_name)
+            self.clear_velocity_command()
             return
 
         vx_scale = float(profile.get("vx_scale", 1.0))
@@ -458,6 +475,11 @@ class BxiExample(Node):
         self.vx = np.clip(msg.vel_des.x * vx_scale, vx_min, vx_max)
         self.vy = msg.vel_des.y * vy_scale
         self.dyaw = msg.yawdot_des * yaw_scale
+
+    def clear_velocity_command(self):
+        self.vx = 0.0
+        self.vy = 0.0
+        self.dyaw = 0.0
 
     def joy_callback(self, msg):
         with self.lock_in:

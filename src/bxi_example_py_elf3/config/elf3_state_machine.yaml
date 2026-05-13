@@ -1,11 +1,14 @@
+#程序初始的状态
 initial_state: zero_torque
 
+#状态机可视化输出
 graph:
   validate: true
   export:
     dot: /tmp/elf3_state_machine.dot
     mermaid: /tmp/elf3_state_machine.mmd
 
+#将MotionCommands映射为事件
 remote_events:
   normal:
     slot: btn_1
@@ -47,17 +50,32 @@ remote_events:
     slot: btn_10
     value: 4
 
+#预设的一些过度方式
 transition_profiles:
+
+  #直接切换状态，相当于不填transition
   instant:
     duration: 0.0
-    exit_behavior: hold_last_motor
+    exit_behavior: none
     enter_behavior: none
 
+  #软切换，会保持一段时间当前电机状态再切换下一状态
   soft_switch:
     duration: 0.02
     exit_behavior: hold_last_motor
     enter_behavior: hold_last_motor
 
+  #缓慢增加kp或kd过度到目标状态的第一帧
+  first_frame_switch:
+    exit_duration: 0.02
+    enter_duration: 0.1
+    exit_behavior: hold_last_motor
+    enter_behavior: first_frame_ramp_kp
+    data:
+      kp_start: zero #kp从0开始过度到目标状态的kp
+      kd_start: target #kd从目标状态的kd开始过度
+
+#速度的预设配置
 speed_profiles:
   normal:
     vx_scale: 1.0
@@ -80,6 +98,7 @@ speed_profiles:
     vy_scale: 0.5
     yaw_scale: 1.5
 
+#状态机
 states:
   normal:
     behavior: NormalState
@@ -125,7 +144,9 @@ states:
         initial_pos: initial_pos
         recover:
           to: recover
-          transition: soft_switch
+          transition: 
+            base: first_frame_switch
+            enter_duration: 1.0
 
   pd_brake:
     behavior: PdBrakeState
@@ -138,7 +159,9 @@ states:
         initial_pos: initial_pos
         recover:
           to: recover
-          transition: soft_switch
+          transition:
+            base: first_frame_switch
+            enter_duration: 1.0
 
   initial_pos:
     behavior: InitialPosState
@@ -159,7 +182,7 @@ states:
       on_event:
         normal:
           to: normal
-          transition: soft_switch
+          transition: first_frame_switch
         toggle_dance_pause:
           action: toggle_dance_pause
 
@@ -217,7 +240,7 @@ states:
       on_event:
         normal:
           to: normal
-          transition: soft_switch
+          transition: first_frame_switch
         toggle_dance_pause:
           action: toggle_dance_pause
 
@@ -228,6 +251,6 @@ states:
       on_event:
         normal:
           to: normal
-          transition: soft_switch
+          transition: first_frame_switch
         toggle_dance_pause:
           action: toggle_dance_pause

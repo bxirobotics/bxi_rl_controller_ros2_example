@@ -1,4 +1,5 @@
 sources:
+  #手柄按键配置
   gamepad:
     type: joystick
     device: /dev/input/js0
@@ -17,6 +18,7 @@ sources:
       gamepad.x: {from: js.button.3}
       gamepad.y: {from: js.button.4}
 
+  #键盘按键配置
   keyboard:
     type: keyboard
     poll_timeout_us: 20000
@@ -36,6 +38,7 @@ sources:
       keyboard.applause: {from: keyboard.key, key: "8"}
       keyboard.hello: {from: keyboard.key, key: "9"}
 
+#预设的一些，输入曲线
 curves:
   stick:
     type: expo
@@ -46,6 +49,7 @@ curves:
       input: [-1.0, 0.0, 1.0]
       output: [-1.0, 0.0, 1.0]
 
+#处理来自不同source的输入，映射到统一的controls
 controls:
   move.vx:
     type: analog
@@ -117,21 +121,26 @@ controls:
   keyboard.applause: {type: bool, source: keyboard.applause}
   keyboard.hello: {type: bool, source: keyboard.hello}
 
+#将统一的controls映射到输出
 outputs:
   conflict_policy: first_wins
   publish_on_change: true
 
+  #连续的模拟值
   analog:
     vx: move.vx
     vy: move.vy
     yaw: move.yaw
 
+  #上升沿触发，满足条件会输出目标值随后恢复为0
   edge:
+    #sysyem.<name>代表触发下面的特定命令
     - output: system.stop
       when: [system.stop]
     - output: system.start
       when: [system.start]
 
+  #电平触发，满足条件会一直输出
   level:
     - output: btn_1=1
       when:
@@ -204,6 +213,7 @@ outputs:
           - [trigger.right, button.south]
           - [keyboard.hello]
 
+#自定义命令
 system:
   start:
     - "mkdir -p /var/log/bxi_log"
@@ -216,11 +226,13 @@ system:
     - "killall -SIGINT bxi_bms"
     - "killall -SIGINT bxi_example_bms"
 
+#互斥定义，只能acquire一次，但是可以release多次
 system_mutexes:
   robot_process:
     acquire: start
     release: stop
 
+#重置摇杆的滤波器
 system_reset_motion_after:
   - start
   - stop
