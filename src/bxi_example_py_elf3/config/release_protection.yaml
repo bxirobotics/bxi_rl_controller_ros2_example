@@ -1,0 +1,16 @@
+protected_states:
+  back_flip:
+    behavior:
+      - FlipState
+      - BackFlipState
+    events: [back_flip]
+    model_keys: [back_flip]
+    files:
+      - ../data/back_flip.npz
+
+  forward_flip:
+    behavior:
+      - FlipState
+      - ForwardFlipState
+    events: [forward_flip]
+    model_keys: [forward_flip]
