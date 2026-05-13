@@ -119,6 +119,7 @@ controls:
 
 outputs:
   conflict_policy: first_wins
+  publish_on_change: true
 
   analog:
     vx: move.vx
