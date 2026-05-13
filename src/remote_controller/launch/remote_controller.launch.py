@@ -1,8 +1,14 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from ament_index_python.packages import get_package_share_path
+import os
 
 
 def generate_launch_description():
+    remote_config = os.path.join(
+        get_package_share_path("remote_controller"),
+        "config/xbox_default.yaml",
+    )
     return LaunchDescription(
         [
             Node(
@@ -11,7 +17,7 @@ def generate_launch_description():
                 name="remote_controller",
                 output="screen",
                 emulate_tty=True,
-                arguments=["__log_level:=debug"],
+                arguments=["--config", remote_config, "__log_level:=debug"],
             ),
         ]
     )

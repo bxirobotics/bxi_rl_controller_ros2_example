@@ -30,6 +30,10 @@ ROS2 structure hardware:    ![ROS2 structure hardware](docs/ROS2_structure_hardw
 For USD or XML format please refer to: [unofficical models](https://github.com/MelodyAI/TienKung-Lab-bxi/tree/main/legged_lab/assets/elf3_lite)
 
 ## Instructions    
+### 中文扩展文档
+新增遥控器/输入控制器、添加机器人业务状态、配置状态转移和过渡时间，请参考：
+[`docs/controller_and_state_extension_zh.md`](docs/controller_and_state_extension_zh.md)
+
 ### Switch between hardware and simulation environment
 1. `hw` is short for`hardware`，all `launch` files with suffix `hw` are to launch real hardware. **Please use them carefully**.      
 2. The simulation environment and the robot hardware share the same control program. You only need to apply different launch files to switch between simulation and hardware. Topics for simulation code are with the `simulation/` prefix, while topics for the hardware are with the `hardware/` prefix. For details, please refer to the topic parameter settings in src/example.    
@@ -93,4 +97,3 @@ In addition to communication timeout protection, the hardware node also includes
 Large-sized robots may pose risks. Check instructions carefully before operation!     
 All control programs must go through simulation before deploying on robot hardwares.     
 Press the stop button immediately if any abnormality occurs!      
-

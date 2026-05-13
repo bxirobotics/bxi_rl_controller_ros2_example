@@ -20,6 +20,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(communication REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -36,12 +37,44 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-add_executable(${PROJECT_NAME} src/main.cpp)
-ament_target_dependencies(${PROJECT_NAME} rclcpp std_msgs communication)
+add_library(${PROJECT_NAME}_core
+  src/config.cpp
+  src/input_driver.cpp
+  src/input_mapper.cpp
+  src/motion_commands_adapter.cpp
+)
+target_include_directories(${PROJECT_NAME}_core PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(${PROJECT_NAME}_core communication)
+target_link_libraries(${PROJECT_NAME}_core yaml-cpp)
 
-install(TARGETS ${PROJECT_NAME} DESTINATION lib/${PROJECT_NAME})
+add_executable(${PROJECT_NAME}
+  src/main.cpp
+)
+target_include_directories(${PROJECT_NAME} PRIVATE include)
+ament_target_dependencies(${PROJECT_NAME} rclcpp std_msgs communication)
+target_link_libraries(${PROJECT_NAME} ${PROJECT_NAME}_core)
+
+install(TARGETS ${PROJECT_NAME}_core ${PROJECT_NAME}
+        EXPORT ${PROJECT_NAME}_targets
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION lib/${PROJECT_NAME})
+
+install(DIRECTORY include/
+        DESTINATION include)
 
 install(DIRECTORY launch
          DESTINATION share/${PROJECT_NAME})
+
+install(DIRECTORY config
+         DESTINATION share/${PROJECT_NAME})
+
+ament_export_include_directories(include)
+ament_export_libraries(${PROJECT_NAME}_core)
+ament_export_targets(${PROJECT_NAME}_targets)
+ament_export_dependencies(communication yaml-cpp)
 
 ament_package()
