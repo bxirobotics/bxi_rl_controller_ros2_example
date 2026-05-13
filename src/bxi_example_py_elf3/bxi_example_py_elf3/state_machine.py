@@ -1,8 +1,11 @@
 from dataclasses import dataclass
 import os
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Dict, Generic, Iterable, List, Optional, Set, Tuple, TypeVar
 
 import yaml
+
+
+CtxT = TypeVar("CtxT")
 
 
 def load_state_machine_config(path: str) -> Dict:
@@ -43,29 +46,34 @@ class RemoteEventAdapter:
         return events
 
 
-class StateBehavior:
+class StateBehavior(Generic[CtxT]):
     """Base class for user-defined robot states."""
 
     def __init__(self, name: str, state_id: int):
         self.name = name
         self.state_id = state_id
 
-    def on_enter(self, ctx) -> None:
+    def on_enter(self, ctx: CtxT) -> None:
         pass
 
-    def on_update(self, ctx, dt: float) -> None:
+    def on_update(self, ctx: CtxT, dt: float) -> None:
         pass
 
-    def on_exit(self, ctx) -> None:
+    def on_exit(self, ctx: CtxT) -> None:
         pass
 
-    def on_prepare_enter(self, ctx, from_state: "StateBehavior", transition: "TransitionProfile") -> None:
+    def on_prepare_enter(
+        self,
+        ctx: CtxT,
+        from_state: "StateBehavior[CtxT]",
+        transition: "TransitionProfile",
+    ) -> None:
         pass
 
     def on_exit_transition(
         self,
-        ctx,
-        to_state: "StateBehavior",
+        ctx: CtxT,
+        to_state: "StateBehavior[CtxT]",
         progress: float,
         transition: "TransitionProfile",
     ) -> None:
@@ -73,14 +81,14 @@ class StateBehavior:
 
     def on_enter_transition(
         self,
-        ctx,
-        from_state: "StateBehavior",
+        ctx: CtxT,
+        from_state: "StateBehavior[CtxT]",
         progress: float,
         transition: "TransitionProfile",
     ) -> None:
         pass
 
-    def on_action(self, ctx, action_name: str) -> bool:
+    def on_action(self, ctx: CtxT, action_name: str) -> bool:
         return False
 
 
@@ -110,9 +118,9 @@ class PendingTransition:
 
 
 @dataclass
-class ActiveTransition:
-    from_state: StateBehavior
-    to_state: StateBehavior
+class ActiveTransition(Generic[CtxT]):
+    from_state: StateBehavior[CtxT]
+    to_state: StateBehavior[CtxT]
     profile: TransitionProfile
     trigger: str
     elapsed: float = 0.0
@@ -124,17 +132,17 @@ class GraphDiagnostic:
     message: str
 
 
-class RobotStateMachine:
+class RobotStateMachine(Generic[CtxT]):
     """Unity-style state machine with user-defined StateBehavior classes."""
 
     def __init__(
         self,
-        ctx,
+        ctx: CtxT,
         config: Dict,
-        states: Dict[str, StateBehavior],
+        states: Dict[str, StateBehavior[CtxT]],
         action_handlers: Optional[Dict[str, Callable[[], None]]] = None,
     ):
-        self._ctx = ctx
+        self._ctx: CtxT = ctx
         self._config = config
         self._states = dict(states)
         self._actions = action_handlers or {}
@@ -153,7 +161,7 @@ class RobotStateMachine:
         self.current = self._states[initial_state_name]
         self.state_elapsed = 0.0
         self._pending: Optional[PendingTransition] = None
-        self._active: Optional[ActiveTransition] = None
+        self._active: Optional[ActiveTransition[CtxT]] = None
         self._fired_after_rules = set()
         self.current.on_enter(self._ctx)
 
