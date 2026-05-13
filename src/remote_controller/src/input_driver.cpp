@@ -1,6 +1,7 @@
 #include "remote_controller/input_driver.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <fcntl.h>
 #include <linux/joystick.h>
@@ -77,13 +78,10 @@ public:
     void stop() override
     {
         stop_flag_ = true;
-        if (fd_ >= 0) {
-            close(fd_);
-            fd_ = -1;
-        }
         if (thread_.joinable()) {
             thread_.join();
         }
+        close_fd();
     }
 
 private:
@@ -93,7 +91,7 @@ private:
     void open_loop()
     {
         while (!stop_flag_) {
-            fd_ = open(mapper_.config().js_device.c_str(), O_RDONLY);
+            fd_ = open(mapper_.config().js_device.c_str(), O_RDONLY | O_NONBLOCK);
             if (fd_ >= 0) {
                 log("open js dev: " + mapper_.config().js_device);
                 return;
@@ -106,6 +104,35 @@ private:
     void run()
     {
         while (!stop_flag_) {
+            if (fd_ < 0) {
+                open_loop();
+                continue;
+            }
+
+            fd_set fds;
+            FD_ZERO(&fds);
+            FD_SET(fd_, &fds);
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 100000;
+
+            const int ready = select(fd_ + 1, &fds, nullptr, nullptr, &tv);
+            if (stop_flag_) {
+                break;
+            }
+            if (ready == 0) {
+                continue;
+            }
+            if (ready < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                log("js select failed, retry");
+                close_fd();
+                open_loop();
+                continue;
+            }
+
             struct js_event event;
             const ssize_t len = read(fd_, &event, sizeof(event));
 
@@ -125,18 +152,23 @@ private:
                 continue;
             }
 
-            if (stop_flag_) {
-                break;
+            if (len < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                    continue;
+                }
             }
 
-            if (len <= 0) {
-                log("js dev lost, retry");
-                if (fd_ >= 0) {
-                    close(fd_);
-                    fd_ = -1;
-                }
-                open_loop();
-            }
+            log("js dev lost, retry");
+            close_fd();
+            open_loop();
+        }
+    }
+
+    void close_fd()
+    {
+        if (fd_ >= 0) {
+            close(fd_);
+            fd_ = -1;
         }
     }
 };
