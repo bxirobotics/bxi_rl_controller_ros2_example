@@ -212,6 +212,31 @@ src/bxi_example_py_elf3/config/release_protection.yaml
 
 公开树会保留 `.github/workflows/auto_release.yml`，这样同步到 `main` 后，`main` 分支自己的 workflow 可以独立运行。
 
+## GitHub Action 流程
+
+`.github/workflows/sync_public_main.yml` 不直接 push `main`。流程是：
+
+```text
+dev push
+  -> 生成 dist/public_release
+  -> 推送公开树到 public/main-sync
+  -> 创建或更新 public/main-sync -> main 的 PR
+  -> 自动以 merge commit 合并 PR
+  -> main 分支自己的 auto_release.yml 独立运行
+```
+
+这样可以满足 `main` 保护分支要求，也不会强行覆盖 `main` 历史。
+
+`PUBLIC_RELEASE_TOKEN` 需要作为 repository secret 添加。推荐 fine-grained PAT 权限：
+
+- `Contents: Read and write`
+- `Pull requests: Read and write`
+- `Workflows: Read and write`
+
+公开同步 commit 的 author 会使用触发 workflow 的 dev commit author；本次 push 事件中的提交作者会写入 `Co-authored-by`，用于尽量保留贡献者归属。由于公开树必须先删除受保护内容，不能把原始 dev commit 原封不动 merge 到 `main`。
+
+如果 PR 不能按普通权限立刻合并，workflow 会使用 `gh pr merge --admin --merge` 重试。`PUBLIC_RELEASE_TOKEN` 对应账号必须有绕过保护规则的权限，否则这一步仍会失败。
+
 ## 自检
 
 加 `--self-check` 后，脚本会扫描公开树。如果已经删除的状态名、类名、event 名、model key 仍然残留在文本文件里，就直接失败。
