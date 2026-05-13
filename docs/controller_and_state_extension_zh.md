@@ -100,7 +100,7 @@ sources:
 - `sources.<name>.signals.<signal>`：声明一个语义 source。
 - `sources.<name>.signals.<signal>.from`：这个语义 source 从哪里来，例如 `js.axis.3`、`js.button.7`、`keyboard.axis`、`keyboard.key`、`crsf.ch5`。
 - `sources.<name>.signals.<signal>.hold_ms`：仅键盘 source 使用，覆盖该键或模拟轴的保持时间。
-- `sources.<name>.signals.<signal>.timeout_ms`：source 超时，单位毫秒。适合 CRSF、UDP、串口这类持续刷新输入；不建议随便用在 Linux joystick 这种事件型输入上。
+- `sources.<name>.signals.<signal>.timeout_ms`：source 超时，单位毫秒。CRSF、UDP、串口这类持续刷新输入按最后一次收到该 raw source 的时间判断；Linux joystick 这种事件型输入按 `/dev/input/js*` 驱动连接活跃时间判断，摇杆值保持不变不会触发超时。
 - `sources.<name>.signals.<signal>.failsafe`：超时后写入该 raw source 的值，通常是 `0.0`。
 
 这些语义 source 后续直接引用，例如 `gamepad.left_y`、`gamepad.x`。

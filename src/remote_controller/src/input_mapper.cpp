@@ -85,6 +85,19 @@ std::vector<std::string> InputMapper::set_signal(const std::string &source, doub
     return refresh_bindings();
 }
 
+void InputMapper::touch_runtime_sources_with_prefix(const std::string &prefix)
+{
+    const auto now = std::chrono::steady_clock::now();
+    for (const auto &item : config_.source_runtime) {
+        const std::string &source = item.second.source;
+        if (!starts_with(source, prefix)) {
+            continue;
+        }
+        signal_update_time_[source] = now;
+        timed_out_sources_.erase(source);
+    }
+}
+
 void InputMapper::zero_motion_axes()
 {
     signals_[config_.keyboard.vx_source] = 0.0;
