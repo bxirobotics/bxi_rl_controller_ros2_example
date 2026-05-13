@@ -14,3 +14,5 @@ protected_states:
       - ForwardFlipState
     events: [forward_flip]
     model_keys: [forward_flip]
+    files:
+      - ../data/forward_flip.npz

@@ -14,8 +14,8 @@ import yaml
 DEFAULT_MANIFESTS = (Path("src/bxi_example_py_elf3/config/release_protection.yaml"),)
 DEFAULT_REMOTE_CONFIG = Path("src/remote_controller/config/xbox_default.yaml")
 PUBLIC_DEV_ONLY_PATHS = {
-    Path("release_protection.yaml"),
     Path("tools/sanitize_release.py"),
+    Path("tools/README.md"),
     Path(".github/workflows/sync_public_main.yml"),
 }
 ROOT_RELATIVE_PREFIXES = {"src", "tools", ".github"}
