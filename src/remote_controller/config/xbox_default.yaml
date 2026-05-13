@@ -3,9 +3,9 @@ sources:
     type: joystick
     device: /dev/input/js0
     signals:
-      gamepad.left_y: {from: js.axis.3}
-      gamepad.left_x: {from: js.axis.0}
-      gamepad.yaw: {from: js.axis.6}
+      gamepad.left_y: {from: js.axis.3, timeout_ms: 1000, failsafe: 0.0}
+      gamepad.left_x: {from: js.axis.0, timeout_ms: 1000, failsafe: 0.0}
+      gamepad.yaw: {from: js.axis.6, timeout_ms: 1000, failsafe: 0.0}
       gamepad.trigger_left: {from: js.axis.5}
       gamepad.trigger_right: {from: js.axis.4}
       gamepad.stop: {from: js.button.11}

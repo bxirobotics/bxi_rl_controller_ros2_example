@@ -121,6 +121,7 @@ private:
                 break;
             }
             if (ready == 0) {
+                touch_runtime_sources();
                 continue;
             }
             if (ready < 0) {
@@ -154,6 +155,7 @@ private:
 
             if (len < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                    touch_runtime_sources();
                     continue;
                 }
             }
@@ -170,6 +172,12 @@ private:
             close(fd_);
             fd_ = -1;
         }
+    }
+
+    void touch_runtime_sources()
+    {
+        const std::lock_guard<std::mutex> guard(mapper_lock_);
+        mapper_.touch_runtime_sources_with_prefix("js.");
     }
 };
 
