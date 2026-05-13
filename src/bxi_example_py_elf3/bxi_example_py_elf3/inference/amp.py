@@ -143,8 +143,31 @@ class HumanoidGaitPolicyLite:
         self.gait_phase_offset_r: float = 0.88  #步态相位偏移r
         self.gait_cycle: float = 0.85    #步态周期（秒）
         
-        # Number of actions and observations
-        self.num_actions = 29
+        # Number of actions and observations.
+        # 960/1020D policies are full-body models. 540D policies are no-arm
+        # models and only command waist + legs; applause overlays the arms.
+        self.robot_dof_num = 29
+        self.policy_action_dim = 29
+        self.controlled_action_dim = 15
+        self.num_actions = self.policy_action_dim
+        self.obs_action_dim = self.policy_action_dim
+
+        self.full_body_mujoco_idx = np.arange(self.policy_action_dim, dtype=np.int64)
+        self.full_body_isaac_idx = np.asarray(self.isaac_to_mujoco_idx, dtype=np.int64)
+        self.controlled_mujoco_idx = np.arange(self.controlled_action_dim, dtype=np.int64)
+        self.controlled_isaac_idx = np.asarray(
+            [self.isaac_to_mujoco_idx[i] for i in self.controlled_mujoco_idx],
+            dtype=np.int64,
+        )
+        self.isaac_order_mujoco_idx = np.asarray(self.mujoco_to_isaac_idx, dtype=np.int64)
+        self.noarm_policy_isaac_idx = np.asarray(
+            [i for i, mujoco_idx in enumerate(self.isaac_order_mujoco_idx) if mujoco_idx < self.controlled_action_dim],
+            dtype=np.int64,
+        )
+        self.noarm_policy_mujoco_idx = self.isaac_order_mujoco_idx[self.noarm_policy_isaac_idx]
+        self.output_mujoco_idx = self.full_body_mujoco_idx
+        self.last_action_isaac_idx = self.full_body_isaac_idx
+        self.controlled_action_scale = self.action_scale[self.full_body_isaac_idx]
         
         # 【动态】以下将在initialize_model中根据实际模型输入维度调整
         self.num_obs = 960  # 默认值，将被动态调整
@@ -197,16 +220,43 @@ class HumanoidGaitPolicyLite:
         print(f"\n[AutoDetect] Model input dimension: {actual_input_dim}")
         
         # 根据输入维度动态调整
-        if actual_input_dim == 960:
+        if actual_input_dim == 540:
+            # 540维模型：54维/步 × 10步，elf3_tang_noarm训练时使用
+            # Isaac全身关节顺序删掉手臂后的15维策略顺序。
+            self.single_obs_dim = 54  # 3+3+3+15+15+15
+            self.obs_action_dim = self.controlled_action_dim
+            # self.output_mujoco_idx = self.noarm_policy_mujoco_idx
+            # self.last_action_isaac_idx = self.noarm_policy_isaac_idx
+            # self.controlled_action_scale = self.action_scale[self.noarm_policy_isaac_idx]
+            self.output_mujoco_idx = self.controlled_mujoco_idx
+            self.last_action_isaac_idx = self.controlled_isaac_idx
+            self.controlled_action_scale = self.action_scale[self.controlled_isaac_idx]
+            self.extra_obs_dim = 0
+            print(f"[AutoDetect] Configured for 540D input (54D per step, no-arm Isaac joint order)")
+            print(f"[AutoDetect] 540D output MuJoCo indices: {self.output_mujoco_idx.tolist()}")
+        elif actual_input_dim == 960:
             # 960维模型：96维/步 × 10步
             self.single_obs_dim = 96  # 3+3+3+29+29+29
+            self.obs_action_dim = self.policy_action_dim
+            self.output_mujoco_idx = self.full_body_mujoco_idx
+            self.last_action_isaac_idx = self.full_body_isaac_idx
+            self.controlled_action_scale = self.action_scale[self.full_body_isaac_idx]
             self.extra_obs_dim = 0
-            print(f"[AutoDetect] Configured for 960D input (96D per step, no extra)")
+            print(f"[AutoDetect] Configured for 960D input (96D per step, full body)")
         elif actual_input_dim == 1020:
             # 1020维模型：102维/步 × 10步
             self.single_obs_dim = 102  # 96 + 6 extra
+            self.obs_action_dim = self.policy_action_dim
+            self.output_mujoco_idx = self.full_body_mujoco_idx
+            self.last_action_isaac_idx = self.full_body_isaac_idx
+            self.controlled_action_scale = self.action_scale[self.full_body_isaac_idx]
             self.extra_obs_dim = 6
-            print(f"[AutoDetect] Configured for 1020D input (102D per step, +6 extra)")
+            print(f"[AutoDetect] Configured for 1020D input (102D per step, full body, +6 extra)")
+        else:
+            raise ValueError(
+                f"Unsupported AMP model input dimension: {actual_input_dim}. "
+                "Expected 540, 960, or 1020."
+            )
       
         # 更新总观测维度
         self.num_obs = self.single_obs_dim * self.obs_history_len
@@ -219,9 +269,10 @@ class HumanoidGaitPolicyLite:
         )
         
         # Initialize variables
-        self.action = np.zeros(self.num_actions, dtype=np.float32)
-        self.last_action = np.zeros(self.num_actions, dtype=np.float32)
-        self.target_dof_pos = np.zeros(self.num_actions, dtype=np.float32)
+        self.action = np.zeros(self.policy_action_dim, dtype=np.float32)
+        self.last_action = np.zeros(self.policy_action_dim, dtype=np.float32)
+        self.last_controlled_action = np.zeros(self.controlled_action_dim, dtype=np.float32)
+        self.target_dof_pos = self.default_dof_pos.copy()
         
         self.obs_history = collections.deque(maxlen=self.obs_history_len)
         for _ in range(self.obs_history_len):
@@ -237,9 +288,8 @@ class HumanoidGaitPolicyLite:
             self.phase_ratio = np.array([self.gait_air_ratio_l, self.gait_air_ratio_r]) #步态空中比率[0.38,0.38]
             self.phase_offset = np.array([self.gait_phase_offset_l, self.gait_phase_offset_r]) #步态相位偏移[0.38,0.88]
 
-        # 进行一次初始推理，填充obs_history
-        print("preparing initial inference to fill obs_history...")
-        self.inference_step(  # 初始化一次，填充obs_history
+        print("preparing initial observation history...")
+        self.reset_observation_history(
             self.default_dof_pos,
             np.zeros_like(self.default_dof_pos),
             np.array([1.0, 0.0, 0.0, 0.0]),  # 单位四元数
@@ -258,50 +308,104 @@ class HumanoidGaitPolicyLite:
             self.gait_phase[1] = (t + self.phase_offset[1]) % 1.0
 
         # Update observation (现在观测会使用最新的 gait_phase)
-        self.obs_tensor = self.compute_observation(q, dq, quat, omega, cmd_vel)        
-        np.copyto(self.input_buffer, self.obs_tensor)  # 比直接赋值更安全
-        self.action = self.session.run(["actions"], {"obs": self.obs_tensor})[0][0]
+        self.obs_tensor = self.compute_observation(q, dq, quat, omega, cmd_vel)
+        np.copyto(self.input_buffer, self.obs_tensor.reshape(-1))  # 比直接赋值更安全
+        raw_action = self.session.run(
+            [self.output_info.name],
+            {self.input_info.name: self.obs_tensor},
+        )[0][0]
+        self.action = raw_action.astype(np.float32, copy=False)
 
-        self.last_action = self.action[:29].copy()
+        out_len = self.action.shape[0]
+        output_action_dim = self.output_mujoco_idx.shape[0]
+        if out_len < output_action_dim:
+            raise ValueError(
+                f"ONNX action dim is {out_len}, expected at least {output_action_dim}"
+            )
 
-        # 安全地提取速度输出（可能没有或长度不足）
-        if hasattr(self.action, '__len__'):
-            out_len = len(self.action)
+        if out_len >= self.policy_action_dim:
+            policy_action_isaac = self.action[:self.policy_action_dim]
+            controlled_action = policy_action_isaac[self.last_action_isaac_idx]
+            self.last_action = policy_action_isaac.copy()
+            vel_start = self.policy_action_dim
         else:
-            out_len = self.action.size
+            controlled_action = self.action[:output_action_dim]
+            self.last_action = np.zeros(self.policy_action_dim, dtype=np.float32)
+            self.last_action[self.last_action_isaac_idx] = controlled_action
+            vel_start = output_action_dim
+        self.last_controlled_action = controlled_action.copy()
 
-        if out_len >= 32:
-            self.vae_vel = self.action[29:32].copy()
-        elif out_len > 29:
-            tmp = np.zeros(3, dtype=np.float32)
-            available = out_len - 29
-            tmp[:available] = self.action[29:29+available]
-            self.vae_vel = tmp
-        else:
-            self.vae_vel = np.zeros(3, dtype=np.float32)
+        self.vae_vel = np.zeros(3, dtype=np.float32)
+        if out_len > vel_start:
+            vel_len = min(3, out_len - vel_start)
+            self.vae_vel[:vel_len] = self.action[vel_start:vel_start + vel_len]
 
-        self.target_dof_pos = self.last_action * self.action_scale
-        self.target_dof_pos = self.target_dof_pos[self.isaac_to_mujoco_idx] + self.default_dof_pos
+        self.target_dof_pos = self.default_dof_pos.copy()
+        self.target_dof_pos[self.output_mujoco_idx] += (
+            controlled_action * self.controlled_action_scale
+        )
+        self.target_dof_pos = self.target_dof_pos.astype(np.float32)
 
         # 极简推理（比原版快5-15%）
         return self.target_dof_pos, self.vae_vel
 
     # 创建观测输入   
+    def reset_runtime_state(self, qj, dqj, quat, omega, cmd_vel):
+        self.action = np.zeros_like(self.action, dtype=np.float32)
+        self.last_action = np.zeros(self.policy_action_dim, dtype=np.float32)
+        self.last_controlled_action = np.zeros(self.controlled_action_dim, dtype=np.float32)
+        self.vae_vel = np.zeros(3, dtype=np.float32)
+        self.command_vel = np.asarray(cmd_vel, dtype=np.float32)
+        if self.extra_obs_dim > 0:
+            self.episode_length_buf = 0
+        self.reset_observation_history(qj, dqj, quat, omega, self.command_vel)
+
+    def reset_observation_history(self, qj, dqj, quat, omega, cmd_vel):
+        """Fill history with the current stable observation before control starts."""
+        single_obs = self._build_single_observation(qj, dqj, quat, omega, cmd_vel)
+        self.obs_history.clear()
+        for _ in range(self.obs_history_len):
+            self.obs_history.append(single_obs.copy())
+        self._refresh_observation_buffer()
+
     def compute_observation(self, qj, dqj, quat, omega, cmd_vel):
         """Compute the observation vector from current state"""
+        single_obs = self._build_single_observation(qj, dqj, quat, omega, cmd_vel)
+        self.obs_history.append(single_obs)
+        self._refresh_observation_buffer()
+
+        return np.expand_dims(self.obs, axis=0)
+
+    def _build_single_observation(self, qj, dqj, quat, omega, cmd_vel):
         gravity_orientation = get_gravity_orientation(quat)
-        self.command_vel = cmd_vel  # Placeholder for commanded velocity
+        qj = np.asarray(qj, dtype=np.float32)
+        dqj = np.asarray(dqj, dtype=np.float32)
+        self.command_vel = np.asarray(cmd_vel, dtype=np.float32)
+
+        if qj.shape[0] != self.robot_dof_num:
+            raise ValueError(f"qj dim is {qj.shape[0]}, expected {self.robot_dof_num}")
+        if dqj.shape[0] != self.robot_dof_num:
+            raise ValueError(f"dqj dim is {dqj.shape[0]}, expected {self.robot_dof_num}")
         
         # Create single observation with dynamic dimensions
         single_obs = np.zeros(self.single_obs_dim, dtype=np.float32)
         
-        # 【标准】前96维：omega + gravity + cmd_vel + joint_pos + joint_vel + last_action
+        # 【标准】omega + gravity + cmd_vel + joint_pos + joint_vel + last_action
         single_obs[0:3] = omega                                         # 3维
         single_obs[3:6] = gravity_orientation                           # 3维
         single_obs[6:9] = self.command_vel                              # 3维
-        single_obs[9:9+self.num_actions] = (qj - self.default_dof_pos)[self.mujoco_to_isaac_idx]  # 29维
-        single_obs[9+self.num_actions:9+2*self.num_actions] = dqj[self.mujoco_to_isaac_idx]  # 29维
-        single_obs[9+2*self.num_actions:9+3*self.num_actions] = self.last_action  # 29维
+        if self.obs_action_dim == self.controlled_action_dim:
+            obs_q_idx = self.output_mujoco_idx
+            obs_dq_idx = self.output_mujoco_idx
+            obs_last_action = self.last_controlled_action
+        else:
+            obs_q_idx = self.mujoco_to_isaac_idx
+            obs_dq_idx = self.mujoco_to_isaac_idx
+            obs_last_action = self.last_action
+
+        single_obs[9:9+self.obs_action_dim] = (qj - self.default_dof_pos)[obs_q_idx]
+        single_obs[9+self.obs_action_dim:9+2*self.obs_action_dim] = dqj[obs_dq_idx]
+        single_obs[9+2*self.obs_action_dim:9+3*self.obs_action_dim] = obs_last_action
         
         # 【兼容】如果需要额外维度（如1020维模型），补零
         if self.extra_obs_dim > 0:
@@ -311,13 +415,12 @@ class HumanoidGaitPolicyLite:
             single_obs[11+3*self.num_actions:13+3*self.num_actions] = np.cos(2 * np.pi * self.gait_phase)  # 2 #步态相位余弦值
             single_obs[13+3*self.num_actions:15+3*self.num_actions] = self.phase_ratio  # 2 #步态空中比率
         
-        self.obs_history.append(single_obs)
-        
+        return single_obs
+
+    def _refresh_observation_buffer(self):
         # Construct full observation with history
         for i, hist_obs in enumerate(self.obs_history):
             start_idx = i * self.single_obs_dim
             end_idx = start_idx + self.single_obs_dim
             self.obs[start_idx:end_idx] = hist_obs
-            
-        return np.expand_dims(self.obs, axis=0)
     

@@ -7,6 +7,10 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    remote_config = os.path.join(
+        get_package_share_path("remote_controller"),
+        "config/xbox_default.yaml",
+    )
 
     return LaunchDescription(
         [
@@ -15,11 +19,8 @@ def generate_launch_description():
                 executable="remote_controller",
                 name="remote_controller",
                 output="screen",
-                parameters=[
-                    # {"simulation/model_file": xml_file},
-                ],
                 emulate_tty=True,
-                arguments=[("__log_level:=debug")],
+                arguments=["--config", remote_config, "__log_level:=debug"],
             ),
         ]
     )
