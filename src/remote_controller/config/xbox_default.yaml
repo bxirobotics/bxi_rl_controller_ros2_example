@@ -4,6 +4,21 @@ sources:
     type: joystick
     device: /dev/input/js0
     signals:
+      #ps4
+      # gamepad.left_y: {from: js.axis.4, timeout_ms: 1000, failsafe: 0.0}
+      # gamepad.left_x: {from: js.axis.0, timeout_ms: 1000, failsafe: 0.0}
+      # gamepad.yaw: {from: js.axis.6, timeout_ms: 1000, failsafe: 0.0}
+      # gamepad.trigger_left: {from: js.axis.2}
+      # gamepad.trigger_right: {from: js.axis.5}
+      # gamepad.stop: {from: js.button.9}
+      # gamepad.start: {from: js.button.10}
+      # gamepad.lb: {from: js.button.4}
+      # gamepad.rb: {from: js.button.5}
+      # gamepad.a: {from: js.button.0}
+      # gamepad.b: {from: js.button.1}
+      # gamepad.x: {from: js.button.2}
+      # gamepad.y: {from: js.button.3}
+      #xbox
       gamepad.left_y: {from: js.axis.3, timeout_ms: 1000, failsafe: 0.0}
       gamepad.left_x: {from: js.axis.0, timeout_ms: 1000, failsafe: 0.0}
       gamepad.yaw: {from: js.axis.6, timeout_ms: 1000, failsafe: 0.0}
