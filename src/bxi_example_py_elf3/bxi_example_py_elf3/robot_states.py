@@ -82,11 +82,7 @@ class PdBrakeState(RobotControlState):
         return self._motor_frame(ctx.pd_pos, ctx.normal.kps, ctx.normal.kds)
 
     def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
-        soft_start = min(ctx.loop_count / (2.0 / ctx.dt), 1.0)
-        qpos = ctx.pos_last_state + (ctx.pd_pos - ctx.pos_last_state) * soft_start
-        kp = ctx.kp_last + (ctx.normal.kps - ctx.kp_last) * soft_start
-        kd = ctx.kd_last + (ctx.normal.kds - ctx.kd_last) * soft_start
-        return self._motor_frame(qpos, kp, kd)
+        return self._motor_frame(ctx.pd_pos, ctx.normal.kps, ctx.normal.kds)
 
 
 class InitialPosState(RobotControlState):
@@ -97,11 +93,7 @@ class InitialPosState(RobotControlState):
         return self._motor_frame(ctx.initial_pos, ctx.joint_kp, ctx.joint_kd)
 
     def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
-        soft_start = min(ctx.loop_count / (2.0 / ctx.dt), 1.0)
-        qpos = ctx.pos_last_state + (ctx.initial_pos - ctx.pos_last_state) * soft_start
-        kp = ctx.kp_last + (ctx.joint_kp - ctx.kp_last) * soft_start
-        kd = ctx.kd_last + (ctx.joint_kd - ctx.kd_last) * soft_start
-        return self._motor_frame(qpos, kp, kd)
+        return self._motor_frame(ctx.initial_pos, ctx.joint_kp, ctx.joint_kd)
 
 
 class DanceState(RobotControlState):
@@ -158,13 +150,15 @@ class DanceState(RobotControlState):
         if ctx.dance.timestep >= ctx.dance.motionpos.shape[0]:
             print("Motion replay finished, resetting simulation.")
             ctx.dance.timestep = self.start_frame
-            ctx.request_state("normal", trigger="motion_finished",transition={
-                    "base":"dual_running_blend",
-                    "duration":0.5,
-                    "data":{
-                        "run_from":False
-                    }
-                })
+            ctx.request_state(
+                "normal",
+                trigger="motion_finished",
+                transition={
+                    "base": "dual_running_blend",
+                    "duration": 0.5,
+                    "data": {"run_from": False},
+                },
+            )
             return
 
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
@@ -419,7 +413,15 @@ class RecoverState(RobotControlState):
     def on_update(self, ctx: BxiExample, dt: float) -> None:
         if ctx.recover.timestep > ctx.recover.end_frame:
             ctx.recover.timestep = ctx.recover.start_frame
-            ctx.request_state("normal", trigger="recover_finished",transition="first_frame_switch")
+            ctx.request_state(
+                "normal",
+                trigger="recover_finished",
+                transition={
+                    "base": "dual_running_blend",
+                    "duration": 0.5,
+                    "data": {"run_from": False},
+                },
+            )
             return
 
         frame = self.get_motor_frame(ctx, dt)
