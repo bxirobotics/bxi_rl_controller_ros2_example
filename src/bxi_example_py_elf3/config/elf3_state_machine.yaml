@@ -152,8 +152,16 @@ states:
         normal:
           to: normal
           transition: soft_switch
-        pd_brake: pd_brake
-        initial_pos: initial_pos
+        pd_brake: 
+          to: pd_brake
+          transition: 
+            base: first_frame_switch
+            enter_duration: 1.0
+        initial_pos: 
+          to: initial_pos
+          transition: 
+            base: first_frame_switch
+            enter_duration: 1.0
         recover:
           to: recover
           transition: 
@@ -168,7 +176,11 @@ states:
           to: normal
           transition: soft_switch
         zero_torque: zero_torque
-        initial_pos: initial_pos
+        initial_pos: 
+          to: initial_pos
+          transition: 
+            base: first_frame_switch
+            enter_duration: 1.0
         recover:
           to: recover
           transition:
@@ -182,7 +194,11 @@ states:
         normal:
           to: normal
           transition: soft_switch
-        pd_brake: pd_brake
+        pd_brake: 
+          to: pd_brake
+          transition: 
+            base: first_frame_switch
+            enter_duration: 1.0
         zero_torque: zero_torque
         recover:
           to: recover
@@ -194,7 +210,9 @@ states:
       on_event:
         normal:
           to: normal
-          transition: first_frame_switch
+          transition: 
+            base: dual_running_blend
+            duration: 1.0
         toggle_dance_pause:
           action: toggle_dance_pause
 
@@ -233,7 +251,9 @@ states:
       on_event:
         normal:
           to: normal
-          transition: soft_switch
+          transition: 
+            base: dual_running_blend
+            duration: 2.0
         zero_torque: zero_torque
 
   forward_flip:
@@ -242,7 +262,9 @@ states:
       on_event:
         normal:
           to: normal
-          transition: soft_switch
+          transition: 
+            base: dual_running_blend
+            duration: 2.0
         zero_torque: zero_torque
 
   applause:
