@@ -180,6 +180,7 @@ class BxiExample(Node):
         robot_states = build_robot_states(self.state_machine_config)
         self.state_id_by_name = {name: state.state_id for name, state in robot_states.items()}
         self.state_name_by_id = {value: key for key, value in self.state_id_by_name.items()}
+        self.motor_target = None
         self.state_machine = RobotStateMachine(
             self,
             self.state_machine_config,
@@ -195,7 +196,6 @@ class BxiExample(Node):
 
         self.state = self.state_machine.current_state_id
         self.pending_remote_events = deque()
-        self.motor_target = None
         self.current_q = np.zeros(dof_num, dtype=np.double)
         self.current_dq = np.zeros(dof_num, dtype=np.double)
         self.current_omega = np.zeros(3, dtype=np.double)
@@ -426,7 +426,12 @@ class BxiExample(Node):
             self.qvel[:] = np.array(joint_vel[:])
 
     def set_motor_target(self, qpos, kp, kd):
-        self.motor_target = (qpos, kp, kd)
+        frame = (
+            np.asarray(qpos, dtype=np.float32).copy(),
+            np.asarray(kp, dtype=np.float32).copy(),
+            np.asarray(kd, dtype=np.float32).copy(),
+        )
+        self.motor_target = frame
 
     def hold_last_motor_target(self):
         self.set_motor_target(self.pos_last, self.kp_last, self.kd_last)

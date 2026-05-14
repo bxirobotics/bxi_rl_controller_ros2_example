@@ -55,6 +55,16 @@ transition_profiles:
     data:
       kp_start: zero
       kd_start: target
+  dual_running_blend:
+    duration: 0.3
+    exit_behavior: none
+    enter_behavior: dual_running_blend
+    data:
+      curve: smoothstep
+      run_from: true
+      run_to: true
+      from_fallback: last_motor
+      to_fallback: first_frame
 speed_profiles:
   normal:
     vx_scale: 1.0
@@ -97,10 +107,10 @@ states:
           transition: soft_switch
         applause:
           to: applause
-          transition: soft_switch
+          transition: dual_running_blend
         hello:
           to: hello
-          transition: soft_switch
+          transition: dual_running_blend
   zero_torque:
     behavior: ZeroTorqueState
     transitions:

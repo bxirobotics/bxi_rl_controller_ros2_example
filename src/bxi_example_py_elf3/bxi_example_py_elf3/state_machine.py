@@ -88,6 +88,14 @@ class StateBehavior(Generic[CtxT]):
     ) -> None:
         pass
 
+    def on_transition_commit(
+        self,
+        ctx: CtxT,
+        from_state: "StateBehavior[CtxT]",
+        transition: "TransitionProfile",
+    ) -> None:
+        self.on_enter(ctx)
+
     def on_action(self, ctx: CtxT, action_name: str) -> bool:
         return False
 
@@ -368,12 +376,13 @@ class RobotStateMachine(Generic[CtxT]):
         if self._active is None:
             return
 
-        self.current = self._active.to_state
+        active = self._active
+        self.current = active.to_state
         self.state_elapsed = 0.0
         self._pending = None
         self._active = None
         self._fired_after_rules.clear()
-        self.current.on_enter(self._ctx)
+        self.current.on_transition_commit(self._ctx, active.from_state, active.profile)
 
     def _run_action(self, action_name: str) -> None:
         handler = self._actions.get(action_name)
