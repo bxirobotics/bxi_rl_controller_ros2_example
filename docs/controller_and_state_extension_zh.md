@@ -710,6 +710,10 @@ graph:
 - `first_frame_ramp_kp`：进入新状态时，目标角度固定为新状态 `get_first_frame(ctx)` 返回的第一帧角度，`kp` 按 `enter_progress` 从 `data.kp_start` 缓慢变化到第一帧 `kp`，`kd` 按 `data.kd_start` 变化到第一帧 `kd`。如果目标状态没有实现 `get_first_frame(ctx)`，会退回保持上一帧电机目标。
 - `first_frame_ramp_kp` 的 `data.kp_start`：可选 `current`、`target`、`zero`，默认 `current`。
 - `first_frame_ramp_kp` 的 `data.kd_start`：可选 `current`、`target`、`zero`，默认 `target`。
+- `dual_running_blend`：旧状态和新状态在过渡期间都继续生成电机目标，最终输出为两帧按 `enter_progress` 混合后的 `(qpos, kp, kd)`。这个行为写在 `enter_behavior`，因为最终混合输出由进入侧状态提交。
+- `dual_running_blend` 的 `data.curve`：混合曲线，可选 `linear`、`smoothstep`、`smootherstep`，默认 `linear`。
+- `dual_running_blend` 的 `data.run_from` / `data.run_to`：是否采样旧状态 / 新状态的运行输出，默认都为 `true`。
+- `dual_running_blend` 的 `data.from_fallback` / `data.to_fallback`：采样不到电机帧时的退路。可选 `last_motor`、`hold_last_motor`、`first_frame`、`none`。默认旧状态退到 `last_motor`，新状态退到 `first_frame`。
 
 状态机实际过渡总时长是 `duration`、`exit_duration`、`enter_duration` 的最大值。这样可以让旧状态先完成退出，新状态继续进入，或者反过来。
 
@@ -767,6 +771,17 @@ transition_profiles:
     data:
       kp_start: current
       kd_start: target
+
+  dual_running_blend:
+    duration: 0.30
+    exit_behavior: none
+    enter_behavior: dual_running_blend
+    data:
+      curve: smoothstep
+      run_from: true
+      run_to: true
+      from_fallback: last_motor
+      to_fallback: first_frame
 
 states:
   normal:
@@ -852,8 +867,20 @@ class MyState(RobotControlState):
     def on_enter_transition(self, ctx, from_state, progress, transition):
         pass
 
+    def on_transition_commit(self, ctx, from_state, transition):
+        pass
+
     def get_first_frame(self, ctx):
         return None
+
+    def get_motor_frame(self, ctx, dt):
+        return None
+
+    def get_transition_frame(self, ctx, role, transition):
+        return None
+
+    def on_transition_runtime_enter(self, ctx, transition):
+        pass
 
     def on_action(self, ctx, action_name):
         return False
@@ -868,13 +895,23 @@ class MyState(RobotControlState):
   -> 过渡期间每个控制周期:
        旧状态.on_exit_transition(exit_progress)
        新状态.on_enter_transition(enter_progress)
-  -> 新状态.on_enter()
+  -> 新状态.on_transition_commit()
   -> 新状态.on_update()
 ```
 
 `exit_progress` 按 `exit_duration` 计算，`enter_progress` 按 `enter_duration` 计算。如果某一侧 duration 为 `0.0`，对应 progress 直接是 `1.0`。如果总 `duration` 为 `0.0`，状态机会直接进入新状态，不跑逐帧过渡钩子。
 
 `get_first_frame(ctx)` 是给 `first_frame_ramp_kp` 用的可选接口。需要这个进入过渡效果的状态，返回 `(qpos, kp, kd)`；不需要时返回 `None` 或不重写。状态内部可以自由决定“第一帧”是什么，例如动作数据的起始帧、预热模型后的第一帧输出，或者某个固定姿态。
+
+`get_motor_frame(ctx, dt)` 是推荐的运行输出接口。状态在这里返回 `(qpos, kp, kd)`，不要在这里调用 `ctx.set_motor_target()`，也不要在这里请求切换状态。正常运行时，`RobotControlState.on_update()` 会把这帧写给电机；需要安全判断、播放结束判断时，可以在状态自己的 `on_update()` 里先判断，再调用 `get_motor_frame()`。
+
+`get_transition_frame(ctx, role, transition)` 是给 `dual_running_blend` 用的过渡采样接口。默认实现会调用 `get_motor_frame(ctx, ctx.dt)`。如果某个状态过渡采样和正常运行不同，就重写这个方法。`role` 为 `from` 时表示旧状态，为 `to` 时表示新状态。
+
+`on_transition_runtime_enter(ctx, transition)` 是目标状态第一次被 `dual_running_blend` 采样前调用的入口。默认会调用 `on_enter(ctx)`，所以目标状态的私有变量会正常初始化。
+
+`on_transition_commit()` 默认等价于 `on_enter()`。如果 `dual_running_blend` 已经让目标状态在过渡期间开始运行，`RobotControlState` 会在提交时跳过重复的 `on_enter()`，避免目标动作在过渡结束瞬间回到第一帧。
+
+注意：旧状态的 `on_exit()` 仍按现有生命周期在过渡开始时调用。内置状态的 `on_exit()` 只保存上一状态电机信息，不会销毁模型，所以还能被 `dual_running_blend` 采样。自定义状态如果要使用这种过渡，不要在 `on_exit()` 中释放采样仍需要的 policy、动作数据或缓存。
 
 自定义过渡行为不要把私有字段加到 `state_machine.py`。把行为需要的参数放进 YAML 的 `data`，然后在状态类里通过 `transition.data` 读取，例如 `transition.data.get("kp_start", "current")`。这样状态机库只负责调度和透传，不关心具体机器人控制策略。
 
@@ -918,13 +955,22 @@ class WaveState(RobotControlState):
             ctx.request_state("zero_torque", trigger="safety")
             return
 
+        frame = self.get_motor_frame(ctx, dt)
+        if frame is not None:
+            ctx.set_motor_target(*frame)
+
+    def get_motor_frame(self, ctx, dt: float):
         qpos = ctx.dance.inference_step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
             ctx.current_omega,
         )
-        ctx.set_motor_target(qpos, ctx.dance.stiffness_array, ctx.dance.damping_array)
+        return self._motor_frame(
+            qpos,
+            ctx.dance.stiffness_array,
+            ctx.dance.damping_array,
+        )
 
     def get_first_frame(self, ctx):
         return (

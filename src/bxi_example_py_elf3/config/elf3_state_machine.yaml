@@ -75,6 +75,18 @@ transition_profiles:
       kp_start: zero #kp从0开始过度到目标状态的kp
       kd_start: target #kd从目标状态的kd开始过度
 
+  #旧状态和新状态都持续生成电机目标，再按进入进度混合输出
+  dual_running_blend:
+    duration: 0.3
+    exit_behavior: none
+    enter_behavior: dual_running_blend
+    data:
+      curve: smoothstep
+      run_from: true #是否采样当前状态电机
+      run_to: true #是否采样目标状态电机
+      from_fallback: last_motor 
+      to_fallback: first_frame
+
 #速度的预设配置
 speed_profiles:
   normal:
@@ -128,10 +140,10 @@ states:
           transition: soft_switch
         applause:
           to: applause
-          transition: soft_switch
+          transition: dual_running_blend
         hello:
           to: hello
-          transition: soft_switch
+          transition: dual_running_blend
 
   zero_torque:
     behavior: ZeroTorqueState
