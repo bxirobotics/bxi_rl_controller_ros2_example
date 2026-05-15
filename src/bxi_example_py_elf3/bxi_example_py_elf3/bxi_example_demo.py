@@ -311,9 +311,12 @@ class BxiExample(Node):
 
             if self.dance_mode == True:
                 if self.pos_data_lines:
+                    print("true")
                     qpos_file = self.get_next_pos_from_file()
                     if qpos_file is not None:
                         qpos = qpos_file
+                        qpos[16] += 0.1
+                        qpos[23] -= 0.1
             
             msg = bxiMsg.ActuatorCmds()
             msg.header.frame_id = robot_name

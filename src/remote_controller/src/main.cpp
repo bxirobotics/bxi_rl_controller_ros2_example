@@ -251,6 +251,7 @@ private:
                                 // run_shell_command("ros2 launch bxi_example_py_elf3 example_launch_demo.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
                                 // // real
                                 run_shell_command("ros2 launch bxi_example_py_elf3 example_launch_demo_hw.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                                run_shell_command("ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log 2>&1 &");
                                 printf("run robot\n");//robot_controller
                             
                                 reset_value();
