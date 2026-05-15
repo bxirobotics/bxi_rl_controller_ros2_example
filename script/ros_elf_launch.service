@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/bin/bash -c "source /home/bxi/bxi_ws/bxi_rl_controller_ros2_example/install/setup.bash && export ROS_DOMAIN_ID=XX && ros2 launch remote_controller remote_conroller_launch.py"
+ExecStart=/bin/bash -c "source /home/bxi/bxi_ws/bxi_rl_controller_ros2_example/install/setup.bash && export ROS_DOMAIN_ID=XX && ros2 launch remote_controller remote_controller_launch.py"
 WorkingDirectory=/home/bxi
 
 [Install]

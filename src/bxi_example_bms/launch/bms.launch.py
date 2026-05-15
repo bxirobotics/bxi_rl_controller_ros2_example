@@ -5,35 +5,30 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-
 def generate_launch_description():
-
-    xml_file_name = "model/xml/bot_elf/bot_elf.xml"
-    xml_file = os.path.join(get_package_share_path("description"), xml_file_name)
 
     return LaunchDescription(
         [
-
             Node(
-                package="mujoco",
-                executable="simulation",
-                name="simulation_mujoco",
+                package="bxi_bms",
+                executable="bxi_bms",
+                name="bxi_bms",
                 output="screen",
-                parameters=[
-                    {"simulation/model_file": xml_file},
-                ],
+                # parameters=[
+                #     #
+                # ],
                 emulate_tty=True,
                 arguments=[("__log_level:=debug")],
             ),
 
             Node(
-                package="bxi_example",
-                executable="bxi_example",
-                name="bxi_example",
+                package="bxi_example_bms",
+                executable="bxi_example_bms",
+                name="bxi_example_bms",
                 output="screen",
-                parameters=[
-                    {"/topic_prefix": "simulation/"},
-                ],
+                # parameters=[
+                #     #
+                # ],
                 emulate_tty=True,
                 arguments=[("__log_level:=debug")],
             ),

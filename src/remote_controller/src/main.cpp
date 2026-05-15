@@ -65,6 +65,12 @@ using namespace std;
 #define STAND_HEIGHT_MIN    1.0
 #define STAND_HEIGHT_MAX    3.0
 
+static void run_shell_command(const char *command)
+{
+    int ret = system(command);
+    (void)ret;
+}
+
 class COMPublisher : public rclcpp::Node{
 public:
     COMPublisher(const char *_js_dev) : Node("COM_publisher"){
@@ -229,9 +235,9 @@ private:
                     if (event.value){
                         switch (event.number){
                         case JS_STOP_BT:{
-                            system("killall -SIGINT hardware_elf3");
-                            system("killall -SIGINT bxi_example_py_elf3");
-                            system("killall -SIGINT bxi_example_py_elf3_demo");
+                            run_shell_command("killall -SIGINT hardware_elf3");
+                            run_shell_command("killall -SIGINT bxi_example_py_elf3");
+                            run_shell_command("killall -SIGINT bxi_example_py_elf3_demo");
 
                             launch_lock = false;
 
@@ -240,11 +246,11 @@ private:
 
                         case JS_START_BT:{
                             if(launch_lock == false){
-                                system("mkdir -p /var/log/bxi_log");
+                                run_shell_command("mkdir -p /var/log/bxi_log");
                                 // // sim
-                                // system("ros2 launch bxi_example_py_elf3 example_launch_demo.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                                // run_shell_command("ros2 launch bxi_example_py_elf3 example_launch_demo.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
                                 // // real
-                                system("ros2 launch bxi_example_py_elf3 example_launch_demo_hw.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
+                                run_shell_command("ros2 launch bxi_example_py_elf3 example_launch_demo_hw.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
                                 printf("run robot\n");//robot_controller
                             
                                 reset_value();
