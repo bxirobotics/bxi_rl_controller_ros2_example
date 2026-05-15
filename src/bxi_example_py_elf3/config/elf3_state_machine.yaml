@@ -274,7 +274,9 @@ states:
       on_event:
         normal:
           to: normal
-          transition: first_frame_switch
+          transition: 
+            base: dual_running_blend
+            duration: 1.0
         toggle_dance_pause:
           action: toggle_dance_pause
 
@@ -285,6 +287,8 @@ states:
       on_event:
         normal:
           to: normal
-          transition: first_frame_switch
+          transition: 
+            base: dual_running_blend
+            duration: 1.0
         toggle_dance_pause:
           action: toggle_dance_pause

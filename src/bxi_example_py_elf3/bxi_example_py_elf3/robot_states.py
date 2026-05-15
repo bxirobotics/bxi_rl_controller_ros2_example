@@ -281,7 +281,7 @@ class BackFlipState(FlipState):
 class ForwardFlipState(FlipState):
     policy_attr = "forward_flip"
     finish_trigger = "forward_flip_finished"
-    end_frame_trim = 20
+    end_frame_trim = 125
     transition_duration = 1.0
 
 
@@ -370,7 +370,10 @@ class ApplauseState(RobotControlState):
                 ctx.request_state(
                     "normal",
                     trigger="applause_finished",
-                    transition={"base": "first_frame_switch", "enter_duration": 0.1},
+                    transition={
+                        "base": "dual_running_blend",
+                        "duration": 2.0,
+                    },
                 )
                 return
         else:
