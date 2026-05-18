@@ -32,6 +32,9 @@ remote_events:
   toggle_dance_pause:
     slot: btn_9
     value: 1
+  forward_flip:
+    slot: btn_10
+    value: 2
   applause:
     slot: btn_10
     value: 3
@@ -104,6 +107,9 @@ states:
           transition: soft_switch
         recover:
           to: recover
+          transition: soft_switch
+        forward_flip:
+          to: forward_flip
           transition: soft_switch
         applause:
           to: applause
@@ -204,6 +210,16 @@ states:
         normal:
           to: normal
           transition: soft_switch
+  forward_flip:
+    behavior: ForwardFlipState
+    transitions:
+      on_event:
+        normal:
+          to: normal
+          transition:
+            base: dual_running_blend
+            duration: 2.0
+        zero_torque: zero_torque
   applause:
     behavior: ApplauseState
     speed_profile: normal
@@ -211,7 +227,9 @@ states:
       on_event:
         normal:
           to: normal
-          transition: first_frame_switch
+          transition:
+            base: dual_running_blend
+            duration: 1.0
         toggle_dance_pause:
           action: toggle_dance_pause
   hello:
@@ -221,6 +239,8 @@ states:
       on_event:
         normal:
           to: normal
-          transition: first_frame_switch
+          transition:
+            base: dual_running_blend
+            duration: 1.0
         toggle_dance_pause:
           action: toggle_dance_pause

@@ -5,15 +5,15 @@ sources:
     signals:
       gamepad.left_y:
         from: js.axis.3
-        timeout_ms: 1000
+        timeout_ms: 3000
         failsafe: 0.0
       gamepad.left_x:
         from: js.axis.0
-        timeout_ms: 1000
+        timeout_ms: 3000
         failsafe: 0.0
       gamepad.yaw:
         from: js.axis.6
-        timeout_ms: 1000
+        timeout_ms: 3000
         failsafe: 0.0
       gamepad.trigger_left:
         from: js.axis.5
@@ -69,6 +69,9 @@ sources:
       keyboard.normal_run:
         from: keyboard.key
         key: '5'
+      keyboard.forward_flip:
+        from: keyboard.key
+        key: '7'
       keyboard.applause:
         from: keyboard.key
         key: '8'
@@ -178,6 +181,9 @@ controls:
   keyboard.normal_run:
     type: bool
     source: keyboard.normal_run
+  keyboard.forward_flip:
+    type: bool
+    source: keyboard.forward_flip
   keyboard.applause:
     type: bool
     source: keyboard.applause
@@ -248,6 +254,12 @@ outputs:
     - released: shoulder.right
     - released: trigger.left
     - released: trigger.right
+  - output: btn_10=2
+    when:
+      any:
+      - - trigger.left
+        - button.north
+      - - keyboard.forward_flip
   - output: btn_10=3
     when:
       any:

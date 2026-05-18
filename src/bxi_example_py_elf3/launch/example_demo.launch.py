@@ -18,6 +18,7 @@ def generate_launch_description():
     npz_file_dict = {
         "recover": "data/recover.npz",
         "dance": "data/dance.npz",
+        "forward_flip": "data/forward_flip.npz",
     }  
     onnx_file_dict = {
         "normal": "data/amp_terrain.onnx",
@@ -25,6 +26,7 @@ def generate_launch_description():
         "dance": "data/dance.onnx",
         "amp_run": "data/amp_run.onnx",
         "normal_run": "data/model_normal.onnx",
+        "forward_flip": "data/forward_flip.onnx",
         "noarm": "data/arm8.onnx",
     }
 
