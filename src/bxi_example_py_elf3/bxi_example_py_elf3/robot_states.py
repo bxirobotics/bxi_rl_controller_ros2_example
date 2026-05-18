@@ -178,6 +178,106 @@ class DanceState(RobotControlState):
         return True
 
 
+class FlipState(RobotControlState):
+    policy_attr = ""
+    finish_trigger = "flip_finished"
+    end_frame_trim = 0
+    transition_duration = 0.0
+
+    def __init__(self, name: str, state_id: int):
+        super().__init__(name, state_id)
+        self.playing = True
+        self.policy_configured = False
+
+    def _policy(self, ctx: BxiExample) -> Any:
+        return getattr(ctx, self.policy_attr)
+
+    def _configure_policy(self, policy: Any) -> None:
+        if self.policy_configured:
+            return
+        if self.end_frame_trim > 0:
+            policy.end_frame = max(
+                policy.start_frame, policy.end_frame - self.end_frame_trim
+            )
+        self.policy_configured = True
+
+    def on_prepare_enter(
+        self,
+        ctx: BxiExample,
+        from_state: StateBehavior[BxiExample],
+        transition: TransitionProfile,
+    ) -> None:
+        super().on_prepare_enter(ctx, from_state, transition)
+        policy = self._policy(ctx)
+        self._configure_policy(policy)
+        policy.timestep = policy.start_frame
+        if hasattr(policy, "timeinit"):
+            policy.timeinit = 0.0
+        ctx.preheat_model(policy)
+
+    def on_enter(self, ctx: BxiExample) -> None:
+        self.reset_loop(ctx)
+        self.playing = True
+        policy = self._policy(ctx)
+        policy.timestep = policy.start_frame
+        if hasattr(policy, "timeinit"):
+            policy.timeinit = 0.0
+
+    def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
+        policy = self._policy(ctx)
+        self._configure_policy(policy)
+        qpos = getattr(policy, "target_dof_pos", None)
+        if qpos is None:
+            qpos = getattr(policy, "default_dof_pos", None)
+        if qpos is None:
+            return None
+        return self._motor_frame(qpos, policy.kps, policy.kds)
+
+    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+        policy = self._policy(ctx)
+        if policy.timestep > policy.end_frame:
+            return None
+
+        qpos = policy.inference_step(
+            ctx.current_q,
+            ctx.current_dq,
+            ctx.current_quat_wxyz,
+            ctx.current_omega,
+        )
+
+        if self.playing:
+            policy.timestep += 1
+
+        return self._motor_frame(qpos, policy.kps, policy.kds)
+
+    def on_update(self, ctx: BxiExample, dt: float) -> None:
+        policy = self._policy(ctx)
+
+        frame = self.get_motor_frame(ctx, dt)
+        if frame is not None:
+            ctx.set_motor_target(*frame)
+
+        if policy.timestep > policy.end_frame:
+            print("Motion replay finished, resetting simulation.")
+            policy.timestep = policy.start_frame
+            ctx.request_state(
+                "normal",
+                trigger=self.finish_trigger,
+                transition={
+                    "base": "dual_running_blend",
+                    "duration": self.transition_duration,
+                    "data": {"run_from": False},
+                },
+            )
+
+
+class ForwardFlipState(FlipState):
+    policy_attr = "forward_flip"
+    finish_trigger = "forward_flip_finished"
+    end_frame_trim = 125
+    transition_duration = 1.0
+
+
 class ApplauseState(RobotControlState):
     def __init__(self, name, state_id):
         super().__init__(name, state_id)
@@ -263,7 +363,10 @@ class ApplauseState(RobotControlState):
                 ctx.request_state(
                     "normal",
                     trigger="applause_finished",
-                    transition={"base": "first_frame_switch", "enter_duration": 0.1},
+                    transition={
+                        "base": "dual_running_blend",
+                        "duration": 2.0,
+                    },
                 )
                 return
         else:
