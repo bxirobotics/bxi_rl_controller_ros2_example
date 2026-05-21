@@ -585,19 +585,26 @@ class AmpRunState(RobotControlState):
             ctx.amp_run.target_dof_pos, ctx.amp_run.kps, ctx.amp_run.kds
         )
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
-        cmd_vel = self.get_cmd_vel(ctx)
+    def process_cmd_vel(
+        self,
+        ctx: BxiExample,
+        cmd_vel: np.ndarray,
+    ) -> Optional[np.ndarray]:
         self.cmd_vel_run[:2] = (
             0.98 * self.pre_cmd_vel_run[:2] + 0.02 * cmd_vel[:2]
         )
         self.cmd_vel_run[2] = cmd_vel[2]
-        ctx.current_cmd_vel[:] = self.cmd_vel_run
+        self.pre_cmd_vel_run = self.cmd_vel_run.copy()
+        return self.cmd_vel_run
+
+    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+        cmd_vel = self.get_cmd_vel(ctx)
         qpos, vel = ctx.amp_run.inference_step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
             ctx.current_omega,
-            self.cmd_vel_run,
+            cmd_vel,
         )
 
         if vel[0] > self.max_vel:
@@ -607,7 +614,6 @@ class AmpRunState(RobotControlState):
             ctx.loop_count = int(0.3 / ctx.dt)
             self.max_vel = 0.0
 
-        self.pre_cmd_vel_run = self.cmd_vel_run.copy()
         return self._motor_frame(qpos, ctx.amp_run.kps, ctx.amp_run.kds)
 
     def on_update(self, ctx: BxiExample, dt: float) -> None:
