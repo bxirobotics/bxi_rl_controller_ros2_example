@@ -69,6 +69,9 @@ sources:
       keyboard.normal_run:
         from: keyboard.key
         key: '5'
+      keyboard.back_flip:
+        from: keyboard.key
+        key: '6'
       keyboard.forward_flip:
         from: keyboard.key
         key: '7'
@@ -132,62 +135,65 @@ controls:
     min: -1.0
     max: 1.0
     alpha: 0.05
-  system.stop:
+  system.stop_event:
     type: bool
     source: gamepad.stop
-  system.start:
+  system.start_event:
     type: bool
     source: gamepad.start
-  shoulder.left:
+  shoulder.left_event:
     type: bool
     source: gamepad.lb
-  shoulder.right:
+  shoulder.right_event:
     type: bool
     source: gamepad.rb
-  button.south:
+  button.south_event:
     type: bool
     source: gamepad.a
-  button.east:
+  button.east_event:
     type: bool
     source: gamepad.b
-  button.west:
+  button.west_event:
     type: bool
     source: gamepad.x
-  button.north:
+  button.north_event:
     type: bool
     source: gamepad.y
-  trigger.left:
+  trigger.left_event:
     type: bool
     source: gamepad.trigger_left
     threshold: 0.85
     hysteresis: 0.05
-  trigger.right:
+  trigger.right_event:
     type: bool
     source: gamepad.trigger_right
     threshold: 0.85
     hysteresis: 0.05
-  keyboard.normal:
+  keyboard.normal_event:
     type: bool
     source: keyboard.normal
-  keyboard.recover:
+  keyboard.recover_event:
     type: bool
     source: keyboard.recover
-  keyboard.dance:
+  keyboard.dance_event:
     type: bool
     source: keyboard.dance
-  keyboard.amp_run:
+  keyboard.amp_run_event:
     type: bool
     source: keyboard.amp_run
-  keyboard.normal_run:
+  keyboard.normal_run_event:
     type: bool
     source: keyboard.normal_run
-  keyboard.forward_flip:
+  keyboard.back_flip_event:
+    type: bool
+    source: keyboard.back_flip
+  keyboard.forward_flip_event:
     type: bool
     source: keyboard.forward_flip
-  keyboard.applause:
+  keyboard.applause_event:
     type: bool
     source: keyboard.applause
-  keyboard.hello:
+  keyboard.hello_event:
     type: bool
     source: keyboard.hello
 outputs:
@@ -200,78 +206,84 @@ outputs:
   edge:
   - output: system.stop
     when:
-    - system.stop
+    - system.stop_event
   - output: system.start
     when:
-    - system.start
+    - system.start_event
   level:
   - output: btn_1=1
     when:
       any:
-      - - shoulder.right
-        - button.west
-      - - keyboard.normal
+      - - shoulder.right_event
+        - button.west_event
+      - - keyboard.normal_event
   - output: btn_2=1
     when:
-    - shoulder.right
-    - button.south
+    - shoulder.right_event
+    - button.south_event
   - output: btn_3=1
     when:
-    - shoulder.right
-    - button.east
+    - shoulder.right_event
+    - button.east_event
   - output: btn_4=1
     when:
-    - shoulder.right
-    - button.north
+    - shoulder.right_event
+    - button.north_event
   - output: btn_5=1
     when:
       any:
-      - - shoulder.left
-        - button.west
-      - - keyboard.dance
+      - - shoulder.left_event
+        - button.west_event
+      - - keyboard.dance_event
   - output: btn_6=1
     when:
       any:
-      - - shoulder.left
-        - button.south
-      - - keyboard.recover
+      - - shoulder.left_event
+        - button.south_event
+      - - keyboard.recover_event
   - output: btn_7=1
     when:
       any:
-      - - shoulder.left
-        - button.east
-      - - keyboard.normal_run
+      - - shoulder.left_event
+        - button.east_event
+      - - keyboard.normal_run_event
   - output: btn_8=1
     when:
       any:
-      - - shoulder.left
-        - button.north
-      - - keyboard.amp_run
+      - - shoulder.left_event
+        - button.north_event
+      - - keyboard.amp_run_event
   - output: btn_9=1
     when:
-    - button.west
-    - released: shoulder.left
-    - released: shoulder.right
-    - released: trigger.left
-    - released: trigger.right
+    - button.west_event
+    - released: shoulder.left_event
+    - released: shoulder.right_event
+    - released: trigger.left_event
+    - released: trigger.right_event
+  - output: btn_10=1
+    when:
+      any:
+      - - trigger.left_event
+        - button.west_event
+      - - keyboard.back_flip_event
   - output: btn_10=2
     when:
       any:
-      - - trigger.left
-        - button.north
-      - - keyboard.forward_flip
+      - - trigger.left_event
+        - button.north_event
+      - - keyboard.forward_flip_event
   - output: btn_10=3
     when:
       any:
-      - - trigger.right
-        - button.east
-      - - keyboard.applause
+      - - trigger.right_event
+        - button.east_event
+      - - keyboard.applause_event
   - output: btn_10=4
     when:
       any:
-      - - trigger.right
-        - button.south
-      - - keyboard.hello
+      - - trigger.right_event
+        - button.south_event
+      - - keyboard.hello_event
 system:
   start:
   - mkdir -p /var/log/bxi_log
