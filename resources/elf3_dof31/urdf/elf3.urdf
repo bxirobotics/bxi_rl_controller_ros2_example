@@ -997,11 +997,11 @@
     <axis xyz="0 0 0" />
   </joint>
 
-  <link name="torso_d435i_link"/>
-  <joint name="torso_d435i_joint" type="fixed">
+  <link name="torso_front_bottom_d435i_link"/>
+  <joint name="torso_front_bottom_d435i_joint" type="fixed">
     <origin xyz="0.1152 0.0175 -0.1358" rpy="-2.7925 0 -1.5708" />
     <parent link="torso_link" />
-    <child link="torso_d435i_link" />
+    <child link="torso_front_bottom_d435i_link" />
     <axis xyz="0 0 0" />
   </joint>
 
