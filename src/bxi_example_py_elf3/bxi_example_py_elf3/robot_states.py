@@ -24,7 +24,11 @@ class NormalState(RobotControlState):
         transition: TransitionProfile,
     ) -> None:
         super().on_prepare_enter(ctx, from_state, transition)
-        ctx.preheat_model(ctx.normal, with_cmd_vel=True)
+        ctx.preheat_model(
+            ctx.normal,
+            with_cmd_vel=True,
+            cmd_vel=self.get_cmd_vel(ctx),
+        )
 
     def on_enter(self, ctx: BxiExample) -> None:
         self.reset_loop(ctx)
@@ -35,12 +39,13 @@ class NormalState(RobotControlState):
         )
 
     def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+        cmd_vel = self.get_cmd_vel(ctx)
         qpos, vel = ctx.normal.inference_step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
             ctx.current_omega,
-            ctx.current_cmd_vel,
+            cmd_vel,
         )
         return self._motor_frame(qpos, ctx.normal.kps, ctx.normal.kds)
 
@@ -330,7 +335,11 @@ class ApplauseState(RobotControlState):
         transition: TransitionProfile,
     ) -> None:
         super().on_prepare_enter(ctx, from_state, transition)
-        ctx.preheat_model(ctx.noarm, with_cmd_vel=True)
+        ctx.preheat_model(
+            ctx.noarm,
+            with_cmd_vel=True,
+            cmd_vel=self.get_cmd_vel(ctx),
+        )
 
     def on_enter(self, ctx: BxiExample) -> None:
         self.reset_loop(ctx)
@@ -351,12 +360,13 @@ class ApplauseState(RobotControlState):
             ctx.request_state("zero_torque", trigger="safety")
             return
 
+        cmd_vel = self.get_cmd_vel(ctx)
         qpos, vel = ctx.noarm.inference_step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
             ctx.current_omega,
-            ctx.current_cmd_vel,
+            cmd_vel,
         )
 
         if self.returning:
@@ -409,7 +419,11 @@ class HelloState(RobotControlState):
         transition: TransitionProfile,
     ) -> None:
         super().on_prepare_enter(ctx, from_state, transition)
-        ctx.preheat_model(ctx.noarm, with_cmd_vel=True)
+        ctx.preheat_model(
+            ctx.noarm,
+            with_cmd_vel=True,
+            cmd_vel=self.get_cmd_vel(ctx),
+        )
 
     def on_enter(self, ctx: BxiExample) -> None:
         self.reset_loop(ctx)
@@ -426,12 +440,13 @@ class HelloState(RobotControlState):
     def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
         if self.shaketime < 50:
             self.kp = self.shaketime / 50 * ctx.noarm.kps
+        cmd_vel = self.get_cmd_vel(ctx)
         qpos, vel = ctx.noarm.inference_step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
             ctx.current_omega,
-            ctx.current_cmd_vel,
+            cmd_vel,
         )
         qpos[22] = -0.9
         qpos[24] = math.sin(self.shaketime / 10) * 0.5
@@ -553,7 +568,11 @@ class AmpRunState(RobotControlState):
         transition: TransitionProfile,
     ) -> None:
         super().on_prepare_enter(ctx, from_state, transition)
-        ctx.preheat_model(ctx.amp_run, with_cmd_vel=True)
+        ctx.preheat_model(
+            ctx.amp_run,
+            with_cmd_vel=True,
+            cmd_vel=self.get_cmd_vel(ctx),
+        )
 
     def on_enter(self, ctx: BxiExample) -> None:
         self.reset_loop(ctx)
@@ -567,10 +586,12 @@ class AmpRunState(RobotControlState):
         )
 
     def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+        cmd_vel = self.get_cmd_vel(ctx)
         self.cmd_vel_run[:2] = (
-            0.98 * self.pre_cmd_vel_run[:2] + 0.02 * ctx.current_cmd_vel[:2]
+            0.98 * self.pre_cmd_vel_run[:2] + 0.02 * cmd_vel[:2]
         )
-        self.cmd_vel_run[2] = ctx.current_cmd_vel[2]
+        self.cmd_vel_run[2] = cmd_vel[2]
+        ctx.current_cmd_vel[:] = self.cmd_vel_run
         qpos, vel = ctx.amp_run.inference_step(
             ctx.current_q,
             ctx.current_dq,
@@ -608,7 +629,11 @@ class NormalRunState(RobotControlState):
         transition: TransitionProfile,
     ) -> None:
         super().on_prepare_enter(ctx, from_state, transition)
-        ctx.preheat_model(ctx.normal_run, with_cmd_vel=True)
+        ctx.preheat_model(
+            ctx.normal_run,
+            with_cmd_vel=True,
+            cmd_vel=self.get_cmd_vel(ctx),
+        )
 
     def on_enter(self, ctx: BxiExample) -> None:
         self.reset_loop(ctx)
@@ -626,12 +651,13 @@ class NormalRunState(RobotControlState):
         )
 
     def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+        cmd_vel = self.get_cmd_vel(ctx)
         qpos = ctx.normal_run.infer_step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_xyzw,
             ctx.current_omega,
-            ctx.current_cmd_vel,
+            cmd_vel,
         )
         return self._motor_frame(
             qpos,
@@ -702,6 +728,8 @@ def build_robot_states(config):
             state_name, state_config, used_ids, next_id
         )
         params = state_config.get("params", {}) or {}
-        states[state_name] = behavior_class(state_name, state_id, **params)
+        state = behavior_class(state_name, state_id, **params)
+        state.speed_profile_name = state_config.get("speed_profile")
+        states[state_name] = state
 
     return states
