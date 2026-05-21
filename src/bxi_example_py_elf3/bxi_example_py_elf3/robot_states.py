@@ -275,7 +275,7 @@ class BackFlipState(FlipState):
     policy_attr = "back_flip"
     finish_trigger = "back_flip_finished"
     end_frame_trim = 20
-    transition_duration = 2.0
+    transition_duration = 1.0
 
 
 class ForwardFlipState(FlipState):

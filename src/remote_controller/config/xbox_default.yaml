@@ -105,36 +105,36 @@ controls:
     max: 1.0
     alpha: 0.05
 
-  system.stop: {type: bool, source: gamepad.stop}
-  system.start: {type: bool, source: gamepad.start}
-  shoulder.left: {type: bool, source: gamepad.lb}
-  shoulder.right: {type: bool, source: gamepad.rb}
-  button.south: {type: bool, source: gamepad.a}
-  button.east: {type: bool, source: gamepad.b}
-  button.west: {type: bool, source: gamepad.x}
-  button.north: {type: bool, source: gamepad.y}
+  system.stop_event: {type: bool, source: gamepad.stop}
+  system.start_event: {type: bool, source: gamepad.start}
+  shoulder.left_event: {type: bool, source: gamepad.lb}
+  shoulder.right_event: {type: bool, source: gamepad.rb}
+  button.south_event: {type: bool, source: gamepad.a}
+  button.east_event: {type: bool, source: gamepad.b}
+  button.west_event: {type: bool, source: gamepad.x}
+  button.north_event: {type: bool, source: gamepad.y}
 
-  trigger.left:
+  trigger.left_event:
     type: bool
     source: gamepad.trigger_left
     threshold: 0.85
     hysteresis: 0.05
 
-  trigger.right:
+  trigger.right_event:
     type: bool
     source: gamepad.trigger_right
     threshold: 0.85
     hysteresis: 0.05
 
-  keyboard.normal: {type: bool, source: keyboard.normal}
-  keyboard.recover: {type: bool, source: keyboard.recover}
-  keyboard.dance: {type: bool, source: keyboard.dance}
-  keyboard.amp_run: {type: bool, source: keyboard.amp_run}
-  keyboard.normal_run: {type: bool, source: keyboard.normal_run}
-  keyboard.back_flip: {type: bool, source: keyboard.back_flip}
-  keyboard.forward_flip: {type: bool, source: keyboard.forward_flip}
-  keyboard.applause: {type: bool, source: keyboard.applause}
-  keyboard.hello: {type: bool, source: keyboard.hello}
+  keyboard.normal_event: {type: bool, source: keyboard.normal}
+  keyboard.recover_event: {type: bool, source: keyboard.recover}
+  keyboard.dance_event: {type: bool, source: keyboard.dance}
+  keyboard.amp_run_event: {type: bool, source: keyboard.amp_run}
+  keyboard.normal_run_event: {type: bool, source: keyboard.normal_run}
+  keyboard.back_flip_event: {type: bool, source: keyboard.back_flip}
+  keyboard.forward_flip_event: {type: bool, source: keyboard.forward_flip}
+  keyboard.applause_event: {type: bool, source: keyboard.applause}
+  keyboard.hello_event: {type: bool, source: keyboard.hello}
 
 #将统一的controls映射到输出
 outputs:
@@ -151,82 +151,82 @@ outputs:
   edge:
     #sysyem.<name>代表触发下面的特定命令
     - output: system.stop
-      when: [system.stop]
+      when: [system.stop_event]
     - output: system.start
-      when: [system.start]
+      when: [system.start_event]
 
   #电平触发，满足条件会一直输出
   level:
     - output: btn_1=1
       when:
         any:
-          - [shoulder.right, button.west]
-          - [keyboard.normal]
+          - [shoulder.right_event, button.west_event]
+          - [keyboard.normal_event]
 
     - output: btn_2=1
-      when: [shoulder.right, button.south]
+      when: [shoulder.right_event, button.south_event]
 
     - output: btn_3=1
-      when: [shoulder.right, button.east]
+      when: [shoulder.right_event, button.east_event]
 
     - output: btn_4=1
-      when: [shoulder.right, button.north]
+      when: [shoulder.right_event, button.north_event]
 
     - output: btn_5=1
       when:
         any:
-          - [shoulder.left, button.west]
-          - [keyboard.dance]
+          - [shoulder.left_event, button.west_event]
+          - [keyboard.dance_event]
 
     - output: btn_6=1
       when:
         any:
-          - [shoulder.left, button.south]
-          - [keyboard.recover]
+          - [shoulder.left_event, button.south_event]
+          - [keyboard.recover_event]
 
     - output: btn_7=1
       when:
         any:
-          - [shoulder.left, button.east]
-          - [keyboard.normal_run]
+          - [shoulder.left_event, button.east_event]
+          - [keyboard.normal_run_event]
 
     - output: btn_8=1
       when:
         any:
-          - [shoulder.left, button.north]
-          - [keyboard.amp_run]
+          - [shoulder.left_event, button.north_event]
+          - [keyboard.amp_run_event]
 
     - output: btn_9=1
       when:
-        - button.west
-        - released: shoulder.left
-        - released: shoulder.right
-        - released: trigger.left
-        - released: trigger.right
+        - button.west_event
+        - released: shoulder.left_event
+        - released: shoulder.right_event
+        - released: trigger.left_event
+        - released: trigger.right_event
 
     - output: btn_10=1
       when:
         any:
-          - [trigger.left, button.west]
-          - [keyboard.back_flip]
+          - [trigger.left_event, button.west_event]
+          - [keyboard.back_flip_event]
 
     - output: btn_10=2
       when:
         any:
-          - [trigger.left, button.north]
-          - [keyboard.forward_flip]
+          - [trigger.left_event, button.north_event]
+          - [keyboard.forward_flip_event]
 
     - output: btn_10=3
       when:
         any:
-          - [trigger.right, button.east]
-          - [keyboard.applause]
+          - [trigger.right_event, button.east_event]
+          - [keyboard.applause_event]
 
     - output: btn_10=4
       when:
         any:
-          - [trigger.right, button.south]
-          - [keyboard.hello]
+          - [trigger.right_event, button.south_event]
+          - [keyboard.hello_event]
 
 #自定义命令
 system:

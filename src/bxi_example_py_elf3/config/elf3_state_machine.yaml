@@ -10,43 +10,43 @@ graph:
 
 #将MotionCommands映射为事件
 remote_events:
-  normal:
+  normal_event:
     slot: btn_1
     value: 1
-  zero_torque:
+  zero_torque_event:
     slot: btn_2
     value: 1
-  pd_brake:
+  pd_brake_event:
     slot: btn_3
     value: 1
-  initial_pos:
+  initial_pos_event:
     slot: btn_4
     value: 1
-  dance:
+  dance_event:
     slot: btn_5
     value: 1
-  recover:
+  recover_event:
     slot: btn_6
     value: 1
-  normal_run:
+  normal_run_event:
     slot: btn_7
     value: 1
-  amp_run:
+  amp_run_event:
     slot: btn_8
     value: 1
-  toggle_dance_pause:
+  toggle_dance_pause_event:
     slot: btn_9
     value: 1
-  back_flip:
+  back_flip_event:
     slot: btn_10
     value: 1
-  forward_flip:
+  forward_flip_event:
     slot: btn_10
     value: 2
-  applause:
+  applause_event:
     slot: btn_10
     value: 3
-  hello:
+  hello_event:
     slot: btn_10
     value: 4
 
@@ -117,31 +117,31 @@ states:
     speed_profile: normal
     transitions:
       on_event:
-        zero_torque: zero_torque
-        pd_brake: pd_brake
-        initial_pos: initial_pos
-        amp_run:
+        zero_torque_event: zero_torque
+        pd_brake_event: pd_brake
+        initial_pos_event: initial_pos
+        amp_run_event:
           to: amp_run
           transition: soft_switch
-        normal_run:
+        normal_run_event:
           to: normal_run
           transition: soft_switch
-        dance:
+        dance_event:
           to: dance
           transition: soft_switch
-        recover:
+        recover_event:
           to: recover
           transition: soft_switch
-        back_flip:
+        back_flip_event:
           to: back_flip
           transition: soft_switch
-        forward_flip:
+        forward_flip_event:
           to: forward_flip
           transition: soft_switch
-        applause:
+        applause_event:
           to: applause
           transition: dual_running_blend
-        hello:
+        hello_event:
           to: hello
           transition: dual_running_blend
 
@@ -149,22 +149,22 @@ states:
     behavior: ZeroTorqueState
     transitions:
       on_event:
-        normal:
+        normal_event:
           to: normal
           transition: soft_switch
-        pd_brake: 
+        pd_brake_event: 
           to: pd_brake
-          transition: 
+          transition_event: 
             base: first_frame_switch
             enter_duration: 1.0
-        initial_pos: 
+        initial_pos_event: 
           to: initial_pos
           transition: 
             base: first_frame_switch
             enter_duration: 1.0
-        recover:
+        recover_event:
           to: recover
-          transition: 
+          transition:
             base: first_frame_switch
             enter_duration: 1.0
 
@@ -172,16 +172,16 @@ states:
     behavior: PdBrakeState
     transitions:
       on_event:
-        normal:
+        normal_event:
           to: normal
           transition: soft_switch
-        zero_torque: zero_torque
-        initial_pos: 
+        zero_torque_event: zero_torque
+        initial_pos_event: 
           to: initial_pos
           transition: 
             base: first_frame_switch
             enter_duration: 1.0
-        recover:
+        recover_event:
           to: recover
           transition:
             base: first_frame_switch
@@ -191,16 +191,16 @@ states:
     behavior: InitialPosState
     transitions:
       on_event:
-        normal:
+        normal_event:
           to: normal
           transition: soft_switch
-        pd_brake: 
+        pd_brake_event: 
           to: pd_brake
           transition: 
             base: first_frame_switch
             enter_duration: 1.0
-        zero_torque: zero_torque
-        recover:
+        zero_torque_event: zero_torque
+        recover_event:
           to: recover
           transition: soft_switch
 
@@ -208,31 +208,31 @@ states:
     behavior: DanceState
     transitions:
       on_event:
-        normal:
+        normal_event:
           to: normal
           transition: 
             base: dual_running_blend
             duration: 1.0
-        toggle_dance_pause:
+        toggle_dance_pause_event:
           action: toggle_dance_pause
 
   recover:
     behavior: RecoverState
     transitions:
       on_event:
-        normal:
+        normal_event:
           to: normal
           transition: soft_switch
-        zero_torque: zero_torque
-        pd_brake: pd_brake
-        initial_pos: initial_pos
+        zero_torque_event: zero_torque
+        pd_brake_event: pd_brake
+        initial_pos_event: initial_pos
 
   amp_run:
     behavior: AmpRunState
     speed_profile: amp_run
     transitions:
       on_event:
-        normal:
+        normal_event:
           to: normal
           transition: soft_switch
 
@@ -241,7 +241,7 @@ states:
     speed_profile: normal_run
     transitions:
       on_event:
-        normal:
+        normal_event:
           to: normal
           transition: soft_switch
 
@@ -249,35 +249,35 @@ states:
     behavior: BackFlipState
     transitions:
       on_event:
-        normal:
+        normal_event:
           to: normal
           transition: 
             base: dual_running_blend
             duration: 2.0
-        zero_torque: zero_torque
+        zero_torque_event: zero_torque
 
   forward_flip:
     behavior: ForwardFlipState
     transitions:
       on_event:
-        normal:
+        normal_event:
           to: normal
           transition: 
             base: dual_running_blend
             duration: 2.0
-        zero_torque: zero_torque
+        zero_torque_event: zero_torque
 
   applause:
     behavior: ApplauseState
     speed_profile: normal
     transitions:
       on_event:
-        normal:
+        normal_event:
           to: normal
           transition: 
             base: dual_running_blend
             duration: 1.0
-        toggle_dance_pause:
+        toggle_dance_pause_event:
           action: toggle_dance_pause
 
   hello:
@@ -285,10 +285,10 @@ states:
     speed_profile: normal
     transitions:
       on_event:
-        normal:
+        normal_event:
           to: normal
           transition: 
             base: dual_running_blend
             duration: 1.0
-        toggle_dance_pause:
+        toggle_dance_pause_event:
           action: toggle_dance_pause
