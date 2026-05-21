@@ -284,6 +284,12 @@ outputs:
       - - trigger.right_event
         - button.south_event
       - - keyboard.hello_event
+  - output: btn_10=5
+    when:
+      any:
+      - - trigger.right_event
+        - button.west_event
+      - - keyboard.hello_event
 system:
   start:
   - mkdir -p /var/log/bxi_log

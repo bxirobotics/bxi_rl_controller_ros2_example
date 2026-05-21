@@ -283,12 +283,13 @@ class ForwardFlipState(FlipState):
     transition_duration = 1.0
 
 
-class ApplauseState(RobotControlState):
+class HandPlayBackState(RobotControlState):
+    start_frame = 0
+    tail_trim_frames = 0
+    return_time = 0.5
+    file_name = "applause.pkl"
     def __init__(self, name, state_id):
         super().__init__(name, state_id)
-        self.start_frame = 600
-        self.tail_trim_frames = 600
-        self.return_time = 0.5
         self.frame = 0.0
         self.return_elapsed = 0.0
         self.returning = False
@@ -300,7 +301,7 @@ class ApplauseState(RobotControlState):
             data_path = os.path.join(
                 get_package_share_path("bxi_example_py_elf3"),
                 "data",
-                "applause.pkl",
+                self.file_name,
             )
         except Exception:
             data_path = ""
@@ -317,7 +318,7 @@ class ApplauseState(RobotControlState):
         end = max(start, dof_pos.shape[0] - self.tail_trim_frames)
         applause_data = dof_pos[start:end]
         if applause_data.shape[0] == 0:
-            raise ValueError(f"applause data is empty after frame trim: {data_path}")
+            raise ValueError(f"HandPlayBack data is empty after frame trim: {data_path}")
 
         return applause_data, float(data["fps"])
 
@@ -400,6 +401,15 @@ class ApplauseState(RobotControlState):
         self.playing = not self.playing
         return True
 
+class ApplauseState(HandPlayBackState):
+    start_frame = 600
+    tail_trim_frames = 600
+    file_name = "applause.pkl"
+
+class NaotouState(HandPlayBackState):
+    start_frame = 40
+    tail_trim_frames = 90
+    file_name = "naotou.pkl"
 
 class HelloState(RobotControlState):
     def __init__(self, name, state_id):
