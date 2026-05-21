@@ -182,36 +182,31 @@ class BxiExample(Node):
         self.joint_kp = joint_kp
         self.joint_kd = joint_kd
         self.loop_count = 0
-        robot_states = build_robot_states(self.state_machine_config)
-        self.state_id_by_name = {name: state.state_id for name, state in robot_states.items()}
-        self.state_name_by_id = {value: key for key, value in self.state_id_by_name.items()}
         self.motor_target = None
-        self.state_machine = RobotStateMachine(
-            self,
-            self.state_machine_config,
-            robot_states,
-        )
-        self.remote_event_adapter = RemoteEventAdapter(self.state_machine_config.get("remote_events", {}))
         self.speed_profiles = self.state_machine_config.get("speed_profiles", {})
-        self.state_speed_profiles = {
-            name: (state_config or {}).get("speed_profile")
-            for name, state_config in self.state_machine_config.get("states", {}).items()
-        }
-        self.missing_speed_profile_warnings = set()
-
-        self.state = self.state_machine.current_state_id
         self.pending_remote_events = deque()
         self.current_q = np.zeros(dof_num, dtype=np.double)
         self.current_dq = np.zeros(dof_num, dtype=np.double)
         self.current_omega = np.zeros(3, dtype=np.double)
         self.current_quat_xyzw = np.zeros(4, dtype=np.double)
         self.current_quat_wxyz = np.zeros(4, dtype=np.double)
-        self.current_cmd_vel = np.zeros(3, dtype=np.double)
+        self.raw_cmd_vel = np.zeros(3, dtype=np.float32)
+        self.current_raw_cmd_vel = np.zeros(3, dtype=np.float32)
+        self.current_cmd_vel = np.zeros(3, dtype=np.float32)
 
-        # 运动命令变量
-        self.vx = 0.0
-        self.vy = 0
-        self.dyaw = 0
+        robot_states = build_robot_states(self.state_machine_config)
+        self.robot_states = robot_states
+        self.state_id_by_name = {name: state.state_id for name, state in robot_states.items()}
+        self.state_name_by_id = {value: key for key, value in self.state_id_by_name.items()}
+        self.bind_robot_states(robot_states)
+        self.state_machine = RobotStateMachine(
+            self,
+            self.state_machine_config,
+            robot_states,
+        )
+        self.remote_event_adapter = RemoteEventAdapter(self.state_machine_config.get("remote_events", {}))
+
+        self.state = self.state_machine.current_state_id
 
         # 定时器初始化
         self.step = 0
@@ -254,6 +249,10 @@ class BxiExample(Node):
 
         package_root = os.path.dirname(os.path.dirname(__file__))
         return os.path.join(package_root, "config", "elf3_state_machine.yaml")
+
+    def bind_robot_states(self, robot_states):
+        for state in robot_states.values():
+            state.on_bind(self)
 
     def init_pub_sub(self):
         # 订阅和发布主题
@@ -301,7 +300,8 @@ class BxiExample(Node):
                 self.current_quat_xyzw = self.quat_xyzw.copy()
                 self.current_quat_wxyz = self.quat_wxyz.copy()
                 self.current_omega = self.omega.copy()
-                self.current_cmd_vel = np.array([self.vx, self.vy, self.dyaw])
+                self.current_raw_cmd_vel[:] = self.raw_cmd_vel
+                self.current_cmd_vel.fill(0.0)
                 events = list(self.pending_remote_events)
                 self.pending_remote_events.clear()
 
@@ -449,34 +449,13 @@ class BxiExample(Node):
         eu_ang[eu_ang > math.pi] -= 2 * math.pi
         return (np.abs(eu_ang[0]) > (math.pi / 3.0)) or (np.abs(eu_ang[1]) > (math.pi / 3.0))
 
-    def apply_velocity_profile(self, msg):
-        state_name = self.state_machine.current_state_name
-        profile_name = self.state_speed_profiles.get(state_name)
-        if not profile_name:
-            return
-
-        profile = self.speed_profiles.get(profile_name)
-        if profile is None:
-            if profile_name not in self.missing_speed_profile_warnings:
-                self.get_logger().warning(
-                    f"state '{state_name}' references unknown speed_profile '{profile_name}'"
-                )
-                self.missing_speed_profile_warnings.add(profile_name)
-            return
-
-        vx_scale = float(profile.get("vx_scale", 1.0))
-        vy_scale = float(profile.get("vy_scale", 1.0))
-        yaw_scale = float(profile.get("yaw_scale", 1.0))
-        vx_min = float(profile.get("vx_min", -np.inf))
-        vx_max = float(profile.get("vx_max", np.inf))
-
-        self.vx = np.clip(msg.vel_des.x * vx_scale, vx_min, vx_max)
-        self.vy = msg.vel_des.y * vy_scale
-        self.dyaw = msg.yawdot_des * yaw_scale
-
     def joy_callback(self, msg):
         with self.lock_in:
-            self.apply_velocity_profile(msg)
+            self.raw_cmd_vel[:] = (
+                msg.vel_des.x,
+                msg.vel_des.y,
+                msg.yawdot_des,
+            )
             events = self.remote_event_adapter.extract_events(msg, sync_only=self.step < 2)
             self.pending_remote_events.extend(events)
 
@@ -523,14 +502,17 @@ class BxiExample(Node):
             model.obs_tensor = np.expand_dims(model.obs, axis=0)
 
     # --- 模型切换过渡逻辑 ---
-    def preheat_model(self, model, with_cmd_vel=False):
+    def preheat_model(self, model, with_cmd_vel=False, cmd_vel=None):
         # 用当前观测预推理一次，不输出到电机；有历史观测的模型随后用当前观测填满历史。
         q = self.qpos.copy()
         dq = self.qvel.copy()
         omega = self.omega.copy()
         quat_xyzw = self.quat_xyzw.copy()
         quat_wxyz = self.quat_wxyz.copy()
-        cmd_vel = np.array([self.vx, self.vy, self.dyaw], dtype=np.float32)
+        if cmd_vel is None:
+            cmd_vel = self.current_cmd_vel.copy()
+        else:
+            cmd_vel = np.asarray(cmd_vel, dtype=np.float32)
 
         if model is self.normal_run:
             model.infer_step(q, dq, quat_xyzw, omega, cmd_vel)
