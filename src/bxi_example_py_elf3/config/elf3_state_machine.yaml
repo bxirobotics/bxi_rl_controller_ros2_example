@@ -154,7 +154,7 @@ states:
           transition: soft_switch
         pd_brake_event: 
           to: pd_brake
-          transition_event: 
+          transition: 
             base: first_frame_switch
             enter_duration: 1.0
         initial_pos_event: 
