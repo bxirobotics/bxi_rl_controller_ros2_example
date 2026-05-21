@@ -21,6 +21,9 @@ class RobotControlState(StateBehavior[BxiExample]):
         self._missing_speed_profile_warned = False
         self._cmd_vel_buffer = np.zeros(3, dtype=np.float32)
 
+    def on_bind(self, ctx: BxiExample) -> None:
+        """Called once after the state is created and before the state machine starts."""
+
     def on_exit(self, ctx: BxiExample) -> None:
         ctx.pos_last_state = ctx.qpos.copy()
         ctx.kp_last_state = ctx.kp_last.copy()
@@ -79,14 +82,32 @@ class RobotControlState(StateBehavior[BxiExample]):
         return None
 
     def get_cmd_vel(self, ctx: BxiExample) -> np.ndarray:
+        cmd_vel = self._profile_cmd_vel(ctx)
+        processed_cmd_vel = self.process_cmd_vel(ctx, cmd_vel)
+        if processed_cmd_vel is None:
+            processed_cmd_vel = cmd_vel
+        return self._publish_cmd_vel(ctx, processed_cmd_vel)
+
+    def process_cmd_vel(
+        self,
+        ctx: BxiExample,
+        cmd_vel: np.ndarray,
+    ) -> Optional[np.ndarray]:
+        """Override to customize the profiled command velocity for this state.
+
+        The returned value is published to ctx.current_cmd_vel by get_cmd_vel().
+        Implementations may either mutate cmd_vel in place and return None, or
+        return a new length-3 array-like value.
+        """
+        return cmd_vel
+
+    def _profile_cmd_vel(self, ctx: BxiExample) -> np.ndarray:
         self._cmd_vel_buffer.fill(0.0)
         raw_cmd_vel = getattr(ctx, "current_raw_cmd_vel", None)
         if raw_cmd_vel is None:
-            self._publish_cmd_vel(ctx)
             return self._cmd_vel_buffer
 
         if not self.speed_profile_name:
-            self._publish_cmd_vel(ctx)
             return self._cmd_vel_buffer
 
         profile = getattr(ctx, "speed_profiles", {}).get(self.speed_profile_name)
@@ -102,7 +123,6 @@ class RobotControlState(StateBehavior[BxiExample]):
                 else:
                     print(message)
                 self._missing_speed_profile_warned = True
-            self._publish_cmd_vel(ctx)
             return self._cmd_vel_buffer
 
         vx_scale = float(profile.get("vx_scale", 1.0))
@@ -122,13 +142,18 @@ class RobotControlState(StateBehavior[BxiExample]):
             yaw_min,
             yaw_max,
         )
-        self._publish_cmd_vel(ctx)
         return self._cmd_vel_buffer
 
-    def _publish_cmd_vel(self, ctx: BxiExample) -> None:
+    def _publish_cmd_vel(
+        self,
+        ctx: BxiExample,
+        cmd_vel: np.ndarray,
+    ) -> np.ndarray:
+        self._cmd_vel_buffer[:] = np.asarray(cmd_vel, dtype=np.float32).reshape(3)
         current_cmd_vel = getattr(ctx, "current_cmd_vel", None)
         if current_cmd_vel is not None:
             current_cmd_vel[:] = self._cmd_vel_buffer
+        return self._cmd_vel_buffer
 
     def get_transition_frame(
         self,

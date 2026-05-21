@@ -187,19 +187,8 @@ class BxiExample(Node):
         self.joint_kp = joint_kp
         self.joint_kd = joint_kd
         self.loop_count = 0
-        robot_states = build_robot_states(self.state_machine_config)
-        self.state_id_by_name = {name: state.state_id for name, state in robot_states.items()}
-        self.state_name_by_id = {value: key for key, value in self.state_id_by_name.items()}
         self.motor_target = None
-        self.state_machine = RobotStateMachine(
-            self,
-            self.state_machine_config,
-            robot_states,
-        )
-        self.remote_event_adapter = RemoteEventAdapter(self.state_machine_config.get("remote_events", {}))
         self.speed_profiles = self.state_machine_config.get("speed_profiles", {})
-
-        self.state = self.state_machine.current_state_id
         self.pending_remote_events = deque()
         self.current_q = np.zeros(dof_num, dtype=np.double)
         self.current_dq = np.zeros(dof_num, dtype=np.double)
@@ -209,6 +198,20 @@ class BxiExample(Node):
         self.raw_cmd_vel = np.zeros(3, dtype=np.float32)
         self.current_raw_cmd_vel = np.zeros(3, dtype=np.float32)
         self.current_cmd_vel = np.zeros(3, dtype=np.float32)
+
+        robot_states = build_robot_states(self.state_machine_config)
+        self.robot_states = robot_states
+        self.state_id_by_name = {name: state.state_id for name, state in robot_states.items()}
+        self.state_name_by_id = {value: key for key, value in self.state_id_by_name.items()}
+        self.bind_robot_states(robot_states)
+        self.state_machine = RobotStateMachine(
+            self,
+            self.state_machine_config,
+            robot_states,
+        )
+        self.remote_event_adapter = RemoteEventAdapter(self.state_machine_config.get("remote_events", {}))
+
+        self.state = self.state_machine.current_state_id
 
         # 定时器初始化
         self.step = 0
@@ -251,6 +254,10 @@ class BxiExample(Node):
 
         package_root = os.path.dirname(os.path.dirname(__file__))
         return os.path.join(package_root, "config", "elf3_state_machine.yaml")
+
+    def bind_robot_states(self, robot_states):
+        for state in robot_states.values():
+            state.on_bind(self)
 
     def init_pub_sub(self):
         # 订阅和发布主题
