@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import os
 import re
 import shutil
 import sys
@@ -25,7 +24,6 @@ ROOT_RELATIVE_PREFIXES = {"src", "tools", ".github"}
 class ProtectedState:
     name: str
     behaviors: Set[str]
-    events: Set[str]
     model_keys: Set[str]
     files: Set[Path]
 
@@ -36,7 +34,6 @@ class ProtectionSpec:
     state_machine_config: Path
     robot_states: Path
     demo_node: Path
-    launch_glob: str
     states: Dict[str, ProtectedState]
 
 
@@ -104,24 +101,6 @@ def resolve_manifest_path(source_root: Path, manifest_path: Path, value: str) ->
     return relative_to_root(source_root, candidate)
 
 
-def relative_pattern_to_root(source_root: Path, pattern: Path) -> str:
-    rel_path = os.path.relpath(os.path.normpath(str(pattern)), str(source_root.resolve()))
-    if rel_path == os.pardir or rel_path.startswith(os.pardir + os.sep):
-        raise ValueError(f"launch glob is outside repository root: {pattern}")
-    return rel_path
-
-
-def resolve_manifest_glob(source_root: Path, manifest_path: Path, value: str) -> str:
-    raw_path = Path(value)
-    if raw_path.is_absolute():
-        candidate = raw_path
-    elif is_root_relative(raw_path):
-        candidate = source_root / raw_path
-    else:
-        candidate = manifest_path.parent / raw_path
-    return relative_pattern_to_root(source_root, candidate)
-
-
 def default_package_root(manifest_path: Path) -> Path:
     if manifest_path.parent.name == "config":
         return manifest_path.parent.parent
@@ -141,7 +120,6 @@ def load_protection_spec(source_root: Path, manifest_arg: Path) -> ProtectionSpe
     default_state_machine = manifest_path.parent / "elf3_state_machine.yaml"
     default_robot_states = package_root / package_name / "robot_states.py"
     default_demo_node = package_root / package_name / "bxi_example_demo.py"
-    default_launch_glob = package_root / "launch" / "*.launch.py"
 
     state_machine_config = (
         resolve_manifest_path(source_root, manifest_path, str(paths["state_machine"]))
@@ -158,11 +136,6 @@ def load_protection_spec(source_root: Path, manifest_arg: Path) -> ProtectionSpe
         if paths.get("demo_node") else
         relative_to_root(source_root, default_demo_node)
     )
-    launch_glob = (
-        resolve_manifest_glob(source_root, manifest_path, str(paths["launch_glob"]))
-        if paths.get("launch_glob") else
-        relative_pattern_to_root(source_root, default_launch_glob)
-    )
 
     states: Dict[str, ProtectedState] = {}
     for state_name, raw_config in (manifest.get("protected_states") or {}).items():
@@ -173,7 +146,6 @@ def load_protection_spec(source_root: Path, manifest_arg: Path) -> ProtectionSpe
         states[str(state_name)] = ProtectedState(
             name=str(state_name),
             behaviors=behaviors,
-            events=set(string_list(config.get("events"), f"{field}.events")),
             model_keys=set(string_list(config.get("model_keys"), f"{field}.model_keys")),
             files={
                 resolve_manifest_path(source_root, manifest_path, item)
@@ -186,7 +158,6 @@ def load_protection_spec(source_root: Path, manifest_arg: Path) -> ProtectionSpe
         state_machine_config=state_machine_config,
         robot_states=robot_states,
         demo_node=demo_node,
-        launch_glob=launch_glob,
         states=states,
     )
 
@@ -237,36 +208,44 @@ def remote_event_output(event_config: Any) -> Optional[str]:
     return None
 
 
-def analyze_event_usage(
+def infer_events_to_remove(
     path: Path,
     states: Dict[str, Any],
     states_to_remove: Set[str],
-    protected_events: Set[str],
 ) -> Set[str]:
-    events_to_keep: Set[str] = set()
+    candidate_events: Set[str] = set()
+    target_removed_events: Set[str] = set()
+    public_events: Set[str] = set()
+
     for state_name, state_config in states.items():
-        if state_name in states_to_remove:
-            continue
+        source_removed = state_name in states_to_remove
         transitions = (state_config or {}).get("transitions") or {}
         on_event = transitions.get("on_event")
         if not isinstance(on_event, dict):
             continue
+
         for event, rule in on_event.items():
             event_name = str(event)
-            if event_name not in protected_events:
-                continue
             target = transition_target(rule)
-            if target in states_to_remove:
-                continue
-            events_to_keep.add(event_name)
-            warn(
-                f"{path}: protected event '{event_name}' is also used by public state "
-                f"'{state_name}', keeping that event and its input path"
-            )
-    return events_to_keep
+            target_removed = target in states_to_remove
+            if source_removed or target_removed:
+                candidate_events.add(event_name)
+            if target_removed:
+                target_removed_events.add(event_name)
+            if not source_removed and not target_removed:
+                public_events.add(event_name)
+
+    events_to_remove = candidate_events - public_events
+    for event_name in sorted(target_removed_events & public_events):
+        warn(
+            f"{path}: event '{event_name}' is connected to a protected state but "
+            "is also used by public states, keeping that event and its input path"
+        )
+
+    return events_to_remove
 
 
-def sanitize_state_machine(path: Path, protected_states: Set[str], protected_events: Set[str]) -> StateMachineResult:
+def sanitize_state_machine(path: Path, protected_states: Set[str]) -> StateMachineResult:
     config = load_yaml(path)
     remote_events = config.get("remote_events") or {}
     states = config.get("states") or {}
@@ -277,8 +256,13 @@ def sanitize_state_machine(path: Path, protected_states: Set[str], protected_eve
         states_to_remove.remove(str(initial_state))
         warn(f"{path}: initial_state '{initial_state}' is protected, keeping it")
 
-    events_to_keep = analyze_event_usage(path, states, states_to_remove, protected_events)
-    events_to_remove = set(protected_events) - events_to_keep
+    events_to_remove = infer_events_to_remove(path, states, states_to_remove)
+
+    for event in sorted(events_to_remove):
+        if event not in remote_events:
+            warn(
+                f"{path}: inferred protected event '{event}' is not defined in remote_events"
+            )
 
     output_to_events: Dict[str, Set[str]] = {}
     event_to_output: Dict[str, str] = {}
@@ -466,26 +450,6 @@ def remove_self_model_initializers(path: Path, model_keys: Set[str]) -> None:
     path.write_text("".join(output), encoding="utf-8")
 
 
-def sanitize_launch_files(root: Path, launch_glob: str, model_keys: Set[str]) -> Set[Path]:
-    removed_files: Set[Path] = set()
-    if not model_keys:
-        return removed_files
-
-    key_line_re = re.compile(r"^\s*['\"]([^'\"]+)['\"]\s*:\s*['\"]([^'\"]+)['\"]\s*,?\s*$")
-    for launch_file in root.glob(launch_glob):
-        lines = launch_file.read_text(encoding="utf-8").splitlines(keepends=True)
-        output: List[str] = []
-        package_root = launch_file.parent.parent
-        for line in lines:
-            match = key_line_re.match(line)
-            if match and match.group(1) in model_keys:
-                removed_files.add(relative_to_root(root, package_root / match.group(2)))
-                continue
-            output.append(line)
-        launch_file.write_text("".join(output), encoding="utf-8")
-    return removed_files
-
-
 def remove_files(root: Path, files: Iterable[Path]) -> None:
     for relative_path in files:
         path = root / relative_path
@@ -582,19 +546,16 @@ def sanitize_release(
 
         state_machine_path = output_root / spec.state_machine_config
         state_names = set(spec.states.keys())
-        event_names = all_values(spec.states.values(), "events")
-        state_result = sanitize_state_machine(state_machine_path, state_names, event_names)
+        state_result = sanitize_state_machine(state_machine_path, state_names)
 
         behaviors = removed_values(spec.states, state_result.removed_states, "behaviors")
         model_keys = removed_values(spec.states, state_result.removed_states, "model_keys")
         explicit_files = removed_files(spec.states, state_result.removed_states)
-        inferred_model_files = sanitize_launch_files(output_root, spec.launch_glob, model_keys)
 
         remove_python_classes(output_root / spec.robot_states, behaviors)
         remove_self_model_initializers(output_root / spec.demo_node, model_keys)
 
         files_to_remove.update(explicit_files)
-        files_to_remove.update(inferred_model_files)
         protected_outputs.update(state_result.outputs_to_remove)
         tokens_to_check.update(state_result.removed_states)
         tokens_to_check.update(behaviors)
