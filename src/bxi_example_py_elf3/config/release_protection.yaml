@@ -2,7 +2,7 @@ protected_states:
   back_flip:
     behavior:
       - BackFlipState
-    events: [back_flip]
+    events: [back_flip_event]
     model_keys: [back_flip]
     files:
       - ../data/back_flip.npz
