@@ -33,7 +33,6 @@ For USD or XML format please refer to: [unofficical models](https://github.com/M
 ### 中文扩展文档 / Wiki
 新增遥控器/输入控制器、添加机器人业务状态、配置状态转移、过渡行为、`on_bind(ctx)` 状态订阅和 `get_cmd_vel(ctx)` 速度处理，请参考项目 Wiki：
 
-- 本地 wiki 仓库入口：[`.wiki/Home.md`](.wiki/Home.md)
 - GitHub Wiki：<https://github.com/bxirobotics/bxi_rl_controller_ros2_example/wiki>
 
 ### Switch between hardware and simulation environment
