@@ -288,12 +288,10 @@ class HandPlayBackState(RobotControlState):
     tail_trim_frames = 0
     return_time = 0.5
     file_name = "applause.pkl"
+
     def __init__(self, name, state_id):
         super().__init__(name, state_id)
         self.frame = 0.0
-        self.return_elapsed = 0.0
-        self.returning = False
-        self.return_start_pos = np.zeros(14, dtype=np.float32)
         self.applause_data, self.fps = self._load_applause_data()
 
     def _load_applause_data(self) -> tuple[np.ndarray, float]:
@@ -318,7 +316,9 @@ class HandPlayBackState(RobotControlState):
         end = max(start, dof_pos.shape[0] - self.tail_trim_frames)
         applause_data = dof_pos[start:end]
         if applause_data.shape[0] == 0:
-            raise ValueError(f"HandPlayBack data is empty after frame trim: {data_path}")
+            raise ValueError(
+                f"HandPlayBack data is empty after frame trim: {data_path}"
+            )
 
         return applause_data, float(data["fps"])
 
@@ -338,9 +338,6 @@ class HandPlayBackState(RobotControlState):
     def on_enter(self, ctx: BxiExample) -> None:
         self.reset_loop(ctx)
         self.frame = 0.0
-        self.return_elapsed = 0.0
-        self.returning = False
-        self.return_start_pos = self.applause_data[0].copy()
         self.playing = True
 
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
@@ -348,7 +345,7 @@ class HandPlayBackState(RobotControlState):
         qpos[-14:] = self.applause_data[0]
         return self._motor_frame(qpos, ctx.noarm.kps, ctx.noarm.kds)
 
-    def on_update(self, ctx: BxiExample, dt: float) -> None:
+    def get_motor_frame(self, ctx, dt):
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
             print("check safe error, zero_torque!")
             ctx.request_state("zero_torque", trigger="safety")
@@ -362,37 +359,28 @@ class HandPlayBackState(RobotControlState):
             ctx.current_omega,
             cmd_vel,
         )
+        if self.frame < self.applause_data.shape[0]:
+            qpos[-14:] = self.applause_data[int(self.frame)]
+        if self.playing:
+            self.frame += self.fps * dt
+        return self._motor_frame(qpos, ctx.noarm.kps, ctx.noarm.kds)
 
-        if self.returning:
-            alpha = min(1.0, self.return_elapsed / self.return_time)
-            qpos[-14:] = (
-                self.return_start_pos + (qpos[-14:] - self.return_start_pos) * alpha
+    def on_update(self, ctx: BxiExample, dt: float) -> None:
+        if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
+            ctx.request_state("zero_torque", trigger="safety")
+            return
+        if self.frame >= self.applause_data.shape[0]:
+            ctx.request_state(
+                "normal",
+                trigger="applause_finished",
+                transition={
+                    "base": "dual_running_blend",
+                    "duration": 2.0,
+                },
             )
-            self.return_elapsed += dt
-            if self.return_elapsed >= self.return_time:
-                ctx.set_motor_target(qpos, ctx.noarm.kps, ctx.noarm.kds)
-                ctx.request_state(
-                    "normal",
-                    trigger="applause_finished",
-                    transition={
-                        "base": "dual_running_blend",
-                        "duration": 2.0,
-                    },
-                )
-                return
-        else:
-            frame_index = int(self.frame)
-            if frame_index >= self.applause_data.shape[0]:
-                self.returning = True
-                self.return_elapsed = 0.0
-                self.return_start_pos = self.applause_data[-1].copy()
-                qpos[-14:] = self.return_start_pos
-            else:
-                qpos[-14:] = self.applause_data[frame_index]
-                if self.playing:
-                    self.frame += self.fps * dt
-
-        ctx.set_motor_target(qpos, ctx.noarm.kps, ctx.noarm.kds)
+        frame = self.get_motor_frame(ctx,dt)
+        if frame is not None:
+            ctx.set_motor_target(*frame)
 
     def on_action(self, ctx: BxiExample, action_name: str) -> bool:
         if action_name != "toggle_dance_pause":
@@ -401,15 +389,18 @@ class HandPlayBackState(RobotControlState):
         self.playing = not self.playing
         return True
 
+
 class ApplauseState(HandPlayBackState):
     start_frame = 600
     tail_trim_frames = 600
     file_name = "applause.pkl"
 
+
 class NaotouState(HandPlayBackState):
     start_frame = 40
     tail_trim_frames = 90
     file_name = "naotou.pkl"
+
 
 class HelloState(RobotControlState):
     def __init__(self, name, state_id):
@@ -593,9 +584,7 @@ class AmpRunState(RobotControlState):
         ctx: BxiExample,
         cmd_vel: np.ndarray,
     ) -> Optional[np.ndarray]:
-        self.cmd_vel_run[:2] = (
-            0.98 * self.pre_cmd_vel_run[:2] + 0.02 * cmd_vel[:2]
-        )
+        self.cmd_vel_run[:2] = 0.98 * self.pre_cmd_vel_run[:2] + 0.02 * cmd_vel[:2]
         self.cmd_vel_run[2] = cmd_vel[2]
         self.pre_cmd_vel_run = self.cmd_vel_run.copy()
         return self.cmd_vel_run
