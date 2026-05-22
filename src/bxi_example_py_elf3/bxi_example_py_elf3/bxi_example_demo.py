@@ -519,7 +519,7 @@ class BxiExample(Node):
         else:
             cmd_vel = np.asarray(cmd_vel, dtype=np.float32)
 
-        if model is self.normal_run:
+        if type(model) is NormalMotionPolicy:
             model.infer_step(q, dq, quat_xyzw, omega, cmd_vel)
         else:
             if with_cmd_vel:
