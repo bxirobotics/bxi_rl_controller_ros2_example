@@ -140,21 +140,28 @@ class BxiExample(Node):
     def __init__(self):
         super().__init__('bxi_example_py')
 
-        # 从launch文件中获取模型路径
+        # 加载运行参数
         self.load_files()
 
         # 加载模型
-        self.normal = HumanoidGaitPolicyLite(self.onnx_file_dict["normal"])
-        self.recover = DanceMotionPolicy(self.npz_file_dict["recover"], self.onnx_file_dict["recover"], start_frame=600)
-        self.dance = DanceMotionPolicy(self.npz_file_dict["dance"], self.onnx_file_dict["dance"])
-        self.amp_run = HumanoidGaitPolicyLite(self.onnx_file_dict["amp_run"])
-        self.normal_run = NormalMotionPolicy(self.onnx_file_dict["normal_run"])
+        self.normal = HumanoidGaitPolicyLite(self.data_file("amp_terrain.onnx"))
+        self.recover = DanceMotionPolicy(
+            self.data_file("recover.npz"),
+            self.data_file("recover.onnx"),
+            start_frame=600,
+        )
+        self.dance = DanceMotionPolicy(
+            self.data_file("dance.npz"),
+            self.data_file("dance.onnx"),
+        )
+        self.amp_run = HumanoidGaitPolicyLite(self.data_file("amp_run.onnx"))
+        self.normal_run = NormalMotionPolicy(self.data_file("model_normal.onnx"))
         self.forward_flip = DanceMotionPolicyGravityIsaaclab(
-            self.npz_file_dict["forward_flip"],
-            self.onnx_file_dict["forward_flip"],
+            self.data_file("forward_flip.npz"),
+            self.data_file("forward_flip.onnx"),
             start_frame=150,
         )
-        self.noarm = HumanoidGaitPolicyLite(self.onnx_file_dict["noarm"])
+        self.noarm = HumanoidGaitPolicyLite(self.data_file("arm8.onnx"))
 
         self.initial_pos = np.zeros(dof_num, dtype=np.double)
         self.pd_pos = self.normal.default_dof_pos
@@ -215,17 +222,8 @@ class BxiExample(Node):
         self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
 
     def load_files(self):
-        # 加载模型
         self.declare_parameter('/topic_prefix', 'default_value')
         self.topic_prefix = self.get_parameter('/topic_prefix').get_parameter_value().string_value
-
-        self.declare_parameter('/npz_file_dict', json.dumps({}))
-        npz_file_json = self.get_parameter('/npz_file_dict').value
-        self.npz_file_dict = json.loads(npz_file_json)
-
-        self.declare_parameter('/onnx_file_dict', json.dumps({}))
-        onnx_file_json = self.get_parameter('/onnx_file_dict').value
-        self.onnx_file_dict = json.loads(onnx_file_json)
 
         default_state_machine_config = self.default_state_machine_config_path()
         self.declare_parameter('/state_machine_config', default_state_machine_config)
@@ -237,6 +235,18 @@ class BxiExample(Node):
 
         self.declare_parameter('/state_machine_info_hz', 10.0)
         self.state_machine_info_hz = float(self.get_parameter('/state_machine_info_hz').value)
+
+    def data_file(self, file_name):
+        try:
+            package_share = get_package_share_directory("bxi_example_py_elf3")
+            data_path = os.path.join(package_share, "data", file_name)
+            if os.path.exists(data_path):
+                return data_path
+        except Exception:
+            pass
+
+        package_root = os.path.dirname(os.path.dirname(__file__))
+        return os.path.join(package_root, "data", file_name)
 
     def default_state_machine_config_path(self):
         try:
@@ -514,7 +524,7 @@ class BxiExample(Node):
         else:
             cmd_vel = np.asarray(cmd_vel, dtype=np.float32)
 
-        if model is self.normal_run:
+        if type(model) is NormalMotionPolicy:
             model.infer_step(q, dq, quat_xyzw, omega, cmd_vel)
         else:
             if with_cmd_vel:

@@ -35,9 +35,6 @@ remote_events:
   toggle_nav_ctrl_event:
     slot: btn_9
     value: 2
-  back_flip_event:
-    slot: btn_10
-    value: 1
   forward_flip_event:
     slot: btn_10
     value: 2

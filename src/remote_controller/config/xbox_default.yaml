@@ -69,9 +69,6 @@ sources:
       keyboard.normal_run:
         from: keyboard.key
         key: '5'
-      keyboard.back_flip:
-        from: keyboard.key
-        key: '6'
       keyboard.forward_flip:
         from: keyboard.key
         key: '7'
@@ -147,16 +144,16 @@ controls:
   shoulder.right_event:
     type: bool
     source: gamepad.rb
-  button.south_event:
+  button.a_event:
     type: bool
     source: gamepad.a
-  button.east_event:
+  button.b_event:
     type: bool
     source: gamepad.b
-  button.west_event:
+  button.x_event:
     type: bool
     source: gamepad.x
-  button.north_event:
+  button.y_event:
     type: bool
     source: gamepad.y
   trigger.left_event:
@@ -184,9 +181,6 @@ controls:
   keyboard.normal_run_event:
     type: bool
     source: keyboard.normal_run
-  keyboard.back_flip_event:
-    type: bool
-    source: keyboard.back_flip
   keyboard.forward_flip_event:
     type: bool
     source: keyboard.forward_flip
@@ -215,16 +209,16 @@ outputs:
     when:
       any:
       - - shoulder.right_event
-        - button.west_event
+        - button.x_event
       - - keyboard.normal_event
   - output: btn_2=1
     when:
     - shoulder.right_event
-    - button.south_event
+    - button.a_event
   - output: btn_3=1
     when:
     - shoulder.right_event
-    - button.east_event
+    - button.b_event
   - output: btn_4=1
     when:
     - shoulder.right_event
@@ -233,19 +227,19 @@ outputs:
     when:
       any:
       - - shoulder.left_event
-        - button.west_event
+        - button.x_event
       - - keyboard.dance_event
   - output: btn_6=1
     when:
       any:
       - - shoulder.left_event
-        - button.south_event
+        - button.a_event
       - - keyboard.recover_event
   - output: btn_7=1
     when:
       any:
       - - shoulder.left_event
-        - button.east_event
+        - button.b_event
       - - keyboard.normal_run_event
   - output: btn_8=1
     when:
@@ -255,17 +249,11 @@ outputs:
       - - keyboard.amp_run_event
   - output: btn_9=1
     when:
-    - button.west_event
+    - button.x_event
     - released: shoulder.left_event
     - released: shoulder.right_event
     - released: trigger.left_event
     - released: trigger.right_event
-  - output: btn_10=1
-    when:
-      any:
-      - - trigger.left_event
-        - button.west_event
-      - - keyboard.back_flip_event
   - output: btn_10=2
     when:
       any:
@@ -276,20 +264,19 @@ outputs:
     when:
       any:
       - - trigger.right_event
-        - button.east_event
+        - button.b_event
       - - keyboard.applause_event
   - output: btn_10=4
     when:
       any:
       - - trigger.right_event
-        - button.south_event
+        - button.a_event
       - - keyboard.hello_event
   - output: btn_10=5
     when:
       any:
       - - trigger.right_event
-        - button.west_event
-      - - keyboard.hello_event
+        - button.x_event
 system:
   start:
   - mkdir -p /var/log/bxi_log
