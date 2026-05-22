@@ -109,10 +109,10 @@ controls:
   system.start_event: {type: bool, source: gamepad.start}
   shoulder.left_event: {type: bool, source: gamepad.lb}
   shoulder.right_event: {type: bool, source: gamepad.rb}
-  button.south_event: {type: bool, source: gamepad.a}
-  button.east_event: {type: bool, source: gamepad.b}
-  button.west_event: {type: bool, source: gamepad.x}
-  button.north_event: {type: bool, source: gamepad.y}
+  button.a_event: {type: bool, source: gamepad.a}
+  button.b_event: {type: bool, source: gamepad.b}
+  button.x_event: {type: bool, source: gamepad.x}
+  button.y_event: {type: bool, source: gamepad.y}
 
   trigger.left_event:
     type: bool
@@ -160,14 +160,14 @@ outputs:
     - output: btn_1=1
       when:
         any:
-          - [shoulder.right_event, button.west_event]
+          - [shoulder.right_event, button.x_event]
           - [keyboard.normal_event]
 
     - output: btn_2=1
-      when: [shoulder.right_event, button.south_event]
+      when: [shoulder.right_event, button.a_event]
 
     - output: btn_3=1
-      when: [shoulder.right_event, button.east_event]
+      when: [shoulder.right_event, button.b_event]
 
     - output: btn_4=1
       when: [shoulder.right_event, button.north_event]
@@ -175,19 +175,19 @@ outputs:
     - output: btn_5=1
       when:
         any:
-          - [shoulder.left_event, button.west_event]
+          - [shoulder.left_event, button.x_event]
           - [keyboard.dance_event]
 
     - output: btn_6=1
       when:
         any:
-          - [shoulder.left_event, button.south_event]
+          - [shoulder.left_event, button.a_event]
           - [keyboard.recover_event]
 
     - output: btn_7=1
       when:
         any:
-          - [shoulder.left_event, button.east_event]
+          - [shoulder.left_event, button.b_event]
           - [keyboard.normal_run_event]
 
     - output: btn_8=1
@@ -198,7 +198,7 @@ outputs:
 
     - output: btn_9=1
       when:
-        - button.west_event
+        - button.x_event
         - released: shoulder.left_event
         - released: shoulder.right_event
         - released: trigger.left_event
@@ -207,7 +207,7 @@ outputs:
     - output: btn_10=1
       when:
         any:
-          - [trigger.left_event, button.west_event]
+          - [trigger.left_event, button.x_event]
           - [keyboard.back_flip_event]
 
     - output: btn_10=2
@@ -219,20 +219,19 @@ outputs:
     - output: btn_10=3
       when:
         any:
-          - [trigger.right_event, button.east_event]
+          - [trigger.right_event, button.b_event]
           - [keyboard.applause_event]
 
     - output: btn_10=4
       when:
         any:
-          - [trigger.right_event, button.south_event]
+          - [trigger.right_event, button.a_event]
           - [keyboard.hello_event]
 
     - output: btn_10=5
       when:
         any:
-          - [trigger.right_event, button.west_event]
-          - [keyboard.hello_event]
+          - [trigger.right_event, button.x_event]
 
 #自定义命令
 system:
