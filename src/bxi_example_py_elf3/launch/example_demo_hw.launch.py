@@ -3,10 +3,7 @@ import sys
 import fcntl
 from ament_index_python.packages import get_package_share_path
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-import json
 
 LOCK_FILE = "/tmp/bxi_example_hw.lock"
 _lock_fd = None
@@ -36,28 +33,6 @@ def generate_launch_description():
         "config/elf3_state_machine.yaml",
     )
 
-    npz_file_dict = {
-        "recover": "data/recover.npz",
-        "dance": "data/dance.npz",
-        "back_flip": "data/back_flip.npz",
-        "forward_flip": "data/forward_flip.npz",
-    }  
-    onnx_file_dict = {
-        "normal": "data/amp_terrain.onnx",
-        "recover": "data/recover.onnx",
-        "dance": "data/dance.onnx",
-        "amp_run": "data/amp_run.onnx",
-        "normal_run": "data/model_normal.onnx",
-        "back_flip": "data/back_flip.onnx",
-        "forward_flip": "data/forward_flip.onnx",
-        "noarm": "data/arm8.onnx",
-    }
-
-    for key, value in npz_file_dict.items():
-        npz_file_dict[key] = os.path.join(get_package_share_path("bxi_example_py_elf3"), value)
-    for key, value in onnx_file_dict.items():
-        onnx_file_dict[key] = os.path.join(get_package_share_path("bxi_example_py_elf3"), value)
-
     return LaunchDescription(
         [
             Node(
@@ -78,8 +53,6 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     {"/topic_prefix": "hardware/"},
-                    {"/npz_file_dict": json.dumps(npz_file_dict)},
-                    {"/onnx_file_dict": json.dumps(onnx_file_dict)},
                     {"/state_machine_config": state_machine_config},
                 ],
                 emulate_tty=True,

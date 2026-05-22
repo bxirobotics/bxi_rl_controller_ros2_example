@@ -37,10 +37,10 @@ protected_states:
     behavior:
       - FlipState
       - BackFlipState
-    events: [back_flip]
     model_keys: [back_flip]
     files:
       - ../data/back_flip.npz
+      - ../data/back_flip.onnx
 ```
 
 `protected_states.<state>` 是受保护状态名。脚本会尝试从状态机配置里的 `states` 删除同名状态。
@@ -81,13 +81,9 @@ behaviors:
   - BackFlipState
 ```
 
-### `events`
+### 状态机事件
 
-声明这些受保护状态对应的状态机事件：
-
-```yaml
-events: [back_flip]
-```
+不需要在 `release_protection.yaml` 里声明事件。脚本会从 `elf3_state_machine.yaml` 的 `states.*.transitions.on_event` 自动推导和被删除状态相关的 event。
 
 影响状态机配置：
 
@@ -103,13 +99,13 @@ events: [back_flip]
 
 保留规则：
 
-- 如果某个受保护 event 被非保护状态用于非保护目标或 action，脚本不会删除这个 event，会输出 warning。
+- 如果某个推导出的 event 仍被非保护状态用于非保护目标或 action，脚本不会删除这个 event，会输出 warning。
 - 如果某个底层输出同时被公开 event 使用，脚本不会删除这个遥控器输出 binding，会输出 warning。
 - warning 不会中断脚本。这是为了避免把公开功能删坏。
 
 ### `model_keys`
 
-声明 launch 文件里模型字典的 key：
+声明 `demo_node` 里要删除的模型成员名：
 
 ```yaml
 model_keys: [back_flip]
@@ -117,11 +113,9 @@ model_keys: [back_flip]
 
 影响：
 
-- 从 package 的 `launch/*.launch.py` 中删除匹配的模型字典项。
-- 支持 `npz_file_dict` / `onnx_file_dict` 这类一行一个 key 的字典写法。
-- 从被删除字典项推导模型文件路径并删除，例如 `data/back_flip.onnx`。
 - 从 `demo_node` 中删除 `self.<model_key> = ...` 形式的模型初始化代码块。
 - 加入 `--self-check` 检查 token。
+- 不会删除任何模型文件；要删除的 `.onnx` / `.npz` 必须写在 `files` 字段里。
 
 只有当对应状态确实被删除时，`model_keys` 才会生效。
 
@@ -135,13 +129,13 @@ model_keys: [back_flip, forward_flip]
 
 ```python
 self.back_flip = DanceMotionPolicyGravityIsaaclab(
-    self.npz_file_dict["back_flip"],
-    self.onnx_file_dict["back_flip"],
+    self.data_file("back_flip.npz"),
+    self.data_file("back_flip.onnx"),
     start_frame=40,
 )
 self.forward_flip = DanceMotionPolicyGravityIsaaclab(
-    self.npz_file_dict["forward_flip"],
-    self.onnx_file_dict["forward_flip"],
+    self.data_file("forward_flip.npz"),
+    self.data_file("forward_flip.onnx"),
     start_frame=150,
 )
 ```
@@ -155,6 +149,7 @@ self.forward_flip = DanceMotionPolicyGravityIsaaclab(
 ```yaml
 files:
   - ../data/back_flip.npz
+  - ../data/back_flip.onnx
 ```
 
 影响：
@@ -172,7 +167,6 @@ files:
 config/elf3_state_machine.yaml
 <package_python_module>/robot_states.py
 <package_python_module>/bxi_example_demo.py
-launch/*.launch.py
 ```
 
 特殊 example 可以覆盖：
@@ -182,7 +176,6 @@ paths:
   state_machine: elf3_state_machine.yaml
   robot_states: ../bxi_example_py_elf3/robot_states.py
   demo_node: ../bxi_example_py_elf3/bxi_example_demo.py
-  launch_glob: ../launch/*.launch.py
 ```
 
 字段含义：
@@ -190,7 +183,6 @@ paths:
 - `paths.state_machine`：要清理的状态机 YAML。
 - `paths.robot_states`：包含状态 class 的 Python 文件。
 - `paths.demo_node`：包含模型成员初始化的 Python 节点文件。
-- `paths.launch_glob`：要扫描并删除模型 key 的 launch 文件 glob。
 
 相对路径同样按清单所在目录解析。
 
