@@ -125,8 +125,16 @@ states:
     transitions:
       on_event:
         zero_torque_event: zero_torque
-        pd_brake_event: pd_brake
-        initial_pos_event: initial_pos
+        pd_brake_event: 
+            to: pd_brake
+            transition: 
+              base: first_frame_switch
+              enter_duration: 1.0
+        initial_pos_event: 
+            to: initial_pos
+            transition: 
+              base: first_frame_switch
+              enter_duration: 1.0
         amp_run_event:
           to: amp_run
           transition: soft_switch
