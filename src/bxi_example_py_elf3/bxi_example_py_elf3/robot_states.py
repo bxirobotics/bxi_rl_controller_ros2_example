@@ -353,11 +353,6 @@ class HandPlayBackState(RobotControlState):
         return self._motor_frame(qpos, ctx.noarm.kps, ctx.noarm.kds)
 
     def get_motor_frame(self, ctx, dt):
-        if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
-            print("check safe error, zero_torque!")
-            ctx.request_state("zero_torque", trigger="safety")
-            return
-
         cmd_vel = self.get_cmd_vel(ctx)
         qpos, vel = ctx.noarm.inference_step(
             ctx.current_q,
@@ -368,6 +363,8 @@ class HandPlayBackState(RobotControlState):
         )
         if self.frame < self.applause_data.shape[0]:
             qpos[-14:] = self.applause_data[int(self.frame)]
+        else:
+            qpos[-14:] = self.applause_data[-1]
         if self.playing:
             self.frame += self.fps * dt
         return self._motor_frame(qpos, ctx.noarm.kps, ctx.noarm.kds)
@@ -382,9 +379,10 @@ class HandPlayBackState(RobotControlState):
                 trigger="applause_finished",
                 transition={
                     "base": "dual_running_blend",
-                    "duration": 2.0,
+                    "duration": 1.0,
                 },
             )
+            return
         frame = self.get_motor_frame(ctx,dt)
         if frame is not None:
             ctx.set_motor_target(*frame)
