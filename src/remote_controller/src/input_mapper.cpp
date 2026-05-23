@@ -67,6 +67,17 @@ const RemoteConfig &InputMapper::config() const
     return config_;
 }
 
+void InputMapper::reload_config(RemoteConfig config)
+{
+    config_ = std::move(config);
+    controls_.clear();
+    binding_active_.assign(config_.bindings.size(), false);
+    std::fill(output_slots_, output_slots_ + kButtonSlotCount + 1, 0);
+    std::fill(edge_pulse_slots_, edge_pulse_slots_ + kButtonSlotCount + 1, 0);
+    refresh_controls();
+    refresh_bindings(false);
+}
+
 std::vector<std::string> InputMapper::set_axis(int axis_index, double value)
 {
     if (axis_index < 0 || axis_index >= kAxisCount) {
@@ -286,7 +297,7 @@ void InputMapper::fill_message(communication::msg::MotionCommands &message)
     }
 }
 
-std::vector<std::string> InputMapper::refresh_bindings()
+std::vector<std::string> InputMapper::refresh_bindings(bool emit_edges)
 {
     refresh_controls();
     std::fill(output_slots_, output_slots_ + kButtonSlotCount + 1, 0);
@@ -297,7 +308,7 @@ std::vector<std::string> InputMapper::refresh_bindings()
         const bool active = conditions_match(binding);
 
         if (binding.mode == "edge") {
-            if (active && !binding_active_[index]) {
+            if (emit_edges && active && !binding_active_[index]) {
                 if (!apply_edge_pulse_output(binding.output)) {
                     edge_outputs.push_back(binding.output);
                 }
