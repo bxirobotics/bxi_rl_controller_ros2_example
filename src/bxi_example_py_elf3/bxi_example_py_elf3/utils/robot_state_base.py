@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Any, Optional, Tuple
 
 import numpy as np
 
-from bxi_example_py_elf3.state_machine import StateBehavior, TransitionProfile
+from bxi_example_py_elf3.utils.state_machine import StateBehavior, TransitionProfile
 
 if TYPE_CHECKING:
     from bxi_example_py_elf3.bxi_example_demo import BxiExample
