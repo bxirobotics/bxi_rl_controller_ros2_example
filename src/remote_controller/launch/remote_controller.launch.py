@@ -17,7 +17,11 @@ def generate_launch_description():
                 name="remote_controller",
                 output="screen",
                 emulate_tty=True,
-                arguments=["--config", remote_config, "__log_level:=debug"],
+                arguments=[
+                    "--config", remote_config,
+                    "--hot-reload", "true",
+                    "__log_level:=debug",
+                ],
             ),
         ]
     )
