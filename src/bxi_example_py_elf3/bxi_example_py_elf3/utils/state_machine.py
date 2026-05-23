@@ -19,9 +19,19 @@ def load_state_machine_config(path: str) -> Dict:
 class RemoteEventAdapter:
     """Converts legacy MotionCommands btn_N fields to named edge events."""
 
-    def __init__(self, event_slots: Dict[str, str]):
+    def __init__(
+        self,
+        event_slots: Dict[str, Any],
+        initial_values: Optional[Dict[str, int]] = None,
+    ):
         self._event_slots = dict(event_slots)
-        self._last_values: Dict[str, int] = {}
+        self._last_values: Dict[str, int] = {
+            event_name: 0 for event_name in self._event_slots
+        }
+        if initial_values:
+            for event_name, value in initial_values.items():
+                if event_name in self._last_values:
+                    self._last_values[event_name] = int(value)
 
     def extract_events(self, msg, sync_only: bool = False) -> List[str]:
         events: List[str] = []
@@ -34,9 +44,9 @@ class RemoteEventAdapter:
                 expected_value = None
 
             value = int(getattr(msg, slot_name, 0))
-            previous = self._last_values.get(event_name)
+            previous = self._last_values.get(event_name, 0)
             self._last_values[event_name] = value
-            if sync_only or previous is None:
+            if sync_only:
                 continue
 
             if expected_value is None and value != previous:
