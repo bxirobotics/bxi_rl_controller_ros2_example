@@ -91,12 +91,17 @@ private:
     void open_loop()
     {
         while (!stop_flag_) {
-            fd_ = open(mapper_.config().js_device.c_str(), O_RDONLY | O_NONBLOCK);
+            std::string js_device;
+            {
+                const std::lock_guard<std::mutex> guard(mapper_lock_);
+                js_device = mapper_.config().js_device;
+            }
+            fd_ = open(js_device.c_str(), O_RDONLY | O_NONBLOCK);
             if (fd_ >= 0) {
-                log("open js dev: " + mapper_.config().js_device);
+                log("open js dev: " + js_device);
                 return;
             }
-            log("open " + mapper_.config().js_device + " failed");
+            log("open " + js_device + " failed");
             sleep(1);
         }
     }
@@ -214,9 +219,13 @@ private:
     std::thread thread_;
     struct termios orig_termios_{};
 
-    void print_help() const
+    void print_help()
     {
-        const auto &keyboard = mapper_.config().keyboard;
+        KeyboardConfig keyboard;
+        {
+            const std::lock_guard<std::mutex> guard(mapper_lock_);
+            keyboard = mapper_.config().keyboard;
+        }
         log("Keyboard mode enabled.");
         log(std::string("  ") + keyboard.forward + "/" + keyboard.backward + " : forward / backward");
         log(std::string("  ") + keyboard.yaw_left + "/" + keyboard.yaw_right + " : turn left / right");
@@ -258,7 +267,10 @@ private:
             FD_SET(tty_fd, &fds);
             struct timeval tv;
             tv.tv_sec = 0;
-            tv.tv_usec = mapper_.config().keyboard.poll_timeout_us;
+            {
+                const std::lock_guard<std::mutex> guard(mapper_lock_);
+                tv.tv_usec = mapper_.config().keyboard.poll_timeout_us;
+            }
 
             const int sel = select(tty_fd + 1, &fds, nullptr, nullptr, &tv);
             if (sel < 0) {

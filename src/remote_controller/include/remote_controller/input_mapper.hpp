@@ -17,6 +17,7 @@ public:
     explicit InputMapper(RemoteConfig config);
 
     const RemoteConfig &config() const;
+    void reload_config(RemoteConfig config);
 
     std::vector<std::string> set_axis(int axis_index, double value);
     std::vector<std::string> set_signal(const std::string &source, double value);
@@ -48,7 +49,7 @@ private:
     int edge_pulse_slots_[kButtonSlotCount + 1] = {0};
     double height_filtered_ = kStandHeight;
 
-    std::vector<std::string> refresh_bindings();
+    std::vector<std::string> refresh_bindings(bool emit_edges = true);
     void refresh_controls();
     void evaluate_control_recursive(
         const std::string &control,
