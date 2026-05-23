@@ -8,21 +8,27 @@ import communication.msg as bxiMsg
 import communication.srv as bxiSrv
 import nav_msgs.msg
 import sensor_msgs.msg
-from threading import Lock
+from threading import Lock, Thread
 import numpy as np
+
 # import torch
 import time
 import sys
 import os
 import math
 import json
+import importlib
+import importlib.util
 from collections import deque
 from std_msgs.msg import Header, String
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
 
-from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicy, DanceMotionPolicyGravityIsaaclab
+from bxi_example_py_elf3.inference.beyondmimic import (
+    DanceMotionPolicy,
+    DanceMotionPolicyGravityIsaaclab,
+)
 from bxi_example_py_elf3.inference.normal import NormalMotionPolicy
 from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicyLite
 from bxi_example_py_elf3.state_machine import (
@@ -30,7 +36,7 @@ from bxi_example_py_elf3.state_machine import (
     RemoteEventAdapter,
     load_state_machine_config,
 )
-from bxi_example_py_elf3.robot_states import build_robot_states
+import bxi_example_py_elf3.robot_states as robot_states_module
 from bxi_example_py_elf3.utils.tfs import quaternion_to_euler_array
 
 robot_name = "elf3"
@@ -41,37 +47,33 @@ joint_name = (
     "waist_y_joint",
     "waist_x_joint",
     "waist_z_joint",
-
-    "l_hip_y_joint",   # 左腿_髋关节_z轴
-    "l_hip_x_joint",   # 左腿_髋关节_x轴
-    "l_hip_z_joint",   # 左腿_髋关节_y轴
-    "l_knee_y_joint",   # 左腿_膝关节_y轴
-    "l_ankle_y_joint",   # 左腿_踝关节_y轴
-    "l_ankle_x_joint",   # 左腿_踝关节_x轴
-
-    "r_hip_y_joint",   # 右腿_髋关节_z轴
-    "r_hip_x_joint",   # 右腿_髋关节_x轴
-    "r_hip_z_joint",   # 右腿_髋关节_y轴
-    "r_knee_y_joint",   # 右腿_膝关节_y轴
-    "r_ankle_y_joint",   # 右腿_踝关节_y轴
-    "r_ankle_x_joint",   # 右腿_踝关节_x轴
-
-    "l_shoulder_y_joint",   # 左臂_肩关节_y轴
-    "l_shoulder_x_joint",   # 左臂_肩关节_x轴
-    "l_shoulder_z_joint",   # 左臂_肩关节_z轴
-    "l_elbow_y_joint",   # 左臂_肘关节_y轴
+    "l_hip_y_joint",  # 左腿_髋关节_z轴
+    "l_hip_x_joint",  # 左腿_髋关节_x轴
+    "l_hip_z_joint",  # 左腿_髋关节_y轴
+    "l_knee_y_joint",  # 左腿_膝关节_y轴
+    "l_ankle_y_joint",  # 左腿_踝关节_y轴
+    "l_ankle_x_joint",  # 左腿_踝关节_x轴
+    "r_hip_y_joint",  # 右腿_髋关节_z轴
+    "r_hip_x_joint",  # 右腿_髋关节_x轴
+    "r_hip_z_joint",  # 右腿_髋关节_y轴
+    "r_knee_y_joint",  # 右腿_膝关节_y轴
+    "r_ankle_y_joint",  # 右腿_踝关节_y轴
+    "r_ankle_x_joint",  # 右腿_踝关节_x轴
+    "l_shoulder_y_joint",  # 左臂_肩关节_y轴
+    "l_shoulder_x_joint",  # 左臂_肩关节_x轴
+    "l_shoulder_z_joint",  # 左臂_肩关节_z轴
+    "l_elbow_y_joint",  # 左臂_肘关节_y轴
     "l_wrist_x_joint",
     "l_wrist_y_joint",
     "l_wrist_z_joint",
-
-    "r_shoulder_y_joint",   # 右臂_肩关节_y轴
-    "r_shoulder_x_joint",   # 右臂_肩关节_x轴
-    "r_shoulder_z_joint",   # 右臂_肩关节_z轴
-    "r_elbow_y_joint",    # 右臂_肘关节_y轴
+    "r_shoulder_y_joint",  # 右臂_肩关节_y轴
+    "r_shoulder_x_joint",  # 右臂_肩关节_x轴
+    "r_shoulder_z_joint",  # 右臂_肩关节_z轴
+    "r_elbow_y_joint",  # 右臂_肘关节_y轴
     "r_wrist_x_joint",
     "r_wrist_y_joint",
     "r_wrist_z_joint",
-    )
+)
 
 joint_nominal_pos = np.array([   # 指定的固定关节角度
     0.0, 0.0, 0.0,
@@ -136,40 +138,34 @@ def quaternion_to_euler_array(quat):
     # Returns roll, pitch, yaw in a NumPy array in radians
     return np.array([roll_x, pitch_y, yaw_z])
 
+
+class HotReloadModelContext:
+    def __init__(self, source):
+        object.__setattr__(self, "_source", source)
+        object.__setattr__(self, "_assigned", {})
+
+    def __getattr__(self, name):
+        return getattr(self._source, name)
+
+    def __setattr__(self, name, value):
+        self._assigned[name] = value
+
+    @property
+    def assigned(self):
+        return self._assigned
+
+
 class BxiExample(Node):
     def __init__(self):
-        super().__init__('bxi_example_py')
+        super().__init__("bxi_example_py")
 
         # 加载运行参数
         self.load_files()
 
         # 加载模型
-        self.normal = HumanoidGaitPolicyLite(self.data_file("amp_terrain.onnx"))
-        self.recover = DanceMotionPolicy(
-            self.data_file("recover.npz"),
-            self.data_file("recover.onnx"),
-            start_frame=600,
-        )
-        self.dance = DanceMotionPolicy(
-            self.data_file("dance.npz"),
-            self.data_file("dance.onnx"),
-        )
-        self.amp_run = HumanoidGaitPolicyLite(self.data_file("amp_run.onnx"))
-        self.normal_run = NormalMotionPolicy(self.data_file("model_normal.onnx"))
-        self.back_flip = DanceMotionPolicyGravityIsaaclab(
-            self.data_file("back_flip.npz"),
-            self.data_file("back_flip.onnx"),
-            start_frame=40,
-        )
-        self.forward_flip = DanceMotionPolicyGravityIsaaclab(
-            self.data_file("forward_flip.npz"),
-            self.data_file("forward_flip.onnx"),
-            start_frame=150,
-        )
-        self.noarm = HumanoidGaitPolicyLite(self.data_file("arm8.onnx"))
+        self.load_models()
 
         self.initial_pos = np.zeros(dof_num, dtype=np.double)
-        self.pd_pos = self.normal.default_dof_pos
 
         # 订阅发布ros主题
         self.init_pub_sub()
@@ -177,9 +173,9 @@ class BxiExample(Node):
         # 机器人状态变量(robot states)
         self.qpos = np.zeros(dof_num, dtype=np.double)
         self.qvel = np.zeros(dof_num, dtype=np.double)
-        self.omega = np.zeros(3,dtype=np.double)
-        self.quat_xyzw = np.zeros(4,dtype=np.double)
-        self.quat_wxyz = np.zeros(4,dtype=np.double)
+        self.omega = np.zeros(3, dtype=np.double)
+        self.quat_xyzw = np.zeros(4, dtype=np.double)
+        self.quat_wxyz = np.zeros(4, dtype=np.double)
 
         self.pos_last = np.zeros(dof_num, dtype=np.float32)
         self.kp_last = np.zeros(dof_num, dtype=np.float32)
@@ -206,17 +202,24 @@ class BxiExample(Node):
         self.current_raw_cmd_vel = np.zeros(3, dtype=np.float32)
         self.current_cmd_vel = np.zeros(3, dtype=np.float32)
 
-        robot_states = build_robot_states(self.state_machine_config)
+        robot_states = robot_states_module.build_robot_states(self.state_machine_config)
         self.robot_states = robot_states
-        self.state_id_by_name = {name: state.state_id for name, state in robot_states.items()}
-        self.state_name_by_id = {value: key for key, value in self.state_id_by_name.items()}
+        self.state_id_by_name = {
+            name: state.state_id for name, state in robot_states.items()
+        }
+        self.state_name_by_id = {
+            value: key for key, value in self.state_id_by_name.items()
+        }
         self.bind_robot_states(robot_states)
         self.state_machine = RobotStateMachine(
             self,
             self.state_machine_config,
             robot_states,
         )
-        self.remote_event_adapter = RemoteEventAdapter(self.state_machine_config.get("remote_events", {}))
+        self.remote_event_adapter = RemoteEventAdapter(
+            self.state_machine_config.get("remote_events", {})
+        )
+        self.init_hot_reload()
 
         self.state = self.state_machine.current_state_id
 
@@ -224,22 +227,85 @@ class BxiExample(Node):
         self.step = 0
         self.dt = 0.02  # loop @100Hz
         self.state_machine_info_elapsed = 0.0
-        self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
+        self.timer = self.create_timer(
+            self.dt, self.timer_callback, callback_group=self.timer_callback_group_1
+        )
 
     def load_files(self):
-        self.declare_parameter('/topic_prefix', 'default_value')
-        self.topic_prefix = self.get_parameter('/topic_prefix').get_parameter_value().string_value
+        self.declare_parameter("/topic_prefix", "default_value")
+        self.topic_prefix = (
+            self.get_parameter("/topic_prefix").get_parameter_value().string_value
+        )
 
         default_state_machine_config = self.default_state_machine_config_path()
-        self.declare_parameter('/state_machine_config', default_state_machine_config)
-        self.state_machine_config_path = self.get_parameter('/state_machine_config').value
-        self.state_machine_config = load_state_machine_config(self.state_machine_config_path)
+        self.declare_parameter("/state_machine_config", default_state_machine_config)
+        self.state_machine_config_path = self.get_parameter(
+            "/state_machine_config"
+        ).value
+        self.state_machine_config = load_state_machine_config(
+            self.state_machine_config_path
+        )
 
-        self.declare_parameter('/state_machine_info_topic', '')
-        self.state_machine_info_topic = self.get_parameter('/state_machine_info_topic').get_parameter_value().string_value
+        self.declare_parameter("/state_machine_info_topic", "")
+        self.state_machine_info_topic = (
+            self.get_parameter("/state_machine_info_topic")
+            .get_parameter_value()
+            .string_value
+        )
 
-        self.declare_parameter('/state_machine_info_hz', 10.0)
-        self.state_machine_info_hz = float(self.get_parameter('/state_machine_info_hz').value)
+        self.declare_parameter("/state_machine_info_hz", 10.0)
+        self.state_machine_info_hz = float(
+            self.get_parameter("/state_machine_info_hz").value
+        )
+
+        self.declare_parameter("/hot_reload", False)
+        self.hot_reload_enabled = bool(self.get_parameter("/hot_reload").value)
+
+    def load_models(self):
+        model_file_paths: list[str] = []
+
+        def model_file(file_name: str) -> str:
+            path = self.data_file(file_name)
+            model_file_paths.append(path)
+            return path
+
+        self.normal: HumanoidGaitPolicyLite = HumanoidGaitPolicyLite(
+            model_file("amp_terrain.onnx")
+        )
+        self.recover: DanceMotionPolicy = DanceMotionPolicy(
+            model_file("recover.npz"),
+            model_file("recover.onnx"),
+            start_frame=600,
+        )
+        self.dance: DanceMotionPolicy = DanceMotionPolicy(
+            model_file("dance.npz"),
+            model_file("dance.onnx"),
+        )
+        self.amp_run: HumanoidGaitPolicyLite = HumanoidGaitPolicyLite(
+            model_file("amp_run.onnx")
+        )
+        self.normal_run: NormalMotionPolicy = NormalMotionPolicy(
+            model_file("model_normal.onnx")
+        )
+        self.back_flip: DanceMotionPolicyGravityIsaaclab = (
+            DanceMotionPolicyGravityIsaaclab(
+                model_file("back_flip.npz"),
+                model_file("back_flip.onnx"),
+                start_frame=40,
+            )
+        )
+        self.forward_flip: DanceMotionPolicyGravityIsaaclab = (
+            DanceMotionPolicyGravityIsaaclab(
+                model_file("forward_flip.npz"),
+                model_file("forward_flip.onnx"),
+                start_frame=150,
+            )
+        )
+        self.noarm: HumanoidGaitPolicyLite = HumanoidGaitPolicyLite(
+            model_file("arm8.onnx")
+        )
+        self.model_file_paths: tuple[str, ...] = tuple(model_file_paths)
+        self.pd_pos: np.ndarray = self.normal.default_dof_pos
 
     def data_file(self, file_name):
         try:
@@ -256,7 +322,9 @@ class BxiExample(Node):
     def default_state_machine_config_path(self):
         try:
             package_share = get_package_share_directory("bxi_example_py_elf3")
-            config_path = os.path.join(package_share, "config", "elf3_state_machine.yaml")
+            config_path = os.path.join(
+                package_share, "config", "elf3_state_machine.yaml"
+            )
             if os.path.exists(config_path):
                 return config_path
         except Exception:
@@ -269,46 +337,324 @@ class BxiExample(Node):
         for state in robot_states.values():
             state.on_bind(self)
 
+    def demo_module_path(self):
+        return os.path.abspath(__file__)
+
+    # ---------------------------------------------------------------------------- #
+    #                                    热重载部分代码                                   #
+    # ---------------------------------------------------------------------------- #
+    def init_hot_reload(self):
+        self.hot_reload_interval = 1.0
+        self.hot_reload_elapsed = 0.0
+        self.hot_reload_mtimes = self.current_hot_reload_mtimes()
+        self.hot_reload_model_lock = Lock()
+        self.hot_reload_model_thread = None
+        self.hot_reload_model_result = None
+
+    def current_hot_reload_mtimes(self):
+        mtimes = {}
+        paths = [
+            self.demo_module_path(),
+            self.state_machine_config_path,
+            getattr(robot_states_module, "__file__", ""),
+        ]
+        paths.extend(getattr(self, "model_file_paths", ()))
+        for path in paths:
+            if path and os.path.exists(path):
+                path = os.path.abspath(path)
+                mtimes[path] = os.path.getmtime(path)
+        return mtimes
+
+    def check_hot_reload(self, dt):
+        if not self.hot_reload_enabled:
+            return
+
+        if self.apply_pending_model_reload():
+            return
+
+        if self.hot_reload_model_thread is not None:
+            return
+
+        self.hot_reload_elapsed += dt
+        if self.hot_reload_elapsed < self.hot_reload_interval:
+            return
+        self.hot_reload_elapsed = 0.0
+
+        mtimes = self.current_hot_reload_mtimes()
+        if mtimes == self.hot_reload_mtimes:
+            return
+        if self.state_machine.in_transition:
+            return
+
+        changed_paths = {
+            path
+            for path in set(mtimes) | set(self.hot_reload_mtimes)
+            if mtimes.get(path) != self.hot_reload_mtimes.get(path)
+        }
+        model_paths = {
+            os.path.abspath(path)
+            for path in getattr(self, "model_file_paths", ())
+        }
+        demo_paths = {self.demo_module_path()}
+        demo_changed = any(path in demo_paths for path in changed_paths)
+        model_changed = any(path in model_paths for path in changed_paths)
+        state_machine_changed = any(
+            path not in model_paths and path not in demo_paths
+            for path in changed_paths
+        )
+
+        if state_machine_changed:
+            reloaded = self.reload_state_machine()
+            if reloaded and (model_changed or demo_changed):
+                self.start_model_reload(reload_demo_code=demo_changed)
+        else:
+            self.start_model_reload(reload_demo_code=demo_changed)
+            reloaded = False
+
+        if reloaded:
+            self.hot_reload_mtimes = self.current_hot_reload_mtimes()
+
+    def load_demo_class_from_file(self):
+        module_name = f"{__name__}_hot_reload_{os.getpid()}_{time.time_ns()}"
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            self.demo_module_path(),
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"cannot load module from {self.demo_module_path()}")
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.modules.pop(module_name, None)
+
+        demo_class = getattr(module, self.__class__.__name__, None)
+        if demo_class is None:
+            raise RuntimeError(
+                f"loaded module does not define {self.__class__.__name__}"
+            )
+        return demo_class
+
+    def adopt_demo_class(self, demo_class):
+        if self.__class__ is demo_class:
+            return
+        try:
+            self.__class__ = demo_class
+        except TypeError as exc:
+            self.get_logger().warning(f"hot reload kept old node class: {exc}")
+
+    def build_model_reload_attrs(self, demo_class=None):
+        context = HotReloadModelContext(self)
+        load_models = self.__class__.load_models
+        if demo_class is not None:
+            load_models = demo_class.load_models
+        load_models(context)
+        return dict(context.assigned)
+
+    def start_model_reload(self, reload_demo_code=False):
+        if (
+            self.hot_reload_model_thread is not None
+            and self.hot_reload_model_thread.is_alive()
+        ):
+            return
+
+        with self.hot_reload_model_lock:
+            self.hot_reload_model_result = None
+
+        thread = Thread(
+            target=self.run_model_reload,
+            args=(reload_demo_code,),
+            daemon=True,
+        )
+        self.hot_reload_model_thread = thread
+        thread.start()
+
+    def run_model_reload(self, reload_demo_code=False):
+        try:
+            demo_class = self.load_demo_class_from_file() if reload_demo_code else None
+            model_attrs = self.build_model_reload_attrs(demo_class)
+            result = {
+                "ok": True,
+                "reload_demo_code": reload_demo_code,
+                "demo_class": demo_class,
+                "model_attrs": model_attrs,
+            }
+        except Exception as exc:
+            result = {
+                "ok": False,
+                "error": exc,
+            }
+
+        with self.hot_reload_model_lock:
+            self.hot_reload_model_result = result
+
+    def apply_pending_model_reload(self):
+        thread = self.hot_reload_model_thread
+        if thread is None:
+            return False
+
+        with self.hot_reload_model_lock:
+            result = self.hot_reload_model_result
+
+        if result is None:
+            if thread.is_alive():
+                return False
+            thread.join(timeout=0.0)
+            self.hot_reload_model_thread = None
+            return False
+
+        if self.state_machine.in_transition:
+            return False
+
+        thread.join(timeout=0.0)
+        self.hot_reload_model_thread = None
+        with self.hot_reload_model_lock:
+            self.hot_reload_model_result = None
+
+        if not result["ok"]:
+            self.get_logger().error(f"hot reload models failed: {result['error']}")
+            return False
+
+        for attr_name, value in result["model_attrs"].items():
+            setattr(self, attr_name, value)
+
+        demo_class = result.get("demo_class")
+        if demo_class is not None:
+            self.adopt_demo_class(demo_class)
+
+        for state in self.robot_states.values():
+            if hasattr(state, "policy_configured"):
+                state.policy_configured = False
+        reload_message = "hot reloaded models"
+        if result.get("reload_demo_code"):
+            reload_message = "hot reloaded demo code and models"
+        self.get_logger().info(reload_message)
+        self.hot_reload_mtimes = self.current_hot_reload_mtimes()
+        return True
+
+    def reload_state_machine(self):
+        current_state_name = self.state_machine.current_state_name
+        try:
+            importlib.invalidate_caches()
+            importlib.reload(robot_states_module)
+            state_machine_config = load_state_machine_config(
+                self.state_machine_config_path
+            )
+
+            runtime_config = dict(state_machine_config)
+            if current_state_name in (state_machine_config.get("states") or {}):
+                runtime_config["initial_state"] = current_state_name
+
+            robot_states = robot_states_module.build_robot_states(runtime_config)
+            self.bind_robot_states(robot_states)
+            state_machine = RobotStateMachine(
+                self,
+                runtime_config,
+                robot_states,
+            )
+            remote_event_adapter = RemoteEventAdapter(
+                runtime_config.get("remote_events", {})
+            )
+        except Exception as exc:
+            self.get_logger().error(f"hot reload failed: {exc}")
+            return False
+
+        self.state_machine_config = runtime_config
+        self.speed_profiles = runtime_config.get("speed_profiles", {})
+        self.robot_states = robot_states
+        self.state_id_by_name = {
+            name: state.state_id for name, state in robot_states.items()
+        }
+        self.state_name_by_id = {
+            value: key for key, value in self.state_id_by_name.items()
+        }
+        self.state_machine = state_machine
+        self.remote_event_adapter = remote_event_adapter
+        self.state = self.state_machine.current_state_id
+        self.pending_remote_events.clear()
+        self.get_logger().info(
+            f"hot reloaded state machine at state '{self.state_machine.current_state_name}'"
+        )
+        return True
+
+    # ---------------------------------- 热重载部分代码 --------------------------------- #
+    # ---------------------------------------------------------------------------- #
+    #                                    ROS话题部分                                   #
+    # ---------------------------------------------------------------------------- #
     def init_pub_sub(self):
         # 订阅和发布主题
-        qos = QoSProfile(depth=1, durability=qos_profile_sensor_data.durability, reliability=qos_profile_sensor_data.reliability)
+        qos = QoSProfile(
+            depth=1,
+            durability=qos_profile_sensor_data.durability,
+            reliability=qos_profile_sensor_data.reliability,
+        )
 
-        self.act_pub = self.create_publisher(bxiMsg.ActuatorCmds, self.topic_prefix+'actuators_cmds', qos)  # CHANGE
-        state_machine_info_topic = self.state_machine_info_topic or (self.topic_prefix + 'state_machine_info')
-        self.state_machine_info_pub = self.create_publisher(String, state_machine_info_topic, 10)
+        self.act_pub = self.create_publisher(
+            bxiMsg.ActuatorCmds, self.topic_prefix + "actuators_cmds", qos
+        )  # CHANGE
+        state_machine_info_topic = self.state_machine_info_topic or (
+            self.topic_prefix + "state_machine_info"
+        )
+        self.state_machine_info_pub = self.create_publisher(
+            String, state_machine_info_topic, 10
+        )
 
-        self.odom_sub = self.create_subscription(nav_msgs.msg.Odometry, self.topic_prefix+'odom', self.odom_callback, qos)
+        self.odom_sub = self.create_subscription(
+            nav_msgs.msg.Odometry, self.topic_prefix + "odom", self.odom_callback, qos
+        )
         # self.joint_sub = self.create_subscription(sensor_msgs.msg.JointState, self.topic_prefix+'joint_states', self.joint_callback, qos)
-        self.actuator_sub = self.create_subscription(bxiMsg.ActuatorStates, self.topic_prefix+'actuator_states', self.actuator_callback, qos)
-        self.imu_sub = self.create_subscription(sensor_msgs.msg.Imu, self.topic_prefix+'imu_data', self.imu_callback, qos)
-        self.touch_sub = self.create_subscription(bxiMsg.TouchSensor, self.topic_prefix+'touch_sensor', self.touch_callback, qos)
-        self.joy_sub = self.create_subscription(bxiMsg.MotionCommands, 'motion_commands', self.joy_callback, qos)
+        self.actuator_sub = self.create_subscription(
+            bxiMsg.ActuatorStates,
+            self.topic_prefix + "actuator_states",
+            self.actuator_callback,
+            qos,
+        )
+        self.imu_sub = self.create_subscription(
+            sensor_msgs.msg.Imu, self.topic_prefix + "imu_data", self.imu_callback, qos
+        )
+        self.touch_sub = self.create_subscription(
+            bxiMsg.TouchSensor,
+            self.topic_prefix + "touch_sensor",
+            self.touch_callback,
+            qos,
+        )
+        self.joy_sub = self.create_subscription(
+            bxiMsg.MotionCommands, "motion_commands", self.joy_callback, qos
+        )
 
-        self.rest_srv = self.create_client(bxiSrv.RobotReset, self.topic_prefix+'robot_reset')
-        self.sim_rest_srv = self.create_client(bxiSrv.SimulationReset, self.topic_prefix+'sim_reset')
+        self.rest_srv = self.create_client(
+            bxiSrv.RobotReset, self.topic_prefix + "robot_reset"
+        )
+        self.sim_rest_srv = self.create_client(
+            bxiSrv.SimulationReset, self.topic_prefix + "sim_reset"
+        )
 
         self.timer_callback_group_1 = MutuallyExclusiveCallbackGroup()
         self.timer_callback_group_2 = MutuallyExclusiveCallbackGroup()
 
         self.lock_in = Lock()
-        self.lock_ou = self.lock_in #Lock()
+        self.lock_ou = self.lock_in  # Lock()
 
     def timer_callback(self):
         # ptyhon 与 rclpy 多线程不太友好，这里使用定时间+简易状态机运行a
         events = []
         if self.step == 0:
-            self.robot_reset(1, False) # first reset
-            print('robot reset 1!')
+            self.robot_reset(1, False)  # first reset
+            print("robot reset 1!")
             self.step = 1
             return
-        elif self.step == 1 and self.loop_count >= (1./self.dt): # 延迟2s
-            self.robot_reset(2, True) # first reset
-            print('robot reset 2!')
+        elif self.step == 1 and self.loop_count >= (1.0 / self.dt):  # 延迟2s
+            self.robot_reset(2, True)  # first reset
+            print("robot reset 2!")
             self.loop_count = 0
             self.step = 2
             return
 
         if self.step == 2:
+            self.check_hot_reload(self.dt)
+
             with self.lock_in:
                 self.current_q = self.qpos.copy()
                 self.current_dq = self.qvel.copy()
@@ -394,7 +740,7 @@ class BxiExample(Node):
         req.header.frame_id = robot_name
 
         while not self.rest_srv.wait_for_service(timeout_sec=1.0):
-            print('service not available, waiting again...')
+            print("service not available, waiting again...")
 
         self.rest_srv.call_async(req)
 
@@ -421,7 +767,7 @@ class BxiExample(Node):
         req.joint_state = joint_state
 
         while not self.sim_rest_srv.wait_for_service(timeout_sec=1.0):
-            print('service not available, waiting again...')
+            print("service not available, waiting again...")
 
         self.sim_rest_srv.call_async(req)
 
@@ -445,25 +791,6 @@ class BxiExample(Node):
             self.qpos[:] = np.array(joint_pos[:])
             self.qvel[:] = np.array(joint_vel[:])
 
-    def set_motor_target(self, qpos, kp, kd):
-        frame = (
-            np.asarray(qpos, dtype=np.float32).copy(),
-            np.asarray(kp, dtype=np.float32).copy(),
-            np.asarray(kd, dtype=np.float32).copy(),
-        )
-        self.motor_target = frame
-
-    def hold_last_motor_target(self):
-        self.set_motor_target(self.pos_last, self.kp_last, self.kd_last)
-
-    def request_state(self, state_name, trigger="code", transition="instant", delay=0.0):
-        self.state_machine.request_transition(state_name, trigger=trigger, transition=transition, delay=delay)
-
-    def is_orientation_unsafe(self, quat_xyzw):
-        eu_ang = quaternion_to_euler_array(quat_xyzw)
-        eu_ang[eu_ang > math.pi] -= 2 * math.pi
-        return (np.abs(eu_ang[0]) > (math.pi / 3.0)) or (np.abs(eu_ang[1]) > (math.pi / 3.0))
-
     def joy_callback(self, msg):
         with self.lock_in:
             self.raw_cmd_vel[:] = (
@@ -471,7 +798,9 @@ class BxiExample(Node):
                 msg.vel_des.y,
                 msg.yawdot_des,
             )
-            events = self.remote_event_adapter.extract_events(msg, sync_only=self.step < 2)
+            events = self.remote_event_adapter.extract_events(
+                msg, sync_only=self.step < 2
+            )
             self.pending_remote_events.extend(events)
 
         if self.step < 2:
@@ -493,22 +822,51 @@ class BxiExample(Node):
     def touch_callback(self, msg):
         foot_force = msg.value
 
-    def odom_callback(self, msg): # 全局里程计（上帝视角，仅限仿真使用）
+    def odom_callback(self, msg):  # 全局里程计（上帝视角，仅限仿真使用）
         base_pose = msg.pose
         base_twist = msg.twist
 
+    # ---------------------------------- ROS话题部分 --------------------------------- #
+    # ---------------------------------------------------------------------------- #
+    #                                     工具类函数                                    #
+    # ---------------------------------------------------------------------------- #
+    def set_motor_target(self, qpos, kp, kd):
+        frame = (
+            np.asarray(qpos, dtype=np.float32).copy(),
+            np.asarray(kp, dtype=np.float32).copy(),
+            np.asarray(kd, dtype=np.float32).copy(),
+        )
+        self.motor_target = frame
+
+    def hold_last_motor_target(self):
+        self.set_motor_target(self.pos_last, self.kp_last, self.kd_last)
+
+    def request_state(
+        self, state_name, trigger="code", transition="instant", delay=0.0
+    ):
+        self.state_machine.request_transition(
+            state_name, trigger=trigger, transition=transition, delay=delay
+        )
+
+    def is_orientation_unsafe(self, quat_xyzw):
+        eu_ang = quaternion_to_euler_array(quat_xyzw)
+        eu_ang[eu_ang > math.pi] -= 2 * math.pi
+        return (np.abs(eu_ang[0]) > (math.pi / 3.0)) or (
+            np.abs(eu_ang[1]) > (math.pi / 3.0)
+        )
+
     def fill_model_obs_history(self, model):
-        if not hasattr(model, 'obs_history') or len(model.obs_history) == 0:
+        if not hasattr(model, "obs_history") or len(model.obs_history) == 0:
             return
 
         latest_obs = np.array(model.obs_history[-1], dtype=np.float32).copy()
-        history_len = getattr(model, 'obs_history_len', model.obs_history.maxlen)
+        history_len = getattr(model, "obs_history_len", model.obs_history.maxlen)
 
         model.obs_history.clear()
         for _ in range(history_len):
             model.obs_history.append(latest_obs.copy())
 
-        if hasattr(model, 'obs') and hasattr(model, 'single_obs_dim'):
+        if hasattr(model, "obs") and hasattr(model, "single_obs_dim"):
             for i, hist_obs in enumerate(model.obs_history):
                 start_idx = i * model.single_obs_dim
                 end_idx = start_idx + model.single_obs_dim
@@ -539,23 +897,28 @@ class BxiExample(Node):
 
         self.fill_model_obs_history(model)
 
+
+# ----------------------------------- 工具类函数 ---------------------------------- #
+
+
 def main(args=None):
-       
+
     time.sleep(5)
-    
+
     rclpy.init(args=args)
     node = BxiExample()
-    
+
     executor = MultiThreadedExecutor(num_threads=3)
     executor.add_node(node)
-    
+
     try:
         executor.spin()
     finally:
         executor.shutdown()
         node.destroy_node()
-        
+
     rclpy.shutdown()
-        
-if __name__ == '__main__':
+
+
+if __name__ == "__main__":
     main()

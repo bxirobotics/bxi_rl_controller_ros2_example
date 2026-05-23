@@ -429,7 +429,7 @@ def remove_self_model_initializers(path: Path, model_keys: Set[str]) -> None:
     if not path.exists() or not model_keys:
         return
 
-    assignment_re = re.compile(r"^(\s*)self\.([A-Za-z_][A-Za-z0-9_]*)\s*=")
+    assignment_re = re.compile(r"^(\s*)self\.([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=]+)?=")
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     output: List[str] = []
     index = 0
