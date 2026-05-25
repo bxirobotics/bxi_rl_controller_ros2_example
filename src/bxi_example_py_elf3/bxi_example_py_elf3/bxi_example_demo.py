@@ -22,12 +22,9 @@ from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
 
-from bxi_example_py_elf3.inference.beyondmimic import (
-    DanceMotionPolicy,
-    DanceMotionPolicyGravityIsaaclab,
-)
-from bxi_example_py_elf3.inference.normal import NormalMotionPolicy
-from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicyLite
+from bxi_example_py_elf3.inference.beyondmimic import *
+from bxi_example_py_elf3.inference.normal import *
+from bxi_example_py_elf3.inference.amp import *
 from bxi_example_py_elf3.utils.hot_reload import HotReloadMixin
 from bxi_example_py_elf3.utils.state_machine import (
     RobotStateMachine,
@@ -237,40 +234,50 @@ class BxiExample(HotReloadMixin, Node):
             model_file_paths.append(path)
             return path
 
-        self.normal: HumanoidGaitPolicyLite = HumanoidGaitPolicyLite(
-            model_file("amp_terrain.onnx")
+        self.normal: HumanoidGaitPolicyLiteIsaaclab = HumanoidGaitPolicyLiteIsaaclab(
+            model_file("isaaclab_model/amp_terrain.onnx")
         )
-        self.recover: DanceMotionPolicy = DanceMotionPolicy(
-            model_file("recover.npz"),
-            model_file("recover.onnx"),
+        self.recover: DanceMotionPolicyMjlab = DanceMotionPolicyMjlab(
+            model_file("mjlab_model/recover.npz"),
+            model_file("mjlab_model/recover.onnx"),
             start_frame=600,
         )
-        self.dance: DanceMotionPolicy = DanceMotionPolicy(
-            model_file("dance.npz"),
-            model_file("dance.onnx"),
+        self.dance: DanceMotionPolicyGravityIsaaclabV3 = DanceMotionPolicyGravityIsaaclabV3(
+            model_file("isaaclab_model/shuishou.npz"),
+            model_file("isaaclab_model/shuishou.onnx"),
+            start_frame=60,
+            fixed_pos=True
         )
-        self.amp_run: HumanoidGaitPolicyLite = HumanoidGaitPolicyLite(
-            model_file("amp_run.onnx")
+        self.amp_run: HumanoidGaitPolicyLiteIsaaclab = HumanoidGaitPolicyLiteIsaaclab(
+            model_file("isaaclab_model/amp_run.onnx")
         )
-        self.normal_run: NormalMotionPolicy = NormalMotionPolicy(
-            model_file("model_normal.onnx")
+        self.normal_run: NormalMotionPolicyMjlab = NormalMotionPolicyMjlab(
+            model_file("mjlab_model/model_normal.onnx")
         )
         self.back_flip: DanceMotionPolicyGravityIsaaclab = (
             DanceMotionPolicyGravityIsaaclab(
-                model_file("back_flip.npz"),
-                model_file("back_flip.onnx"),
+                model_file("isaaclab_model/back_flip.npz"),
+                model_file("isaaclab_model/back_flip.onnx"),
                 start_frame=40,
             )
         )
         self.forward_flip: DanceMotionPolicyGravityIsaaclab = (
             DanceMotionPolicyGravityIsaaclab(
-                model_file("forward_flip.npz"),
-                model_file("forward_flip.onnx"),
+                model_file("isaaclab_model/forward_flip.npz"),
+                model_file("isaaclab_model/forward_flip.onnx"),
                 start_frame=150,
             )
         )
-        self.noarm: HumanoidGaitPolicyLite = HumanoidGaitPolicyLite(
-            model_file("arm8.onnx")
+        self.ballet: DanceMotionPolicyGravityIsaaclabV3 = (
+            DanceMotionPolicyGravityIsaaclabV3(
+                model_file("isaaclab_model/ballet.npz"),
+                model_file("isaaclab_model/ballet.onnx"),
+                start_frame=60,
+                fixed_pos=True
+            )
+        )
+        self.withoutarm: HumanoidGaitPolicyLiteIsaaclab = HumanoidGaitPolicyLiteIsaaclab(
+            model_file("isaaclab_model/withoutarm.onnx")
         )
         self.model_file_paths: tuple[str, ...] = tuple(model_file_paths)
         self.pd_pos: np.ndarray = self.normal.default_dof_pos
@@ -554,25 +561,6 @@ class BxiExample(HotReloadMixin, Node):
             np.abs(eu_ang[1]) > (math.pi / 3.0)
         )
 
-    def fill_model_obs_history(self, model):
-        if not hasattr(model, "obs_history") or len(model.obs_history) == 0:
-            return
-
-        latest_obs = np.array(model.obs_history[-1], dtype=np.float32).copy()
-        history_len = getattr(model, "obs_history_len", model.obs_history.maxlen)
-
-        model.obs_history.clear()
-        for _ in range(history_len):
-            model.obs_history.append(latest_obs.copy())
-
-        if hasattr(model, "obs") and hasattr(model, "single_obs_dim"):
-            for i, hist_obs in enumerate(model.obs_history):
-                start_idx = i * model.single_obs_dim
-                end_idx = start_idx + model.single_obs_dim
-                model.obs[start_idx:end_idx] = hist_obs
-
-            model.obs_tensor = np.expand_dims(model.obs, axis=0)
-
     # --- 模型切换过渡逻辑 ---
     def preheat_model(self, model, with_cmd_vel=False, cmd_vel=None):
         # 用当前观测预推理一次，不输出到电机；有历史观测的模型随后用当前观测填满历史。
@@ -585,17 +573,15 @@ class BxiExample(HotReloadMixin, Node):
             cmd_vel = self.current_cmd_vel.copy()
         else:
             cmd_vel = np.asarray(cmd_vel, dtype=np.float32)
-
-        if type(model) is NormalMotionPolicy:
-            model.infer_step(q, dq, quat_xyzw, omega, cmd_vel)
-        else:
-            if with_cmd_vel:
-                model.inference_step(q, dq, quat_wxyz, omega, cmd_vel)
+        history_len = getattr(model, "obs_history_len", 1)
+        for _ in range(history_len*2):
+            if type(model) is NormalMotionPolicyMjlab:
+                model.infer_step(q, dq, quat_xyzw, omega, cmd_vel)
             else:
-                model.inference_step(q, dq, quat_wxyz, omega)
-
-        self.fill_model_obs_history(model)
-
+                if with_cmd_vel:
+                    model.inference_step(q, dq, quat_wxyz, omega, cmd_vel)
+                else:
+                    model.inference_step(q, dq, quat_wxyz, omega)
 
 # ----------------------------------- 工具类函数 ---------------------------------- #
 

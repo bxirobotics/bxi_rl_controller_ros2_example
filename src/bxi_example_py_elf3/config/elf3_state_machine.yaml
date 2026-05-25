@@ -46,16 +46,15 @@ remote_events:
   forward_flip_event:
     slot: btn_10
     value: 2
-  applause_event:
+  ballet_event:
     slot: btn_10
     value: 3
-  hello_event:
-    slot: btn_10
-    value: 4
-
-  naotou_event:
+  applause_event:
     slot: btn_10
     value: 5
+  hello_event:
+    slot: btn_10
+    value: 6
 
 #预设的一些过度方式
 transition_profiles:
@@ -153,14 +152,14 @@ states:
         forward_flip_event:
           to: forward_flip
           transition: soft_switch
+        ballet_event:
+          to: ballet
+          transition: soft_switch
         applause_event:
           to: applause
           transition: dual_running_blend
         hello_event:
           to: hello
-          transition: dual_running_blend
-        naotou_event:
-          to: naotou
           transition: dual_running_blend
         toggle_nav_ctrl_event:
           action: toggle_nav_ctrl
@@ -287,9 +286,8 @@ states:
             duration: 2.0
         zero_torque_event: zero_torque
 
-  applause:
-    behavior: ApplauseState
-    speed_profile: normal
+  ballet:
+    behavior: BalletState
     transitions:
       on_event:
         normal_event:
@@ -297,11 +295,10 @@ states:
           transition: 
             base: dual_running_blend
             duration: 1.0
-        toggle_dance_pause_event:
-          action: toggle_dance_pause
-
-  naotou:
-    behavior: NaotouState
+        zero_torque_event: zero_torque
+        
+  applause:
+    behavior: ApplauseState
     speed_profile: normal
     transitions:
       on_event:

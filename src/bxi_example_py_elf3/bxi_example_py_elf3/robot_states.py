@@ -30,15 +30,14 @@ class NormalState(RobotControlState):
             cmd_vel=self.get_cmd_vel(ctx),
         )
 
-    def on_enter(self, ctx: BxiExample) -> None:
-        self.reset_loop(ctx)
-
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
         return self._motor_frame(
             ctx.normal.target_dof_pos, ctx.normal.kps, ctx.normal.kds
         )
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         cmd_vel = self.get_cmd_vel(ctx)
         qpos, vel = ctx.normal.inference_step(
             ctx.current_q,
@@ -55,15 +54,12 @@ class NormalState(RobotControlState):
             ctx.request_state("zero_torque", trigger="safety")
             return
 
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
 
 class ZeroTorqueState(RobotControlState):
-    def on_enter(self, ctx: BxiExample) -> None:
-        self.reset_loop(ctx)
-
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
         return self._motor_frame(
             ctx.joint_nominal_pos,
@@ -71,7 +67,9 @@ class ZeroTorqueState(RobotControlState):
             np.zeros(ctx.dof_num, dtype=np.float32),
         )
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         return self._motor_frame(
             ctx.joint_nominal_pos,
             np.zeros(ctx.dof_num, dtype=np.float32),
@@ -80,24 +78,22 @@ class ZeroTorqueState(RobotControlState):
 
 
 class PdBrakeState(RobotControlState):
-    def on_enter(self, ctx: BxiExample) -> None:
-        self.reset_loop(ctx)
-
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
         return self._motor_frame(ctx.pd_pos, ctx.normal.kps, ctx.normal.kds)
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         return self._motor_frame(ctx.pd_pos, ctx.normal.kps, ctx.normal.kds)
 
 
 class InitialPosState(RobotControlState):
-    def on_enter(self, ctx: BxiExample) -> None:
-        self.reset_loop(ctx)
-
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
         return self._motor_frame(ctx.initial_pos, ctx.joint_kp, ctx.joint_kd)
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         return self._motor_frame(ctx.initial_pos, ctx.joint_kp, ctx.joint_kd)
 
 
@@ -120,18 +116,19 @@ class DanceState(RobotControlState):
         ctx.preheat_model(ctx.dance)
 
     def on_enter(self, ctx: BxiExample) -> None:
-        self.reset_loop(ctx)
         self.playing = True
         ctx.dance.timestep = self.start_frame
 
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
         return self._motor_frame(
             ctx.dance.target_dof_pos,
-            ctx.dance.stiffness_array,
-            ctx.dance.damping_array,
+            ctx.dance.kps,
+            ctx.dance.kds,
         )
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         if ctx.dance.timestep >= ctx.dance.motionpos.shape[0]:
             return None
 
@@ -143,12 +140,12 @@ class DanceState(RobotControlState):
         )
 
         if self.playing:
-            ctx.dance.timestep += 1
+            ctx.dance.timestep += 50 * dt  # 模型动画是50hz播放的，dt是推理间隔
 
         return self._motor_frame(
             qpos,
-            ctx.dance.stiffness_array,
-            ctx.dance.damping_array,
+            ctx.dance.kps,
+            ctx.dance.kds,
         )
 
     def on_update(self, ctx: BxiExample, dt: float) -> None:
@@ -171,7 +168,7 @@ class DanceState(RobotControlState):
             ctx.request_state("zero_torque", trigger="safety")
             return
 
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
@@ -183,28 +180,23 @@ class DanceState(RobotControlState):
         return True
 
 
-class FlipState(RobotControlState):
+class MotionState(RobotControlState):
     policy_attr = ""
     finish_trigger = "flip_finished"
     end_frame_trim = 0
-    transition_duration = 0.0
+    end_transition = {}
 
     def __init__(self, name: str, state_id: int):
         super().__init__(name, state_id)
         self.playing = True
-        self.policy_configured = False
 
     def _policy(self, ctx: BxiExample) -> Any:
         return getattr(ctx, self.policy_attr)
 
-    def _configure_policy(self, policy: Any) -> None:
-        if self.policy_configured:
-            return
-        if self.end_frame_trim > 0:
-            policy.end_frame = max(
-                policy.start_frame, policy.end_frame - self.end_frame_trim
-            )
-        self.policy_configured = True
+    def on_enter_transition(self, ctx, from_state, progress, transition):
+        policy = self._policy(ctx)
+        policy.timestep = policy.start_frame
+        return super().on_enter_transition(ctx, from_state, progress, transition)
 
     def on_prepare_enter(
         self,
@@ -214,14 +206,11 @@ class FlipState(RobotControlState):
     ) -> None:
         super().on_prepare_enter(ctx, from_state, transition)
         policy = self._policy(ctx)
-        self._configure_policy(policy)
-        policy.timestep = policy.start_frame
         if hasattr(policy, "timeinit"):
             policy.timeinit = 0.0
         ctx.preheat_model(policy)
 
     def on_enter(self, ctx: BxiExample) -> None:
-        self.reset_loop(ctx)
         self.playing = True
         policy = self._policy(ctx)
         policy.timestep = policy.start_frame
@@ -230,7 +219,6 @@ class FlipState(RobotControlState):
 
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
         policy = self._policy(ctx)
-        self._configure_policy(policy)
         qpos = getattr(policy, "target_dof_pos", None)
         if qpos is None:
             qpos = getattr(policy, "default_dof_pos", None)
@@ -238,10 +226,10 @@ class FlipState(RobotControlState):
             return None
         return self._motor_frame(qpos, policy.kps, policy.kds)
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         policy = self._policy(ctx)
-        if policy.timestep > policy.end_frame:
-            return None
 
         qpos = policy.inference_step(
             ctx.current_q,
@@ -250,44 +238,65 @@ class FlipState(RobotControlState):
             ctx.current_omega,
         )
 
-        if self.playing:
-            policy.timestep += 1
+        if self.playing and not on_translation:
+            policy.timestep += 50 * dt  # 模型动画是50hz播放的，dt是推理间隔
 
         return self._motor_frame(qpos, policy.kps, policy.kds)
 
     def on_update(self, ctx: BxiExample, dt: float) -> None:
         policy = self._policy(ctx)
 
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
-        if policy.timestep > policy.end_frame:
+        if policy.timestep > policy.end_frame - self.end_frame_trim:
             print("Motion replay finished, resetting simulation.")
-            policy.timestep = policy.start_frame
             ctx.request_state(
-                "normal",
-                trigger=self.finish_trigger,
-                transition={
-                    "base": "dual_running_blend",
-                    "duration": self.transition_duration,
-                    "data": {"run_from": False},
-                },
+                "normal", trigger=self.finish_trigger, transition=self.end_transition
             )
 
 
-class BackFlipState(FlipState):
+class BackFlipState(MotionState):
     policy_attr = "back_flip"
     finish_trigger = "back_flip_finished"
-    end_frame_trim = 20
-    transition_duration = 1.0
+    end_frame_trim = 30
+    end_transition = {
+        "base": "dual_running_blend",
+        "duration": 0.45,
+        "data": {
+            "curve": "linear",
+            "run_from": True,
+        },  # 过渡的时候模型继续推理，同时推理下一个模型
+    }
 
 
-class ForwardFlipState(FlipState):
+class ForwardFlipState(MotionState):
     policy_attr = "forward_flip"
     finish_trigger = "forward_flip_finished"
     end_frame_trim = 125
-    transition_duration = 1.0
+    end_transition = {
+        "base": "dual_running_blend",
+        "duration": 1.0,
+        "data": {
+            "curve": "smootherstep",
+            "run_from": True,
+        },  # 过渡的时候模型继续推理，同时推理下一个模型
+    }
+
+
+class BalletState(MotionState):
+    policy_attr = "ballet"
+    finish_trigger = "ballet_finished"
+    end_frame_trim = 330
+    end_transition = {
+        "base": "dual_running_blend",
+        "duration": 1.0,
+        "data": {
+            "curve": "smootherstep",
+            "run_from": True,
+        },  # 过渡的时候模型继续推理，同时推理下一个模型
+    }
 
 
 class HandPlayBackState(RobotControlState):
@@ -329,24 +338,23 @@ class HandPlayBackState(RobotControlState):
     ) -> None:
         super().on_prepare_enter(ctx, from_state, transition)
         ctx.preheat_model(
-            ctx.noarm,
+            ctx.withoutarm,
             with_cmd_vel=True,
             cmd_vel=self.get_cmd_vel(ctx),
         )
 
     def on_enter(self, ctx: BxiExample) -> None:
-        self.reset_loop(ctx)
         self.frame = 0.0
         self.playing = True
 
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
-        qpos = ctx.noarm.target_dof_pos.copy()
+        qpos = ctx.withoutarm.target_dof_pos.copy()
         qpos[-14:] = self.applause_data[0]
-        return self._motor_frame(qpos, ctx.noarm.kps, ctx.noarm.kds)
+        return self._motor_frame(qpos, ctx.withoutarm.kps, ctx.withoutarm.kds)
 
-    def get_motor_frame(self, ctx, dt):
+    def get_motor_frame(self, ctx, dt, on_translation):
         cmd_vel = self.get_cmd_vel(ctx)
-        qpos, vel = ctx.noarm.inference_step(
+        qpos, vel = ctx.withoutarm.inference_step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
@@ -357,9 +365,9 @@ class HandPlayBackState(RobotControlState):
             qpos[-14:] = self.applause_data[int(self.frame)]
         else:
             qpos[-14:] = self.applause_data[-1]
-        if self.playing:
+        if self.playing and not on_translation:
             self.frame += self.fps * dt
-        return self._motor_frame(qpos, ctx.noarm.kps, ctx.noarm.kds)
+        return self._motor_frame(qpos, ctx.withoutarm.kps, ctx.withoutarm.kds)
 
     def on_update(self, ctx: BxiExample, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
@@ -375,7 +383,7 @@ class HandPlayBackState(RobotControlState):
                 },
             )
             return
-        frame = self.get_motor_frame(ctx,dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
@@ -390,13 +398,7 @@ class HandPlayBackState(RobotControlState):
 class ApplauseState(HandPlayBackState):
     start_frame = 600
     tail_trim_frames = 600
-    file_name = "applause.pkl"
-
-
-class NaotouState(HandPlayBackState):
-    start_frame = 40
-    tail_trim_frames = 90
-    file_name = "naotou.pkl"
+    file_name = "isaaclab_model/applause.pkl"
 
 
 class HelloState(RobotControlState):
@@ -411,28 +413,29 @@ class HelloState(RobotControlState):
     ) -> None:
         super().on_prepare_enter(ctx, from_state, transition)
         ctx.preheat_model(
-            ctx.noarm,
+            ctx.withoutarm,
             with_cmd_vel=True,
             cmd_vel=self.get_cmd_vel(ctx),
         )
 
     def on_enter(self, ctx: BxiExample) -> None:
-        self.reset_loop(ctx)
         self.playing = True
         self.shaketime = 0
 
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
-        qpos = ctx.noarm.target_dof_pos.copy()
+        qpos = ctx.withoutarm.target_dof_pos.copy()
         qpos[22] = -0.9
         qpos[24] = 0.0
         qpos[25] = -0.3
-        return self._motor_frame(qpos, ctx.noarm.kps, ctx.noarm.kds)
+        return self._motor_frame(qpos, ctx.withoutarm.kps, ctx.withoutarm.kds)
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         if self.shaketime < 50:
-            self.kp = self.shaketime / 50 * ctx.noarm.kps
+            self.kp = self.shaketime / 50 * ctx.withoutarm.kps
         cmd_vel = self.get_cmd_vel(ctx)
-        qpos, vel = ctx.noarm.inference_step(
+        qpos, vel = ctx.withoutarm.inference_step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
@@ -444,13 +447,13 @@ class HelloState(RobotControlState):
         qpos[25] = -0.3
         if self.playing:
             self.shaketime += 1
-        return self._motor_frame(qpos, self.kp, ctx.noarm.kds)
+        return self._motor_frame(qpos, self.kp, ctx.withoutarm.kds)
 
     def on_update(self, ctx: BxiExample, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
             ctx.request_state("zero_torque", trigger="safety")
             return
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
@@ -463,10 +466,16 @@ class HelloState(RobotControlState):
 
 
 class RecoverState(RobotControlState):
+    end_frame_trim = 0
+
     def __init__(self, name: str, state_id: int):
         super().__init__(name, state_id)
         self.playing = True
         self.motion_selected = False
+
+    def on_enter_transition(self, ctx, from_state, progress, transition):
+        ctx.recover.timestep = ctx.recover.start_frame
+        return super().on_enter_transition(ctx, from_state, progress, transition)
 
     def on_prepare_enter(
         self,
@@ -479,7 +488,6 @@ class RecoverState(RobotControlState):
             ctx.preheat_model(ctx.recover)
 
     def on_enter(self, ctx: BxiExample) -> None:
-        self.reset_loop(ctx)
         self.playing = True
         if not self._configure_recover_motion(ctx):
             ctx.request_state("zero_torque", trigger="recover_pose_rejected")
@@ -489,15 +497,19 @@ class RecoverState(RobotControlState):
         eu_ang[eu_ang > math.pi] -= 2 * math.pi
 
         if eu_ang[1] < -(math.pi / 4.0):
+            # 躺地上
             ctx.recover.end_frame = 880
             ctx.recover.timestep = 600
             ctx.recover.start_frame = 600
+            self.end_frame_trim = 20
             self.motion_selected = True
             return True
         elif eu_ang[1] > (math.pi / 4.0):
+            # 趴地上
             ctx.recover.end_frame = 1690
             ctx.recover.timestep = 1350
             ctx.recover.start_frame = 1350
+            self.end_frame_trim = 0
             self.motion_selected = True
             return True
 
@@ -511,7 +523,9 @@ class RecoverState(RobotControlState):
             ctx.recover.target_dof_pos, ctx.recover.kps, ctx.recover.kds
         )
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         if ctx.recover.timestep > ctx.recover.end_frame:
             return None
 
@@ -523,24 +537,23 @@ class RecoverState(RobotControlState):
         )
 
         if self.playing:
-            ctx.recover.timestep += 1
+            ctx.recover.timestep += 50 * dt  # 模型动画是50hz播放的，dt是推理间隔
         return self._motor_frame(qpos, ctx.recover.kps, ctx.recover.kds)
 
     def on_update(self, ctx: BxiExample, dt: float) -> None:
-        if ctx.recover.timestep > ctx.recover.end_frame:
-            ctx.recover.timestep = ctx.recover.start_frame
+        if ctx.recover.timestep > ctx.recover.end_frame - self.end_frame_trim:
             ctx.request_state(
                 "normal",
                 trigger="recover_finished",
                 transition={
                     "base": "dual_running_blend",
                     "duration": 0.5,
-                    "data": {"run_from": False},
+                    "data": {"run_from": True},  #
                 },
             )
             return
 
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
@@ -566,7 +579,6 @@ class AmpRunState(RobotControlState):
         )
 
     def on_enter(self, ctx: BxiExample) -> None:
-        self.reset_loop(ctx)
         self.max_vel = 0.0
         self.pre_cmd_vel_run = np.array([0.0, 0.0, 0.0])
         self.cmd_vel_run = np.array([0.0, 0.0, 0.0])
@@ -586,7 +598,9 @@ class AmpRunState(RobotControlState):
         self.pre_cmd_vel_run = self.cmd_vel_run.copy()
         return self.cmd_vel_run
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         cmd_vel = self.get_cmd_vel(ctx)
         qpos, vel = ctx.amp_run.inference_step(
             ctx.current_q,
@@ -611,7 +625,7 @@ class AmpRunState(RobotControlState):
             ctx.request_state("zero_torque", trigger="safety")
             return
 
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
@@ -631,7 +645,6 @@ class NormalRunState(RobotControlState):
         )
 
     def on_enter(self, ctx: BxiExample) -> None:
-        self.reset_loop(ctx)
         if hasattr(ctx.normal_run, "action"):
             ctx.normal_run.action = np.zeros_like(ctx.normal_run.action)
 
@@ -645,7 +658,9 @@ class NormalRunState(RobotControlState):
             ctx.normal_run.joint_damping,
         )
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         cmd_vel = self.get_cmd_vel(ctx)
         qpos = ctx.normal_run.infer_step(
             ctx.current_q,
@@ -666,6 +681,6 @@ class NormalRunState(RobotControlState):
             ctx.request_state("zero_torque", trigger="safety")
             return
 
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)

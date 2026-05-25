@@ -4,7 +4,7 @@ import numpy as np
 import onnxruntime as ort
 from bxi_example_py_elf3.utils.tfs import get_gravity_orientation
 
-class HumanoidGaitPolicyLite:
+class HumanoidGaitPolicyLiteIsaaclab:
     """不带步态输入的AMP行走动作策略管理类"""
     
     def __init__(self, model_onnx_path: str):
