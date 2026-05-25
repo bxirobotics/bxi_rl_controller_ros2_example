@@ -4,5 +4,12 @@ protected_states:
       - BackFlipState
     model_keys: [back_flip]
     files:
-      - ../data/back_flip.npz
-      - ../data/back_flip.onnx
+      - ../data/isaaclab_model/back_flip.npz
+      - ../data/isaaclab_model/back_flip.onnx
+  ballet:
+    behavior:
+      - BalletState
+    model_keys: [ballet]
+    files:
+      - ../data/isaaclab_model/ballet.npz
+      - ../data/isaaclab_model/ballet.onnx

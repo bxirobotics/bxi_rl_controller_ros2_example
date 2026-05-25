@@ -8,7 +8,7 @@ from scipy.spatial.transform import Rotation
 
 dof_num = 29
 
-class NormalMotionPolicy:
+class NormalMotionPolicyMjlab:
     def __init__(self, model_onnx_path: str):
         """
         Args:

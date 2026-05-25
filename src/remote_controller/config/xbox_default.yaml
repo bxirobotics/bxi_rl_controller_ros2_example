@@ -219,19 +219,24 @@ outputs:
     - output: btn_10=3
       when:
         any:
-          - [trigger.right_event, button.b_event]
-          - [keyboard.applause_event]
+          - [trigger.left_event, button.a_event]
 
     - output: btn_10=4
       when:
         any:
-          - [trigger.right_event, button.a_event]
-          - [keyboard.hello_event]
+          - [trigger.left_event, button.b_event]
 
     - output: btn_10=5
       when:
         any:
-          - [trigger.right_event, button.x_event]
+          - [trigger.right_event, button.b_event]
+          - [keyboard.applause_event]
+
+    - output: btn_10=6
+      when:
+        any:
+          - [trigger.right_event, button.a_event]
+          - [keyboard.hello_event]
 
 #自定义命令
 system:

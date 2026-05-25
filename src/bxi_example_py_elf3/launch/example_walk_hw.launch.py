@@ -7,7 +7,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
 
-    onnx_file_name = "data/model_normal.onnx"
+    onnx_file_name = "data/mjlab_model/model_normal.onnx"
     onnx_file = os.path.join(get_package_share_path("bxi_example_py_elf3"), onnx_file_name)
 
     return LaunchDescription(
