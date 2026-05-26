@@ -76,12 +76,21 @@ class RobotControlState(StateBehavior[BxiExample]):
             ctx.hold_last_motor_target()
 
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
+        """
+        获取当前状态的第一帧。如果使用first_frame_switch会调用此函数
+        """
         return None
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(self, ctx: BxiExample, dt: float, on_translation: bool) -> Optional[MotorFrame]:
+        """
+        获取当前给机器人的帧，on_translation为True的话，机器人处于模型的过渡中。此时建议播放暂停，仅推理来保持平衡
+        """
         return None
 
     def get_cmd_vel(self, ctx: BxiExample) -> np.ndarray:
+        """
+        获取遥控器传给模型的值，事先经过process_cmd_vel函数处理，用户可重写process_cmd_vel
+        """
         cmd_vel = self._profile_cmd_vel(ctx)
         processed_cmd_vel = self.process_cmd_vel(ctx, cmd_vel)
         if processed_cmd_vel is None:
@@ -93,11 +102,8 @@ class RobotControlState(StateBehavior[BxiExample]):
         ctx: BxiExample,
         cmd_vel: np.ndarray,
     ) -> Optional[np.ndarray]:
-        """Override to customize the profiled command velocity for this state.
-
-        The returned value is published to ctx.current_cmd_vel by get_cmd_vel().
-        Implementations may either mutate cmd_vel in place and return None, or
-        return a new length-3 array-like value.
+        """
+        重写此函数用以自定义处理速度，比如添加滤波。你需要返回处理后的值
         """
         return cmd_vel
 
@@ -162,7 +168,7 @@ class RobotControlState(StateBehavior[BxiExample]):
         transition: TransitionProfile,
     ) -> Optional[MotorFrame]:
         dt = float(getattr(ctx, "dt", 0.0))
-        return self.get_motor_frame(ctx, dt)
+        return self.get_motor_frame(ctx, dt,True)
 
     def on_transition_runtime_enter(
         self,
@@ -172,13 +178,10 @@ class RobotControlState(StateBehavior[BxiExample]):
         self.on_enter(ctx)
 
     def on_update(self, ctx: BxiExample, dt: float) -> None:
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt,False)
         if frame is None:
             return
         ctx.set_motor_target(*frame)
-
-    def reset_loop(self, ctx: BxiExample) -> None:
-        ctx.loop_count = 0
 
     def _enter_for_transition_running(
         self,

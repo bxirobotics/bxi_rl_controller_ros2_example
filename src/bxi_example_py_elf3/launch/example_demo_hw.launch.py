@@ -80,8 +80,6 @@ def _acquire_lock():
 def generate_launch_description():
     _acquire_lock()
 
-    xml_file_name = "data/elf3.xml"
-    xml_file = os.path.join(get_package_share_path("bxi_example_py_elf3"), xml_file_name)
     state_machine_config = os.path.join(
         get_package_share_path("bxi_example_py_elf3"),
         "config/elf3_state_machine.yaml",

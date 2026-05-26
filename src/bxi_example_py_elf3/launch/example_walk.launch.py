@@ -7,10 +7,10 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
 
-    xml_file_name = "data/elf3.xml"
+    xml_file_name = "data/mujoco_simulation/elf3.xml"
     xml_file = os.path.join(get_package_share_path("bxi_example_py_elf3"), xml_file_name)
     
-    onnx_file_name = "data/model_normal.onnx"
+    onnx_file_name = "data/mjlab_model/model_normal.onnx"
     onnx_file = os.path.join(get_package_share_path("bxi_example_py_elf3"), onnx_file_name)
 
     return LaunchDescription(

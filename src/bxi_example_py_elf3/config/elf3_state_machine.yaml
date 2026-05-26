@@ -40,13 +40,10 @@ remote_events:
     value: 2
   applause_event:
     slot: btn_10
-    value: 3
+    value: 5
   hello_event:
     slot: btn_10
-    value: 4
-  naotou_event:
-    slot: btn_10
-    value: 5
+    value: 6
 transition_profiles:
   instant:
     duration: 0.0
@@ -130,9 +127,6 @@ states:
           transition: dual_running_blend
         hello_event:
           to: hello
-          transition: dual_running_blend
-        naotou_event:
-          to: naotou
           transition: dual_running_blend
         toggle_nav_ctrl_event:
           action: toggle_nav_ctrl
@@ -241,18 +235,6 @@ states:
         zero_torque_event: zero_torque
   applause:
     behavior: ApplauseState
-    speed_profile: normal
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition:
-            base: dual_running_blend
-            duration: 1.0
-        toggle_dance_pause_event:
-          action: toggle_dance_pause
-  naotou:
-    behavior: NaotouState
     speed_profile: normal
     transitions:
       on_event:
