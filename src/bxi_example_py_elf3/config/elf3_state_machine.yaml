@@ -92,6 +92,7 @@ speed_profiles:
     yaw_scale: 1.5
 states:
   normal:
+    label: 走路
     behavior: NormalState
     speed_profile: normal
     transitions:
@@ -131,6 +132,7 @@ states:
         toggle_nav_ctrl_event:
           action: toggle_nav_ctrl
   zero_torque:
+    label: 零力矩
     behavior: ZeroTorqueState
     transitions:
       on_event:
@@ -153,6 +155,7 @@ states:
             base: first_frame_switch
             enter_duration: 1.0
   pd_brake:
+    label: 初始姿态
     behavior: PdBrakeState
     transitions:
       on_event:
@@ -171,6 +174,7 @@ states:
             base: first_frame_switch
             enter_duration: 1.0
   initial_pos:
+    label: 零位
     behavior: InitialPosState
     transitions:
       on_event:
@@ -187,6 +191,7 @@ states:
           to: recover
           transition: soft_switch
   dance:
+    label: 跳舞
     behavior: DanceState
     transitions:
       on_event:
@@ -198,6 +203,7 @@ states:
         toggle_dance_pause_event:
           action: toggle_dance_pause
   recover:
+    label: 起身
     behavior: RecoverState
     transitions:
       on_event:
@@ -208,6 +214,7 @@ states:
         pd_brake_event: pd_brake
         initial_pos_event: initial_pos
   amp_run:
+    label: 高速奔跑
     behavior: AmpRunState
     speed_profile: amp_run
     transitions:
@@ -216,6 +223,7 @@ states:
           to: normal
           transition: soft_switch
   normal_run:
+    label: 中速奔跑
     behavior: NormalRunState
     speed_profile: normal_run
     transitions:
@@ -224,6 +232,7 @@ states:
           to: normal
           transition: soft_switch
   forward_flip:
+    label: 前空翻
     behavior: ForwardFlipState
     transitions:
       on_event:
@@ -234,6 +243,7 @@ states:
             duration: 2.0
         zero_torque_event: zero_torque
   applause:
+    label: 鼓掌
     behavior: ApplauseState
     speed_profile: normal
     transitions:
@@ -246,6 +256,7 @@ states:
         toggle_dance_pause_event:
           action: toggle_dance_pause
   hello:
+    label: 挥手
     behavior: HelloState
     speed_profile: normal
     transitions:
