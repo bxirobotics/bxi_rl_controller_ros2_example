@@ -481,7 +481,7 @@ class RobotStateMachine(Generic[CtxT]):
                 name: self._profile_snapshot(profile)
                 for name, profile in self._profiles.items()
             },
-            "remote_events": list((self._config.get("remote_events", {}) or {}).keys()),
+            "remote_events": dict(self._config.get("remote_events", {}) or {}),
             "transitions": [
                 {
                     "from": from_state,
