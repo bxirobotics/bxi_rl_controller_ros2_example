@@ -119,6 +119,7 @@ speed_profiles:
 #状态机
 states:
   normal:
+    label: 走路
     behavior: NormalState
     speed_profile: normal
     transitions:
@@ -165,6 +166,7 @@ states:
           action: toggle_nav_ctrl
 
   zero_torque:
+    label: 零力矩
     behavior: ZeroTorqueState
     transitions:
       on_event:
@@ -188,6 +190,7 @@ states:
             enter_duration: 1.0
 
   pd_brake:
+    label: 初始姿态
     behavior: PdBrakeState
     transitions:
       on_event:
@@ -207,6 +210,7 @@ states:
             enter_duration: 1.0
 
   initial_pos:
+    label: 零位
     behavior: InitialPosState
     transitions:
       on_event:
@@ -224,6 +228,7 @@ states:
           transition: soft_switch
 
   dance:
+    label: 跳舞
     behavior: DanceState
     transitions:
       on_event:
@@ -236,6 +241,7 @@ states:
           action: toggle_dance_pause
 
   recover:
+    label: 起身
     behavior: RecoverState
     transitions:
       on_event:
@@ -247,6 +253,7 @@ states:
         initial_pos_event: initial_pos
 
   amp_run:
+    label: 高速奔跑
     behavior: AmpRunState
     speed_profile: amp_run
     transitions:
@@ -256,6 +263,7 @@ states:
           transition: soft_switch
 
   normal_run:
+    label: 中速奔跑
     behavior: NormalRunState
     speed_profile: normal_run
     transitions:
@@ -265,6 +273,7 @@ states:
           transition: soft_switch
 
   back_flip:
+    label: 后空翻
     behavior: BackFlipState
     transitions:
       on_event:
@@ -276,6 +285,7 @@ states:
         zero_torque_event: zero_torque
 
   forward_flip:
+    label: 前空翻
     behavior: ForwardFlipState
     transitions:
       on_event:
@@ -287,6 +297,7 @@ states:
         zero_torque_event: zero_torque
 
   ballet:
+    label: 芭蕾舞
     behavior: BalletState
     transitions:
       on_event:
@@ -298,6 +309,7 @@ states:
         zero_torque_event: zero_torque
         
   applause:
+    label: 鼓掌
     behavior: ApplauseState
     speed_profile: normal
     transitions:
@@ -311,6 +323,7 @@ states:
           action: toggle_dance_pause
 
   hello:
+    label: 挥手
     behavior: HelloState
     speed_profile: normal
     transitions:
