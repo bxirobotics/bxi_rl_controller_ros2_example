@@ -37,9 +37,6 @@ remote_events:
   toggle_dance_pause_event:
     slot: btn_9
     value: 1
-  toggle_nav_ctrl_event:
-    slot: btn_9
-    value: 2
   back_flip_event:
     slot: btn_10
     value: 1
@@ -162,8 +159,6 @@ states:
         hello_event:
           to: hello
           transition: dual_running_blend
-        toggle_nav_ctrl_event:
-          action: toggle_nav_ctrl
 
   zero_torque:
     label: 零力矩
