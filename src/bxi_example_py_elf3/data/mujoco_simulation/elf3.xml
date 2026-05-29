@@ -58,6 +58,7 @@
       <geom rgba="0.75294 0.75294 0.75294 1" mesh="torso_link"/>
       <geom name="torso_collision" class="collision" size="0.09 0.1" pos="0 0 -0.02" quat="0 1 0 0" condim="1"/>
       <geom name="torso_2_collision" class="collision" size="0.08 0.025" pos="0 0 -0.12" quat="0.707107 0.707107 0 0" condim="1"/>
+      <geom name="head_collision" class="collision" size="0.065" fromto="-0.01 0.00 0.30 0.02 0.00 0.30"/>
       <site name="imu_in_torso" pos="0 0 0" size="0.01"/>
       <camera name="tracking" pos="1.734 -1.135 0.35" quat="0.683353 0.555871 0.298684 0.367183" mode="trackcom"/>
       <light pos="0 0 2" dir="0 0 -1" mode="trackcom"/>

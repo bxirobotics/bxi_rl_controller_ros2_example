@@ -37,12 +37,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/waist_y_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="waist_y_joint" type="revolute">
     <origin xyz="0 0 -0.2265" rpy="0 0 0"/>
@@ -66,12 +66,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/waist_x_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="waist_x_joint" type="revolute">
     <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -95,12 +95,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/waist_z_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="waist_z_joint" type="revolute">
     <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -153,12 +153,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/l_hip_x_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="l_hip_x_joint" type="revolute">
     <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -211,12 +211,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/l_knee_y_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="l_knee_y_joint" type="revolute">
     <origin xyz="0 0 -0.32" rpy="0 0 0"/>
@@ -240,12 +240,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/l_ankle_y_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="l_ankle_y_joint" type="revolute">
     <origin xyz="0 0 -0.32" rpy="0 0 0"/>
@@ -327,12 +327,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/r_hip_x_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="r_hip_x_joint" type="revolute">
     <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -385,12 +385,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/r_knee_y_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="r_knee_y_joint" type="revolute">
     <origin xyz="0 0 -0.32" rpy="0 0 0"/>
@@ -414,12 +414,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/r_ankle_y_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="r_ankle_y_joint" type="revolute">
     <origin xyz="0 0 -0.32" rpy="0 0 0"/>
@@ -472,12 +472,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/l_shoulder_y_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="l_shoulder_y_joint" type="revolute">
     <origin xyz="0 0.178 0.087" rpy="0 0 0"/>
@@ -501,12 +501,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/l_shoulder_x_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="l_shoulder_x_joint" type="revolute">
     <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -559,12 +559,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/l_elbow_y_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="l_elbow_y_joint" type="revolute">
     <origin xyz="0 0 -0.256" rpy="0 0 0"/>
@@ -591,7 +591,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="./meshes/l_wrist_x_link.STL"/>
+        <mesh filename="./meshes/l_wrist_x_link_part.STL"/>
       </geometry>
     </collision>
   </link>
@@ -675,12 +675,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/r_shoulder_y_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="r_shoulder_y_joint" type="revolute">
     <origin xyz="0 -0.178 0.087" rpy="0 0 0"/>
@@ -704,12 +704,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/r_shoulder_x_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="r_shoulder_x_joint" type="revolute">
     <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -762,12 +762,12 @@
         <color rgba="0.752941176470588 0.752941176470588 0.752941176470588 1"/>
       </material>
     </visual>
-    <collision>
+    <!-- <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
         <mesh filename="./meshes/r_elbow_y_link.STL"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
   <joint name="r_elbow_y_joint" type="revolute">
     <origin xyz="0 0 -0.256" rpy="0 0 0"/>
@@ -794,7 +794,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="./meshes/r_wrist_x_link.STL"/>
+        <mesh filename="./meshes/r_wrist_x_link_part.STL"/>
       </geometry>
     </collision>
   </link>
