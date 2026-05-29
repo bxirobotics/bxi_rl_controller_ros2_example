@@ -284,12 +284,14 @@ system:
     +%Y-%m-%d_%H-%M-%S)_elf.log 2>&1 &
   - ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log
     2>&1 &
+  - su bxi -c "cd /home/bxi/bxi_ws/bxi_voice && ./bin/bxi-voice" 2>&1 &
   stop:
   - killall -SIGINT hardware_elf3
   - killall -SIGINT bxi_example_py_elf3
   - killall -SIGINT bxi_example_py_elf3_demo
   - killall -SIGINT bxi_bms
   - killall -SIGINT bxi_example_bms
+  - killall -SIGINT bxi-voice
 system_mutexes:
   robot_process:
     acquire: start
