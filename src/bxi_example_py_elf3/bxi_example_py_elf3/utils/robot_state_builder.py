@@ -55,7 +55,8 @@ def build_robot_states(config):
         params = state_config.get("params", {}) or {}
         state = behavior_class(state_name, state_id, **params)
         state.speed_profile_name = state_config.get("speed_profile")
-        state.label = state_config.get("label",state.name)
+        for key,value in state_config.get("manifest",{}).items():
+            state.manifest[key] = value
         states[state_name] = state
 
     return states
