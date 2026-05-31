@@ -116,7 +116,11 @@ speed_profiles:
 #状态机
 states:
   normal:
-    label: 走路
+    manifest:
+      label: 走路
+      index: 0
+      group: Base
+      icon: directions_walk
     behavior: NormalState
     speed_profile: normal
     transitions:
@@ -161,13 +165,14 @@ states:
           transition: dual_running_blend
 
   zero_torque:
-    label: 零力矩
+    manifest:
+      label: 零力矩
+      index: 1
+      group: Base
+      icon: do_not_disturb_on
     behavior: ZeroTorqueState
     transitions:
       on_event:
-        normal_event:
-          to: normal
-          transition: soft_switch
         pd_brake_event: 
           to: pd_brake
           transition: 
@@ -178,14 +183,13 @@ states:
           transition: 
             base: first_frame_switch
             enter_duration: 1.0
-        recover_event:
-          to: recover
-          transition:
-            base: first_frame_switch
-            enter_duration: 1.0
 
   pd_brake:
-    label: 初始姿态
+    manifest:
+      label: 初始姿态
+      index: 2
+      group: Base
+      icon: settings_backup_restore
     behavior: PdBrakeState
     transitions:
       on_event:
@@ -205,26 +209,121 @@ states:
             enter_duration: 1.0
 
   initial_pos:
-    label: 零位
+    manifest:
+      label: 零位模式
+      index: 4
+      group: Base
+      icon: anchor
     behavior: InitialPosState
     transitions:
       on_event:
-        normal_event:
-          to: normal
-          transition: soft_switch
         pd_brake_event: 
           to: pd_brake
           transition: 
             base: first_frame_switch
             enter_duration: 1.0
         zero_torque_event: zero_torque
-        recover_event:
-          to: recover
-          transition: soft_switch
 
   dance:
-    label: 跳舞
+    manifest:
+      label: 跳舞
+      index: 5
+      group: Advanced
+      icon: star_shine
+      confirm: true
+      confirm_message: 请确保机器人周围1米范围内没有障碍物
     behavior: DanceState
+    transitions:
+      on_event:
+        normal_event:
+          to: normal
+          transition: 
+            base: dual_running_blend
+            duration: 1.0
+        zero_torque_event: zero_torque
+        toggle_dance_pause_event:
+          action: toggle_dance_pause
+
+  recover:
+    manifest:
+      label: 起身
+      index: 6
+      group: Advanced
+      icon: accessibility_new
+      confirm: true
+      confirm_message: 请确保机器人周围1米范围内没有障碍物
+    behavior: RecoverState
+    transitions:
+      on_event:
+        zero_torque_event: zero_torque
+
+  amp_run:
+    manifest:
+      label: 高速奔跑
+      index: 7
+      group: Advanced
+      icon: sprint
+      confirm: true
+      confirm_message: 高速跑步4m/s，没有越障能力
+    behavior: AmpRunState
+    speed_profile: amp_run
+    transitions:
+      on_event:
+        normal_event:
+          to: normal
+          transition: soft_switch
+
+  normal_run:
+    manifest:
+      label: 中速奔跑
+      index: 8
+      group: Advanced
+      icon: directions_run
+      confirm: true
+      confirm_message: 高速跑步2m/s，没有越障能力
+    behavior: NormalRunState
+    speed_profile: normal_run
+    transitions:
+      on_event:
+        normal_event:
+          to: normal
+          transition: soft_switch
+
+  back_flip:
+    manifest:
+      label: 后空翻
+      index: 9
+      group: Advanced
+      icon: rotate_left
+      confirm: true
+      confirm_message: 请确保机器人后方3米范围内没有障碍物
+    behavior: BackFlipState
+    transitions:
+      on_event:
+        zero_torque_event: zero_torque
+
+  forward_flip:
+    manifest:
+      label: 前空翻
+      index: 10
+      group: Advanced
+      icon: rotate_right
+      confirm: true
+      confirm_message: 请确保机器人前方3米范围内没有障碍物
+    behavior: ForwardFlipState
+    transitions:
+      on_event:
+        zero_torque_event: zero_torque
+
+  ballet:
+    manifest:
+      label: 芭蕾舞
+      index: 11
+      group: Advanced
+      icon: wand_stars
+      confirm: true
+      confirm_message: 请确保机器人周围5米范围内没有障碍物
+    behavior: BalletState
     transitions:
       on_event:
         normal_event:
@@ -235,76 +334,12 @@ states:
         toggle_dance_pause_event:
           action: toggle_dance_pause
 
-  recover:
-    label: 起身
-    behavior: RecoverState
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: soft_switch
-        zero_torque_event: zero_torque
-        pd_brake_event: pd_brake
-        initial_pos_event: initial_pos
-
-  amp_run:
-    label: 高速奔跑
-    behavior: AmpRunState
-    speed_profile: amp_run
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: soft_switch
-
-  normal_run:
-    label: 中速奔跑
-    behavior: NormalRunState
-    speed_profile: normal_run
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: soft_switch
-
-  back_flip:
-    label: 后空翻
-    behavior: BackFlipState
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: 
-            base: dual_running_blend
-            duration: 2.0
-        zero_torque_event: zero_torque
-
-  forward_flip:
-    label: 前空翻
-    behavior: ForwardFlipState
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: 
-            base: dual_running_blend
-            duration: 2.0
-        zero_torque_event: zero_torque
-
-  ballet:
-    label: 芭蕾舞
-    behavior: BalletState
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: 
-            base: dual_running_blend
-            duration: 1.0
-        zero_torque_event: zero_torque
-        
   applause:
-    label: 鼓掌
+    manifest:
+      label: 鼓掌
+      index: 12
+      group: Base
+      icon: cheer
     behavior: ApplauseState
     speed_profile: normal
     transitions:
@@ -316,9 +351,13 @@ states:
             duration: 1.0
         toggle_dance_pause_event:
           action: toggle_dance_pause
-
+          
   hello:
-    label: 挥手
+    manifest:
+      label: 挥手
+      index: 13
+      group: Base
+      icon: waving_hand
     behavior: HelloState
     speed_profile: normal
     transitions:
