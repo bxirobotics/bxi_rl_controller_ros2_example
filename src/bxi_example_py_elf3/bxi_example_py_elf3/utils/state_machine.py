@@ -62,7 +62,14 @@ class StateBehavior(Generic[CtxT]):
     def __init__(self, name: str, state_id: int):
         self.name = name
         self.state_id = state_id
-        self.label = "Unknown"
+        self.manifest = {
+            'label': 'Unknown',
+            'index': '0',
+            'group': 'Base',
+            'icon': 'warning',
+            'confirm': 'false',
+            'confirm_message': ''
+        }
 
     def on_enter(self, ctx: CtxT) -> None:
         pass
@@ -475,7 +482,7 @@ class RobotStateMachine(Generic[CtxT]):
                     "name": state.name,
                     "id": state.state_id,
                     "behavior": state.__class__.__name__,
-                    "label": state.label
+                    **state.manifest
                 }
                 for state in self._states.values()
             ],
