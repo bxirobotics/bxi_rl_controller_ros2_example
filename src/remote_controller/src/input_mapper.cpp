@@ -109,6 +109,70 @@ void InputMapper::touch_runtime_sources_with_prefix(const std::string &prefix)
     }
 }
 
+void InputMapper::clear_signals_with_prefix(const std::string &prefix)
+{
+    if (prefix.empty()) {
+        return;
+    }
+
+    std::set<std::string> cleared_sources;
+    for (auto &item : signals_) {
+        if (starts_with(item.first, prefix)) {
+            item.second = 0.0;
+            cleared_sources.insert(item.first);
+        }
+    }
+
+    for (const auto &item : config_.source_runtime) {
+        const std::string &source = item.second.source;
+        if (starts_with(source, prefix)) {
+            signals_[source] = 0.0;
+            cleared_sources.insert(source);
+        }
+    }
+
+    for (auto it = signal_expiry_.begin(); it != signal_expiry_.end();) {
+        if (starts_with(it->first, prefix)) {
+            it = signal_expiry_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = signal_update_time_.begin(); it != signal_update_time_.end();) {
+        if (starts_with(it->first, prefix)) {
+            it = signal_update_time_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = timed_out_sources_.begin(); it != timed_out_sources_.end();) {
+        if (starts_with(*it, prefix)) {
+            it = timed_out_sources_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    if (cleared_sources.empty()) {
+        return;
+    }
+
+    for (auto &item : controls_) {
+        const ControlConfig *control = find_control_config(item.first);
+        if (control == nullptr) {
+            continue;
+        }
+        for (const auto &source : control->sources) {
+            if (cleared_sources.count(source.source) > 0 || starts_with(source.source, prefix)) {
+                item.second = ControlValue();
+                break;
+            }
+        }
+    }
+
+    refresh_bindings(false);
+}
+
 void InputMapper::zero_motion_axes()
 {
     signals_[config_.keyboard.vx_source] = 0.0;
