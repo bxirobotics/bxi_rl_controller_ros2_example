@@ -22,6 +22,7 @@ public:
     std::vector<std::string> set_axis(int axis_index, double value);
     std::vector<std::string> set_signal(const std::string &source, double value);
     void touch_runtime_sources_with_prefix(const std::string &prefix);
+    void clear_signals_with_prefix(const std::string &prefix);
     void zero_motion_axes();
     void reset_motion();
     std::vector<std::string> tick();

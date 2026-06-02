@@ -133,7 +133,8 @@ private:
                 if (errno == EINTR) {
                     continue;
                 }
-                log("js select failed, retry");
+                log("js select failed, clear joystick state and retry");
+                clear_joystick_state();
                 close_fd();
                 open_loop();
                 continue;
@@ -165,7 +166,8 @@ private:
                 }
             }
 
-            log("js dev lost, retry");
+            log("js dev lost, clear joystick state and retry");
+            clear_joystick_state();
             close_fd();
             open_loop();
         }
@@ -183,6 +185,12 @@ private:
     {
         const std::lock_guard<std::mutex> guard(mapper_lock_);
         mapper_.touch_runtime_sources_with_prefix("js.");
+    }
+
+    void clear_joystick_state()
+    {
+        const std::lock_guard<std::mutex> guard(mapper_lock_);
+        mapper_.clear_signals_with_prefix("js.");
     }
 };
 
