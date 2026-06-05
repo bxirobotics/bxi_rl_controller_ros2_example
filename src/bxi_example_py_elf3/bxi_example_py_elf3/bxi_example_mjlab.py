@@ -179,7 +179,11 @@ class BxiExample(Node):
 
         self.step = 0
         self.loop_count = 0
-        self.dt = 0.02  # loop @100Hz
+        self.dt = 0.02  # loop @50Hz
+        self.inference_period = self.dt
+        self.inference_timeout_tolerance = 0.001
+        self.last_inference_frame_time = None
+        self.inference_timeout_count = 0
         self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
 
     # 初始化部分（完整版）
@@ -236,6 +240,7 @@ class BxiExample(Node):
             print('robot reset 2!')
             self.loop_count = 0
             self.step = 2
+            self.reset_inference_timeout_monitor()
             return
         
         if self.step == 1:
@@ -302,6 +307,7 @@ class BxiExample(Node):
             policy_input = obs
             
             self.action[:] = self.inference_step(policy_input)
+            self.check_inference_frame_timeout()
             # self.action = np.clip(self.action, -env_cfg.normalization.clip_actions, env_cfg.normalization.clip_actions)
             self.target_q = self.action * self.action_scale
             qpos = self.default_joint_pos.copy()
@@ -323,7 +329,7 @@ class BxiExample(Node):
             self.last_action=self.action.copy()
 
         self.loop_count += 1
-    
+
     def robot_reset(self, reset_step, release):
         req = bxiSrv.RobotReset.Request()
         req.reset_step = reset_step
@@ -406,6 +412,36 @@ class BxiExample(Node):
     def odom_callback(self, msg): # 全局里程计（上帝视角，仅限仿真使用）
         base_pose = msg.pose
         base_twist = msg.twist
+
+    # ---------------------------------------------------------------------------- #
+    #                                     工具类函数                                    #
+    # ---------------------------------------------------------------------------- #
+    def reset_inference_timeout_monitor(self):
+        self.last_inference_frame_time = None
+        self.inference_timeout_count = 0
+
+    def check_inference_frame_timeout(self):
+        now = time.perf_counter()
+        last = self.last_inference_frame_time
+        self.last_inference_frame_time = now
+        if last is None or self.inference_period <= 0.0:
+            return
+
+        frame_delay = now - last
+        timeout_threshold = self.inference_period + self.inference_timeout_tolerance
+        if frame_delay <= timeout_threshold:
+            return
+
+        self.inference_timeout_count += 1
+        print(
+            "[INFERENCE TIMEOUT] "
+            f"delay={frame_delay * 1000.0:.2f}ms, "
+            f"limit={self.inference_period * 1000.0:.2f}ms "
+            f"({1.0 / self.inference_period:.1f}Hz), "
+            f"tolerance={self.inference_timeout_tolerance * 1000.0:.2f}ms, "
+            f"over={(frame_delay - self.inference_period) * 1000.0:.2f}ms, "
+            f"count={self.inference_timeout_count}"
+        )
 
 def main(args=None):
    

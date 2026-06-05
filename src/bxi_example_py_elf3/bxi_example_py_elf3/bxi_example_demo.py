@@ -183,7 +183,11 @@ class BxiExample(HotReloadMixin, Node):
 
         # 定时器初始化
         self.step = 0
-        self.dt = 0.02  # loop @100Hz
+        self.dt = 0.02  # loop @50Hz
+        self.inference_period = self.dt
+        self.inference_timeout_tolerance = 0.005
+        self.last_inference_frame_time = None
+        self.inference_timeout_count = 0
         self.state_machine_info_elapsed = 0.0
         self.timer = self.create_timer(
             self.dt, self.timer_callback, callback_group=self.timer_callback_group_1
@@ -356,6 +360,7 @@ class BxiExample(HotReloadMixin, Node):
             print("robot reset 2!")
             self.loop_count = 0
             self.step = 2
+            self.reset_inference_timeout_monitor()
             return
 
         if self.step == 2:
@@ -385,6 +390,7 @@ class BxiExample(HotReloadMixin, Node):
                 self.pos_last = qpos
                 self.kp_last = kp
                 self.kd_last = kd
+                self.check_inference_frame_timeout()
                 self.send_to_motor(qpos, kp, kd)
 
         self.loop_count += 1
@@ -546,6 +552,35 @@ class BxiExample(HotReloadMixin, Node):
 
     def hold_last_motor_target(self):
         self.set_motor_target(self.pos_last, self.kp_last, self.kd_last)
+
+    def reset_inference_timeout_monitor(self):
+        self.last_inference_frame_time = None
+        self.inference_timeout_count = 0
+
+    def check_inference_frame_timeout(self):
+        now = time.perf_counter()
+        last = self.last_inference_frame_time
+        self.last_inference_frame_time = now
+        if last is None or self.inference_period <= 0.0:
+            return
+
+        frame_delay = now - last
+        timeout_threshold = self.inference_period + self.inference_timeout_tolerance
+        if frame_delay <= timeout_threshold:
+            return
+
+        self.inference_timeout_count += 1
+        state_name = self.state_name_by_id.get(self.state, str(self.state))
+        print(
+            "[INFERENCE TIMEOUT] "
+            f"state={state_name}, "
+            f"delay={frame_delay * 1000.0:.2f}ms, "
+            f"limit={self.inference_period * 1000.0:.2f}ms "
+            f"({1.0 / self.inference_period:.1f}Hz), "
+            f"tolerance={self.inference_timeout_tolerance * 1000.0:.2f}ms, "
+            f"over={(frame_delay - self.inference_period) * 1000.0:.2f}ms, "
+            f"count={self.inference_timeout_count}"
+        )
 
     def request_state(
         self, state_name, trigger="code", transition="instant", delay=0.0
