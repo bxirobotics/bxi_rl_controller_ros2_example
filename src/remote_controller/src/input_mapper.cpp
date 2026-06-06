@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <iostream>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -74,6 +75,7 @@ void InputMapper::reload_config(RemoteConfig config)
     binding_active_.assign(config_.bindings.size(), false);
     std::fill(output_slots_, output_slots_ + kButtonSlotCount + 1, 0);
     std::fill(edge_pulse_slots_, edge_pulse_slots_ + kButtonSlotCount + 1, 0);
+    std::fill(last_logged_output_slots_, last_logged_output_slots_ + kButtonSlotCount + 1, 0);
     refresh_controls();
     refresh_bindings(false);
 }
@@ -354,6 +356,7 @@ void InputMapper::fill_message(communication::msg::MotionCommands &message)
         set_motion_command_button_slot(message, slot, value);
         edge_pulse_slots_[slot] = 0;
     }
+    log_button_output_changes();
 
     if (!height_written) {
         height_filtered_ = height_filtered_ * 0.9 + kStandHeight * 0.1;
@@ -383,8 +386,31 @@ std::vector<std::string> InputMapper::refresh_bindings(bool emit_edges)
 
         binding_active_[index] = active;
     }
+    log_button_output_changes();
 
     return edge_outputs;
+}
+
+void InputMapper::log_button_output_changes()
+{
+    std::string line = "remote btn changed:";
+    bool changed = false;
+    for (int slot = 1; slot <= kButtonSlotCount; ++slot) {
+        const int value = edge_pulse_slots_[slot] != 0 ? edge_pulse_slots_[slot] : output_slots_[slot];
+        if (value == last_logged_output_slots_[slot]) {
+            continue;
+        }
+
+        changed = true;
+        line += " btn_" + std::to_string(slot) +
+                ": " + std::to_string(last_logged_output_slots_[slot]) +
+                "->" + std::to_string(value);
+        last_logged_output_slots_[slot] = value;
+    }
+
+    if (changed) {
+        std::cout << line << std::endl;
+    }
 }
 
 void InputMapper::refresh_controls()
