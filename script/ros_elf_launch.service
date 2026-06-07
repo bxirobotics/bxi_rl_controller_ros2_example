@@ -1,7 +1,7 @@
 [Unit]
 Description=ROS Launch Service
-Wants=network-online.target NetworkManager-wait-online.service
-After=network-online.target NetworkManager-wait-online.service
+Wants=network.target
+After=network.target
 
 [Service]
 Type=simple
@@ -9,7 +9,7 @@ User=root
 WorkingDirectory=/home/bxi
 Environment=ROS_DOMAIN_ID=XX
 Environment=RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-ExecStartPre=/bin/sleep 5
+ExecStartPre=/bin/bash -lc "for i in {1..50}; do if /usr/sbin/ip -o -4 addr show scope global up 2>/dev/null | grep -q 'inet '; then exit 0; fi; sleep 0.1; done; exit 0"
 ExecStart=/bin/bash -lc "source /home/bxi/bxi_ws/bxi_rl_controller_ros2_example/install/setup.bash && exec ros2 launch remote_controller remote_controller.launch.py"
 Restart=on-failure
 RestartSec=3
