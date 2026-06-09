@@ -71,6 +71,12 @@ static void run_shell_command(const char *command)
     (void)ret;
 }
 
+static void stop_robot_processes()
+{
+    run_shell_command("killall -SIGINT hardware_elf3 bxi_example_hw bxi_example_py_elf3 bxi_example_py_elf3_demo 2>/dev/null");
+    run_shell_command("sleep 1");
+}
+
 class COMPublisher : public rclcpp::Node{
 public:
     COMPublisher(const char *_js_dev) : Node("COM_publisher"){
@@ -235,9 +241,7 @@ private:
                     if (event.value){
                         switch (event.number){
                         case JS_STOP_BT:{
-                            run_shell_command("killall -SIGINT hardware_elf3");
-                            run_shell_command("killall -SIGINT bxi_example_py_elf3");
-                            run_shell_command("killall -SIGINT bxi_example_py_elf3_demo");
+                            stop_robot_processes();
 
                             launch_lock = false;
 
@@ -246,6 +250,7 @@ private:
 
                         case JS_START_BT:{
                             if(launch_lock == false){
+                                stop_robot_processes();
                                 run_shell_command("mkdir -p /var/log/bxi_log");
                                 // // sim
                                 // run_shell_command("ros2 launch bxi_example_py_elf3 example_launch_demo.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
