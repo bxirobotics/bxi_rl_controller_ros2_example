@@ -1,17 +1,14 @@
 [Unit]
 Description=ROS Launch Service
+After=network.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/bxi
 Environment=ROS_DOMAIN_ID=XX
-Environment=RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-Environment=ROS_LOCALHOST_ONLY=0
-Environment='CYCLONEDDS_URI=<CycloneDDS><Domain Id="any"><General><Interfaces><NetworkInterface name="lo" multicast="true"/></Interfaces><AllowMulticast>true</AllowMulticast></General></Domain></CycloneDDS>'
-ExecStart=/bin/bash -lc "source /home/bxi/bxi_ws/bxi_rl_controller_ros2_example/install/setup.bash && exec ros2 launch remote_controller remote_controller.launch.py"
-Restart=on-failure
-RestartSec=3
+Environment=RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+ExecStart=/bin/bash -c "source /home/bxi/bxi_ws/bxi_rl_controller_ros2_example/install/setup.bash && ros2 launch remote_controller remote_controller.launch.py"
+WorkingDirectory=/home/bxi
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
