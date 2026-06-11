@@ -44,6 +44,7 @@ sources:
       keyboard.vy: {from: keyboard.axis, negative: d, positive: a}
       keyboard.yaw: {from: keyboard.axis, negative: e, positive: q}
       keyboard.normal: {from: keyboard.key, key: "1", hold_ms: 200}
+      keyboard.pd_break: {from: keyboard.key, key: "!"}
       keyboard.recover: {from: keyboard.key, key: "2"}
       keyboard.dance: {from: keyboard.key, key: "3"}
       keyboard.amp_run: {from: keyboard.key, key: "4"}
@@ -127,6 +128,7 @@ controls:
     hysteresis: 0.05
 
   keyboard.normal_event: {type: bool, source: keyboard.normal}
+  keyboard.pd_break_event: {type: bool, source: keyboard.pd_break}
   keyboard.recover_event: {type: bool, source: keyboard.recover}
   keyboard.dance_event: {type: bool, source: keyboard.dance}
   keyboard.amp_run_event: {type: bool, source: keyboard.amp_run}
@@ -167,7 +169,10 @@ outputs:
       when: [shoulder.right_event, button.a_event]
 
     - output: btn_3=1
-      when: [shoulder.right_event, button.b_event]
+      when: 
+        any:
+          - [shoulder.right_event, button.b_event]
+          - [keyboard.pd_break_event]
 
     - output: btn_4=1
       when: [shoulder.right_event, button.y_event]
