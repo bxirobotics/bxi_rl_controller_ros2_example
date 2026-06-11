@@ -57,6 +57,9 @@ sources:
         from: keyboard.key
         key: '1'
         hold_ms: 200
+      keyboard.pd_break:
+        from: keyboard.key
+        key: '!'
       keyboard.recover:
         from: keyboard.key
         key: '2'
@@ -169,6 +172,9 @@ controls:
   keyboard.normal_event:
     type: bool
     source: keyboard.normal
+  keyboard.pd_break_event:
+    type: bool
+    source: keyboard.pd_break
   keyboard.recover_event:
     type: bool
     source: keyboard.recover
@@ -217,8 +223,10 @@ outputs:
     - button.a_event
   - output: btn_3=1
     when:
-    - shoulder.right_event
-    - button.b_event
+      any:
+      - - shoulder.right_event
+        - button.b_event
+      - - keyboard.pd_break_event
   - output: btn_4=1
     when:
     - shoulder.right_event
