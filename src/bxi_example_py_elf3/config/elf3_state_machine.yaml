@@ -145,9 +145,6 @@ states:
         dance_event:
           to: dance
           transition: soft_switch
-        recover_event:
-          to: recover
-          transition: soft_switch
         back_flip_event:
           to: back_flip
           transition: soft_switch
