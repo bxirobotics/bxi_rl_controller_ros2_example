@@ -1,2 +1,3 @@
 KERNEL=="ttyUSB*", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE:="0660", SYMLINK+="ttyIMU"
 KERNEL=="ttyACM*", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE:="0660", SYMLINK+="ttyBAT"
+SUBSYSTEM=="input", KERNEL=="js*", ATTRS{id/vendor}=="20d6", ATTRS{name}=="*Battle Dragon*", ATTRS{capabilities/abs}=="30627", MODE:="0660", SYMLINK+="input/jsBattleDragon%n"
