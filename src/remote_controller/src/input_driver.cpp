@@ -144,6 +144,10 @@ private:
             const ssize_t len = read(fd_, &event, sizeof(event));
 
             if (len == sizeof(event)) {
+                if (event.type & JS_EVENT_INIT) {
+                    continue;
+                }
+
                 std::vector<std::string> outputs;
                 {
                     const std::lock_guard<std::mutex> guard(mapper_lock_);
