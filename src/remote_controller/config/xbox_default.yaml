@@ -1,7 +1,7 @@
 sources:
   gamepad:
     type: joystick
-    device: /dev/input/js0
+    device: /dev/input/jsBattleDragon0
     signals:
       gamepad.left_y:
         from: js.axis.3
