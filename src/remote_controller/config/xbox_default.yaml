@@ -2,7 +2,7 @@ sources:
   #手柄按键配置
   gamepad:
     type: joystick
-    device: /dev/input/jsBattleDragon0
+    device: /dev/input/jsBattleDragon
     signals:
       #ps4
       # gamepad.left_y: {from: js.axis.4, timeout_ms: 3000, failsafe: 0.0}
