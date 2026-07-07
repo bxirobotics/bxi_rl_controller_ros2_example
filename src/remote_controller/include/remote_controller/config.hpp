@@ -133,7 +133,7 @@ struct SystemMutexConfig {
 };
 
 struct RemoteConfig {
-    std::string js_device = "/dev/input/js0";
+    std::string js_device = "/dev/input/jsBattleDragon";
     std::string output_conflict_policy = "last_wins";
     bool publish_on_change = true;
     std::map<std::string, std::string> source_aliases;
