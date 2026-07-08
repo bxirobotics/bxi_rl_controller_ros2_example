@@ -1,0 +1,106 @@
+#!/bin/sh
+set -eu
+
+LINK="/dev/input/jsBattleDragon"
+LOCK="/run/lock/bxi-battle-dragon-link.lock"
+ACTION_NAME="${1:-}"
+KERNEL_NAME="${2:-}"
+
+is_battle_dragon() {
+    node="$1"
+    base="$(basename "$node")"
+    sys="/sys/class/input/$base/device"
+
+    [ -e "$node" ] || return 1
+    [ -r "$sys/name" ] || return 1
+    [ -r "$sys/id/vendor" ] || return 1
+    [ -r "$sys/capabilities/abs" ] || return 1
+
+    vendor="$(tr '[:upper:]' '[:lower:]' < "$sys/id/vendor")"
+    name="$(cat "$sys/name")"
+    abs="$(cat "$sys/capabilities/abs")"
+
+    [ "$vendor" = "20d6" ] || return 1
+    case "$name" in
+        *"Battle Dragon"*) ;;
+        *) return 1 ;;
+    esac
+    [ "$abs" = "30627" ] || return 1
+}
+
+link_target_path() {
+    target="$(readlink "$LINK" 2>/dev/null || true)"
+    [ -n "$target" ] || return 1
+
+    case "$target" in
+        /*) printf '%s\n' "$target" ;;
+        *) printf '/dev/input/%s\n' "$target" ;;
+    esac
+}
+
+current_link_valid() {
+    [ -L "$LINK" ] || return 1
+    target_path="$(link_target_path)" || return 1
+    [ -e "$target_path" ] || return 1
+    is_battle_dragon "$target_path" || return 1
+}
+
+claim_first_available() {
+    skip_kernel="${1:-}"
+
+    for node in /dev/input/js*; do
+        [ -e "$node" ] || continue
+        node_base="$(basename "$node")"
+        [ "$node_base" != "$skip_kernel" ] || continue
+
+        case "$node_base" in
+            jsBattleDragon*) continue ;;
+        esac
+
+        if is_battle_dragon "$node"; then
+            ln -sfn "$node" "$LINK"
+            return 0
+        fi
+    done
+
+    rm -f "$LINK"
+}
+
+handle_event() {
+    case "$ACTION_NAME" in
+        add)
+            dev="/dev/input/$KERNEL_NAME"
+            [ -e "$dev" ] || return 0
+            is_battle_dragon "$dev" || return 0
+
+            if current_link_valid; then
+                return 0
+            fi
+
+            ln -sfn "$dev" "$LINK"
+            ;;
+        remove)
+            if [ -L "$LINK" ]; then
+                target_path="$(link_target_path || true)"
+                target_base="$(basename "$target_path" 2>/dev/null || true)"
+
+                if [ "$target_base" = "$KERNEL_NAME" ] || ! current_link_valid; then
+                    claim_first_available "$KERNEL_NAME"
+                fi
+            else
+                claim_first_available "$KERNEL_NAME"
+            fi
+            ;;
+        *)
+            if ! current_link_valid; then
+                claim_first_available
+            fi
+            ;;
+    esac
+}
+
+mkdir -p /run/lock
+(
+    flock -x 9
+    handle_event
+) 9>"$LOCK"
