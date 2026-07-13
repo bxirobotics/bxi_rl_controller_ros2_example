@@ -93,6 +93,9 @@ def generate_launch_description():
                 name="hardware_elf3",
                 output="screen",
                 parameters=[
+                    {"hardware_config/imu": True},      #start imu
+                    {"hardware_config/motor_pwr": True}, #motor poweron
+                    {"hardware_config/motor_disable": 0x60000000}, #motor disable head
                 ],
                 emulate_tty=True,
                 arguments=[("__log_level:=debug")],
