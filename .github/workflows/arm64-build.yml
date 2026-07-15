@@ -1,0 +1,45 @@
+name: ARM64 Build
+
+on:
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PACKAGE_TARGET_PATH: /opt/bxi/bxi_rl_controller_ros2_example
+
+jobs:
+  build:
+    name: ROS 2 Humble build (ARM64)
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: ghcr.io/sloretz/ros:humble-desktop-full
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Mark workspace as safe Git directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Fetch bxi_ros2_pkg
+        run: |
+          mkdir -p /opt/bxi
+          git clone --depth 1 https://github.com/bxirobotics/bxi_ros2_pkg.git \
+            /opt/bxi/bxi_ros2_pkg
+
+      - name: Build controller package
+        run: |
+          source /opt/ros/humble/setup.bash
+          source /opt/bxi/bxi_ros2_pkg/setup.bash
+          colcon build --merge-install --install-base "$PACKAGE_TARGET_PATH" \
+            --cmake-args \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_EXPORT_COMPILE_COMMANDS=On \
+              -Wall -Wextra -Wpedantic
