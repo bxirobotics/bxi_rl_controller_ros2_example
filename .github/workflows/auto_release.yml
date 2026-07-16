@@ -48,11 +48,19 @@ jobs:
           fi
           echo "tag_name=${VERSION}" >> "$GITHUB_ENV"
 
+      - name: Install ccache
+        run: |
+          sudo sed -i \
+            -e 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+            -e 's|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' \
+            /etc/apt/sources.list
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y ccache
+
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ runner.os }}-ccache-${{ github.ref }}
-          update-package-index: true
           restore-keys: |
             ${{ runner.os }}-ccache-
 
