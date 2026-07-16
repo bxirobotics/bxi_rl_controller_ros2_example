@@ -37,15 +37,18 @@ jobs:
       - name: Generate Version Tag
         run: |
           git fetch --force --tags
-          TIME_TAG=$(date +'%y%m%d')
-          BASE_TAG="v${TIME_TAG}"
-          VERSION="${BASE_TAG}"
-          if git tag -l "${BASE_TAG}" | grep -qx "${BASE_TAG}"; then
-            SUFFIX=1
-            while git tag -l "${BASE_TAG}-${SUFFIX}" | grep -qx "${BASE_TAG}-${SUFFIX}"; do
-              SUFFIX=$((SUFFIX + 1))
-            done
-            VERSION="${BASE_TAG}-${SUFFIX}"
+          VERSION="$(git tag --points-at "$GITHUB_SHA" --sort=-creatordate | head -n1)"
+          if [ -z "${VERSION}" ]; then
+            TIME_TAG=$(date +'%y%m%d')
+            BASE_TAG="v${TIME_TAG}"
+            VERSION="${BASE_TAG}"
+            if git tag -l "${BASE_TAG}" | grep -qx "${BASE_TAG}"; then
+              SUFFIX=1
+              while git tag -l "${BASE_TAG}-${SUFFIX}" | grep -qx "${BASE_TAG}-${SUFFIX}"; do
+                SUFFIX=$((SUFFIX + 1))
+              done
+              VERSION="${BASE_TAG}-${SUFFIX}"
+            fi
           fi
           echo "tag_name=${VERSION}" >> "$GITHUB_ENV"
 
