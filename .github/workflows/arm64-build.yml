@@ -44,8 +44,17 @@ jobs:
 
       - name: Generate Version Tag
         run: |
+          git fetch --force --tags
           TIME_TAG=$(date +'%y%m%d')
-          VERSION="v${TIME_TAG}-${GITHUB_SHA:0:7}"
+          BASE_TAG="v${TIME_TAG}"
+          VERSION="${BASE_TAG}"
+          if git tag -l "${BASE_TAG}" | grep -qx "${BASE_TAG}"; then
+            SUFFIX=1
+            while git tag -l "${BASE_TAG}-${SUFFIX}" | grep -qx "${BASE_TAG}-${SUFFIX}"; do
+              SUFFIX=$((SUFFIX + 1))
+            done
+            VERSION="${BASE_TAG}-${SUFFIX}"
+          fi
           echo "tag_name=${VERSION}" >> "$GITHUB_ENV"
 
       - name: Setup ccache
