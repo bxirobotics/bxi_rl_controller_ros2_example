@@ -16,6 +16,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.sha }}
+  cancel-in-progress: false
+
 env:
   ROBOT_MODEL: ELF3
   PACKAGE_NAME: bxi_rl_controller_ros2_example
@@ -40,17 +44,8 @@ jobs:
 
       - name: Generate Version Tag
         run: |
-          git fetch --force --tags
           TIME_TAG=$(date +'%y%m%d')
-          BASE_TAG="v${TIME_TAG}"
-          VERSION="${BASE_TAG}"
-          if git tag -l "${BASE_TAG}" | grep -qx "${BASE_TAG}"; then
-            SUFFIX=1
-            while git tag -l "${BASE_TAG}-${SUFFIX}" | grep -qx "${BASE_TAG}-${SUFFIX}"; do
-              SUFFIX=$((SUFFIX + 1))
-            done
-            VERSION="${BASE_TAG}-${SUFFIX}"
-          fi
+          VERSION="v${TIME_TAG}-${GITHUB_SHA:0:7}"
           echo "tag_name=${VERSION}" >> "$GITHUB_ENV"
 
       - name: Setup ccache
@@ -93,13 +88,19 @@ jobs:
           tar -czvf "${ARTIFACT}" -C /opt/bxi "${PACKAGE_NAME}"
           sha256sum "${ARTIFACT}" > "${ARTIFACT}.sha256"
 
+      - name: Prepare Release Artifact
+        run: |
+          RELEASE_ARTIFACT="${PACKAGE_NAME}_${{ env.tag_name }}_arm64.tar.gz"
+          cp "${PACKAGE_NAME}_${{ env.tag_name }}.tar.gz" "${RELEASE_ARTIFACT}"
+          sha256sum "${RELEASE_ARTIFACT}" > "${RELEASE_ARTIFACT}.sha256"
+
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
           name: bxi_rl_controller_ros2_example_arm64_package
           path: |
-            bxi_rl_controller_ros2_example_${{ env.tag_name }}.tar.gz
-            bxi_rl_controller_ros2_example_${{ env.tag_name }}.tar.gz.sha256
+            bxi_rl_controller_ros2_example_${{ env.tag_name }}_arm64.tar.gz
+            bxi_rl_controller_ros2_example_${{ env.tag_name }}_arm64.tar.gz.sha256
           retention-days: 7
 
       - name: SCP Upload Package Files
@@ -112,3 +113,14 @@ jobs:
           port: ${{ secrets.SSH_PORT || 22 }}
           source: bxi_rl_controller_ros2_example_${{ env.tag_name }}.tar.gz,bxi_rl_controller_ros2_example_${{ env.tag_name }}.tar.gz.sha256
           target: ${{ secrets.DEPLOY_PATH }}/arm64/${{ env.PACKAGE_NAME }}
+
+      - name: Create GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.tag_name }}
+          name: "Release ${{ env.tag_name }}"
+          files: |
+            bxi_rl_controller_ros2_example_${{ env.tag_name }}_arm64.tar.gz
+            bxi_rl_controller_ros2_example_${{ env.tag_name }}_arm64.tar.gz.sha256
+          generate_release_notes: true
