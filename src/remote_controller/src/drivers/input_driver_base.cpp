@@ -42,4 +42,17 @@ void InputDriverBase::set_signal(const std::string &source, double value)
     dispatch(outputs);
 }
 
+void InputDriverBase::set_signals(const std::vector<std::pair<std::string, double>> &signals)
+{
+    if (signals.empty()) {
+        return;
+    }
+    std::vector<std::string> outputs;
+    {
+        const std::lock_guard<std::mutex> guard(mapper_lock_);
+        outputs = mapper_.set_signals(signals);
+    }
+    dispatch(outputs);
+}
+
 }  // namespace remote_controller

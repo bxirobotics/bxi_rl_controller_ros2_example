@@ -4,6 +4,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <communication/msg/motion_commands.hpp>
@@ -21,6 +22,10 @@ public:
 
     std::vector<std::string> set_axis(int axis_index, double value);
     std::vector<std::string> set_signal(const std::string &source, double value);
+    // Atomically applies one coherent device frame and evaluates bindings once.
+    // Protocol drivers should use this instead of calling set_signal repeatedly.
+    std::vector<std::string> set_signals(
+        const std::vector<std::pair<std::string, double>> &signals);
     void touch_runtime_sources_with_prefix(const std::string &prefix);
     void touch_runtime_sources(const std::set<std::string> &sources);
     void clear_signals_with_prefix(const std::string &prefix);

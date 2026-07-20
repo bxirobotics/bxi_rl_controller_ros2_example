@@ -102,6 +102,23 @@ std::vector<std::string> InputMapper::set_signal(const std::string &source, doub
     return refresh_bindings();
 }
 
+std::vector<std::string> InputMapper::set_signals(
+    const std::vector<std::pair<std::string, double>> &signals)
+{
+    if (signals.empty()) {
+        return {};
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    for (const auto &signal : signals) {
+        signals_[signal.first] = signal.second;
+        signal_expiry_.erase(signal.first);
+        signal_update_time_[signal.first] = now;
+        timed_out_sources_.erase(signal.first);
+    }
+    return refresh_bindings();
+}
+
 void InputMapper::set_input_edges_enabled(bool enabled)
 {
     input_edges_enabled_ = enabled;

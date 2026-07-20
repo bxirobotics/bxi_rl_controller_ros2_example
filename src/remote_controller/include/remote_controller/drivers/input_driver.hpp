@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "remote_controller/config.hpp"
@@ -26,6 +27,14 @@ public:
     // A driver becomes ready only after it has received the snapshot it says
     // is sufficient for safe input activation.
     virtual bool is_ready() const = 0;
+    // Most drivers report immediate physical availability and let
+    // InputDeviceManager apply loss_timeout_ms.  Protocol drivers that use
+    // loss_timeout_ms inside is_available() (for example CRSF valid-frame
+    // freshness) return true so the manager does not apply the timeout twice.
+    virtual bool availability_handles_loss_timeout() const
+    {
+        return false;
+    }
     virtual void start() = 0;
     virtual void stop() = 0;
 };
@@ -53,6 +62,7 @@ protected:
     void log(const std::string &message) const;
     void dispatch(const std::vector<std::string> &outputs) const;
     void set_signal(const std::string &source, double value);
+    void set_signals(const std::vector<std::pair<std::string, double>> &signals);
 };
 
 }  // namespace remote_controller

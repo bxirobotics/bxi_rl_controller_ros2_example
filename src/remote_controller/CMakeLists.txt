@@ -35,11 +35,21 @@ if(BUILD_TESTING)
   # uncomment the line when this package is not in a git repo
   #set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+
+  add_executable(${PROJECT_NAME}_crsf_frame_parser_test
+    test/crsf_frame_parser_test.cpp
+  )
+  target_include_directories(${PROJECT_NAME}_crsf_frame_parser_test PRIVATE include)
+  add_test(
+    NAME ${PROJECT_NAME}_crsf_frame_parser_test
+    COMMAND ${PROJECT_NAME}_crsf_frame_parser_test
+  )
 endif()
 
 add_library(${PROJECT_NAME}_core
   src/config.cpp
   src/drivers/driver_registry.cpp
+  src/drivers/crsf_input_driver.cpp
   src/drivers/input_driver_base.cpp
   src/drivers/joystick_input_driver.cpp
   src/drivers/keyboard_input_driver.cpp

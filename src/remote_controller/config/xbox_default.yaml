@@ -6,6 +6,35 @@ inputs:
     promote_stable_ms: 500
 
 sources:
+  # CRSF 接收机。只有持续收到 CRC 正确的 RC 通道帧才会参与候选选择；
+  # CH1..CH16 均保留为可在 controls 中引用的归一化 source。
+  crsf:
+    type: crsf
+    device: /dev/ttyCRSF
+    baud_rate: 460800
+    priority: 100
+    ready_timeout_ms: 1000
+    loss_timeout_ms: 300
+    cooldown_ms: 1000
+    signals:
+      crsf.ch1:  {from: crsf.channel.1}
+      crsf.ch2:  {from: crsf.channel.2}
+      crsf.ch3:  {from: crsf.channel.3}
+      crsf.ch4:  {from: crsf.channel.4}
+      crsf.ch5:  {from: crsf.channel.5}
+      crsf.ch6:  {from: crsf.channel.6}
+      crsf.ch7:  {from: crsf.channel.7}
+      crsf.ch8:  {from: crsf.channel.8}
+      crsf.ch9:  {from: crsf.channel.9}
+      crsf.ch10: {from: crsf.channel.10}
+      crsf.ch11: {from: crsf.channel.11}
+      crsf.ch12: {from: crsf.channel.12}
+      crsf.ch13: {from: crsf.channel.13}
+      crsf.ch14: {from: crsf.channel.14}
+      crsf.ch15: {from: crsf.channel.15}
+      crsf.ch16: {from: crsf.channel.16}
+      crsf.connected: {from: crsf.connected}
+
   #手柄按键配置
   gamepad:
     type: joystick
@@ -89,6 +118,8 @@ controls:
       - source: gamepad.left_y
         direction: -1
         curve: stick
+      # CRSF 旧遥控器布局：CH3 为前后速度。
+      - source: crsf.ch3
       - source: keyboard.vx
     deadzone: 0.03
     min: -1.0
@@ -102,6 +133,9 @@ controls:
       - source: gamepad.left_x
         direction: -1
         curve: stick
+      # CRSF 旧遥控器布局：CH4 为横移，方向与手柄相反。
+      - source: crsf.ch4
+        direction: -1
       - source: keyboard.vy
     deadzone: 0.03
     min: -1.0
@@ -115,6 +149,9 @@ controls:
       - source: gamepad.yaw
         direction: -1
         curve: stick
+      # CRSF 旧遥控器布局：CH1 为偏航，方向与手柄相反。
+      - source: crsf.ch1
+        direction: -1
       - source: keyboard.yaw
     deadzone: 0.03
     min: -1.0
@@ -140,6 +177,36 @@ controls:
     type: bool
     source: gamepad.trigger_right
     threshold: 0.85
+    hysteresis: 0.05
+
+  # 保持旧 CRSF 开关布局。CH5（导航控制）和 CH10（速度倍率）仅作为
+  # crsf.ch5/crsf.ch10 source 暴露，第一阶段不改变机器人业务行为。
+  crsf.mode:
+    type: enum
+    source: crsf.ch6
+    default: middle
+    hysteresis: 0.05
+    positions:
+      low: [-1.0, -0.5]
+      middle: [-0.49, 0.49]
+      high: [0.5, 1.0]
+
+  crsf.connected: {type: bool, source: crsf.connected}
+
+  crsf.system:
+    type: enum
+    source: crsf.ch8
+    default: middle
+    hysteresis: 0.05
+    positions:
+      low: [-1.0, -0.5]
+      middle: [-0.49, 0.49]
+      high: [0.5, 1.0]
+
+  crsf.pd_event:
+    type: bool
+    source: crsf.ch9
+    threshold: 0.5
     hysteresis: 0.05
 
   keyboard.normal_event: {type: bool, source: keyboard.normal}
@@ -168,9 +235,15 @@ outputs:
   edge:
     #sysyem.<name>代表触发下面的特定命令
     - output: system.stop
-      when: [system.stop_event]
+      when:
+        any:
+          - [system.stop_event]
+          - [crsf.connected, crsf.system=low]
     - output: system.start
-      when: [system.start_event]
+      when:
+        any:
+          - [system.start_event]
+          - [crsf.connected, crsf.system=high]
 
   #电平触发，满足条件会一直输出
   level:
@@ -179,6 +252,7 @@ outputs:
         any:
           - [shoulder.right_event, button.x_event]
           - [keyboard.normal_event]
+          - [crsf.connected, crsf.mode=middle]
 
     - output: btn_2=1
       when: [shoulder.right_event, button.a_event]
@@ -188,9 +262,13 @@ outputs:
         any:
           - [shoulder.right_event, button.b_event]
           - [keyboard.pd_break_event]
+          - [crsf.connected, crsf.pd_event]
 
     - output: btn_4=1
-      when: [shoulder.right_event, button.y_event]
+      when:
+        any:
+          - [shoulder.right_event, button.y_event]
+          - [crsf.connected, crsf.mode=low]
 
     - output: btn_5=1
       when:
@@ -215,6 +293,7 @@ outputs:
         any:
           - [shoulder.left_event, button.y_event]
           - [keyboard.amp_run_event]
+          - [crsf.connected, crsf.mode=high]
 
     - output: btn_9=1
       when:

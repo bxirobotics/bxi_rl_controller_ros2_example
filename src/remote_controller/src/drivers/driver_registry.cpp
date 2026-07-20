@@ -37,7 +37,7 @@ bool register_input_driver_factory(const std::string &type, InputDriverFactory f
 
 bool has_input_driver_factory(const std::string &type)
 {
-    if (type == "keyboard" || type == "joystick" || type == "gamepad") {
+    if (type == "keyboard" || type == "joystick" || type == "gamepad" || type == "crsf") {
         return true;
     }
     const std::lock_guard<std::mutex> guard(driver_factories_lock());
@@ -61,6 +61,14 @@ std::unique_ptr<InputDriver> create_input_driver(
     }
     if (config.type == "joystick" || config.type == "gamepad") {
         return create_joystick_input_driver(
+            config,
+            mapper,
+            mapper_lock,
+            std::move(output_handler),
+            std::move(log_handler));
+    }
+    if (config.type == "crsf") {
+        return create_crsf_input_driver(
             config,
             mapper,
             mapper_lock,

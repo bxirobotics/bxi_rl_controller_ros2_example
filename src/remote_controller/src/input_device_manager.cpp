@@ -279,8 +279,9 @@ bool InputDeviceManager::tick()
                 if (running.unavailable_since == std::chrono::steady_clock::time_point{}) {
                     running.unavailable_since = now;
                 }
-                if (now - running.unavailable_since >=
-                    std::chrono::milliseconds(running.config.loss_timeout_ms)) {
+                if (running.driver->availability_handles_loss_timeout() ||
+                    now - running.unavailable_since >=
+                        std::chrono::milliseconds(running.config.loss_timeout_ms)) {
                     stop_for_loss = true;
                 }
             } else {

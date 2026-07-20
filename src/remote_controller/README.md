@@ -42,24 +42,28 @@ sources:
 
 新驱动通常继承 `InputDriverBase`（或直接实现 `InputDriver`），并用 `register_input_driver_factory("类型名", factory)` 注册。`InputDriverBase::set_signal()` 已处理与 mapper 的同步。`is_available()` 必须非阻塞；驱动可按自身协议定义可用性。对 CRSF，建议仅在设备打开且近期收到校验通过的完整通道帧时返回可用。`is_ready()` 只有在已收到驱动认为足够安全的完整状态快照时才返回 `true`。
 
-例如，编译进 `crsf` 驱动后可加入以下候选项。通道到 `crsf.vx` 等逻辑信号的复杂映射由 C++ 驱动实现，YAML 仅声明它们供 `controls` 使用：
+`crsf` 已是内置 driver。它把 CRC 正确的完整 RC 帧输出为 16 个 raw channel，
+业务映射保留在 YAML。默认配置已经包含完整的 `crsf` 候选项；最小配置如下：
 
 ```yaml
 sources:
-  crsf_remote:
+  crsf:
     type: crsf
     device: /dev/ttyCRSF
     priority: 100
     ready_timeout_ms: 1000
     loss_timeout_ms: 300
     cooldown_ms: 1000
-    baudrate: 420000             # 设备特定标量参数在 InputDeviceConfig.options 中
+    baud_rate: 460800
     signals:
-      crsf.vx: {from: crsf.vx}
-      crsf.vy: {from: crsf.vy}
-      crsf.yaw: {from: crsf.yaw}
-      crsf.start: {from: crsf.start}
-      crsf.stop: {from: crsf.stop}
+      crsf.ch1:  {from: crsf.channel.1}
+      crsf.ch2:  {from: crsf.channel.2}
+      # ... 声明到 crsf.ch16 / crsf.channel.16
+      crsf.connected: {from: crsf.connected}
 ```
 
-在 `controls` 中为这些 signal 添加源即可。尚未编译的 `type` 不会导致节点启动失败：节点会记录 warning、忽略该候选项，并自动使用下一个可用设备；没有任何可用设备时保持安全停止。
+`crsf.channel.1` 到 `crsf.channel.16` 默认按旧接收机范围 `174..1811` 归一化至
+`[-1, 1]`。未激活时 driver 做非阻塞协议 probe，只有近期收到 CRC 正确帧才会参与
+抢占；激活后停止收到有效帧超过 `loss_timeout_ms` 就会断连。尚未编译的其他 `type`
+不会导致节点启动失败：节点会记录 warning、忽略该候选项，并自动使用下一个可用设备；
+没有任何可用设备时保持安全停止。

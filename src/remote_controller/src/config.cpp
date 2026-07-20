@@ -929,6 +929,15 @@ void validate_config(RemoteConfig &config)
 {
     std::set<std::string> semantic_sources;
     std::set<std::string> raw_sources;
+    std::set<std::string> intentionally_exposed_sources;
+    for (const auto &device : config.input_devices) {
+        if (device.type != "crsf") {
+            continue;
+        }
+        for (const auto &signal : device.signals) {
+            intentionally_exposed_sources.insert(signal.first);
+        }
+    }
     for (const auto &item : config.source_aliases) {
         semantic_sources.insert(item.first);
         raw_sources.insert(item.second);
@@ -1187,7 +1196,8 @@ void validate_config(RemoteConfig &config)
 
     for (const auto &source : semantic_sources) {
         const std::string raw = config.source_aliases[source];
-        if (used_raw_sources.count(raw) == 0) {
+        if (used_raw_sources.count(raw) == 0 &&
+            intentionally_exposed_sources.count(source) == 0) {
             add_diagnostic(config, "warning", "source is defined but not used by any control: " + source);
         }
     }
