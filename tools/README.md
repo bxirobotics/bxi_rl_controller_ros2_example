@@ -33,14 +33,12 @@ python3 tools/sanitize_release.py \
 
 ```yaml
 protected_states:
-  back_flip:
+  <state_name>:
     behavior:
-      - FlipState
-      - BackFlipState
-    model_keys: [back_flip]
+      - <StateClassName>
+    model_keys: [<model_member_name>]
     files:
-      - ../data/back_flip.npz
-      - ../data/back_flip.onnx
+      - ../data/<model_or_motion_file>
 ```
 
 `protected_states.<state>` 是受保护状态名。脚本会尝试从状态机配置里的 `states` 删除同名状态。
@@ -52,15 +50,15 @@ protected_states:
 可以写字符串：
 
 ```yaml
-behavior: BackFlipState
+behavior: <StateClassName>
 ```
 
 也可以写数组：
 
 ```yaml
 behavior:
-  - FlipState
-  - BackFlipState
+  - <BaseStateClassName>
+  - <StateClassName>
 ```
 
 影响：
@@ -69,7 +67,7 @@ behavior:
 - 加入 `--self-check` 检查 token。如果公开树里还残留这些类名，脚本失败。
 - 只有当对应状态确实被删除时，这些 class 才会删除。
 
-数组适合状态有基类或辅助类时一起删除。例如 `BackFlipState` 和 `ForwardFlipState` 共用 `FlipState`，可以把 `FlipState` 写进两个状态的 `behavior` 里。脚本会避免因为一个未删除状态仍引用某个 behavior 而误删它。
+数组适合状态有基类或辅助类时一起删除。脚本会避免因为一个未删除状态仍引用某个 behavior 而误删它。
 
 ### `behaviors`
 
@@ -77,8 +75,8 @@ behavior:
 
 ```yaml
 behaviors:
-  - FlipState
-  - BackFlipState
+  - <BaseStateClassName>
+  - <StateClassName>
 ```
 
 ### 状态机事件
@@ -93,7 +91,7 @@ behaviors:
 
 影响遥控器配置：
 
-- 脚本会从状态机的 `remote_events.<event>` 推导底层输出，例如 `btn_10=1`。
+- 脚本会从状态机的 `remote_events.<event>` 推导底层输出。
 - 如果这个输出只服务于受保护 event，则从 `src/remote_controller/config/xbox_default.yaml` 的 `outputs.level` / `outputs.edge` 删除对应 binding。
 - 删除 binding 后，如果相关 `controls` / `sources.*.signals` 没有被剩余公开 binding 引用，也会继续删除。
 
@@ -108,7 +106,7 @@ behaviors:
 声明 `demo_node` 里要删除的模型成员名：
 
 ```yaml
-model_keys: [back_flip]
+model_keys: [<model_member_name>]
 ```
 
 影响：
@@ -122,21 +120,17 @@ model_keys: [back_flip]
 例如清单里写：
 
 ```yaml
-model_keys: [back_flip, forward_flip]
+model_keys: [<model_member_name>, <another_model_member_name>]
 ```
 
 脚本会在 `bxi_example_demo.py` 这类 demo node 文件里删除同名成员初始化：
 
-```python
-self.back_flip = DanceMotionPolicyGravityIsaaclab(
-    self.data_file("back_flip.npz"),
-    self.data_file("back_flip.onnx"),
-    start_frame=40,
+```text
+self.<model_member_name> = <ActualPolicyClass>(
+    model_file("<relative_model_or_motion_file>"),
 )
-self.forward_flip = DanceMotionPolicyGravityIsaaclab(
-    self.data_file("forward_flip.npz"),
-    self.data_file("forward_flip.onnx"),
-    start_frame=150,
+self.<another_model_member_name> = <AnotherActualPolicyClass>(
+    model_file("<another_relative_model_or_motion_file>"),
 )
 ```
 
@@ -148,8 +142,7 @@ self.forward_flip = DanceMotionPolicyGravityIsaaclab(
 
 ```yaml
 files:
-  - ../data/back_flip.npz
-  - ../data/back_flip.onnx
+  - ../data/<model_or_motion_file>
 ```
 
 影响：

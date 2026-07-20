@@ -11,7 +11,7 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "remote_controller/config.hpp"
-#include "remote_controller/input_driver.hpp"
+#include "remote_controller/input_device_manager.hpp"
 #include "remote_controller/input_mapper.hpp"
 
 using namespace std::chrono_literals;
@@ -80,7 +80,7 @@ class COMPublisher : public rclcpp::Node {
 public:
     COMPublisher(
         const std::string &config_path,
-        const std::string &driver_type,
+        const std::string &driver_filter,
         bool config_hot_reload_enabled)
         : Node("COM_publisher"),
           config_path_(config_path),
@@ -94,21 +94,21 @@ public:
             "motion_commands", 20);
         timer_ = this->create_wall_timer(10ms, std::bind(&COMPublisher::timer_callback, this));
 
-        input_driver_ = remote_controller::create_input_driver(
-            driver_type,
+        input_manager_.reset(new remote_controller::InputDeviceManager(
+            mapper_.config(),
             mapper_,
             lock_,
             [this](const std::vector<std::string> &outputs) { dispatch_outputs(outputs); },
             [this](const std::string &message) {
                 RCLCPP_INFO(this->get_logger(), "%s", message.c_str());
-            });
-        input_driver_->start();
+            },
+            driver_filter));
     }
 
     ~COMPublisher()
     {
-        if (input_driver_) {
-            input_driver_->stop();
+        if (input_manager_) {
+            input_manager_->stop();
         }
     }
 
@@ -120,7 +120,7 @@ private:
     const std::chrono::milliseconds config_check_interval_{1000};
     std::chrono::steady_clock::time_point next_config_check_;
     InputMapper mapper_;
-    std::unique_ptr<remote_controller::InputDriver> input_driver_;
+    std::unique_ptr<remote_controller::InputDeviceManager> input_manager_;
     std::map<std::string, bool> system_mutex_locked_;
     bool has_last_published_payload_ = false;
     communication::msg::MotionCommands last_published_payload_;
@@ -145,6 +145,7 @@ private:
             check_config_reload();
         }
 
+        const bool must_publish_safe_command = input_manager_ && input_manager_->tick();
         auto message = communication::msg::MotionCommands();
         std::vector<std::string> outputs;
         bool publish_on_change = true;
@@ -156,7 +157,8 @@ private:
         }
         dispatch_outputs(outputs);
         if (publish_on_change) {
-            if (has_last_published_payload_ && message == last_published_payload_) {
+            if (!must_publish_safe_command &&
+                has_last_published_payload_ && message == last_published_payload_) {
                 return;
             }
 
@@ -167,6 +169,9 @@ private:
         message.header.stamp = this->now();
         message.header.frame_id = "remote_controller";
         com_pub_->publish(message);
+        if (must_publish_safe_command && input_manager_) {
+            input_manager_->notify_safe_output_published();
+        }
     }
 
     void check_config_reload()
@@ -202,25 +207,23 @@ private:
             return;
         }
 
-        std::string previous_js_device;
+        if (input_manager_) {
+            input_manager_->stop();
+        }
         {
             const std::lock_guard<std::mutex> guard(lock_);
-            previous_js_device = mapper_.config().js_device;
             mapper_.reload_config(config);
             prune_system_mutexes_locked();
             has_last_published_payload_ = false;
             config_stamp_ = stamp;
         }
 
+        if (input_manager_) {
+            input_manager_->reconfigure(config);
+        }
+
         print_config_diagnostics(config);
         RCLCPP_INFO(this->get_logger(), "remote config hot reloaded: %s", config_path_.c_str());
-        if (previous_js_device != config.js_device) {
-            RCLCPP_WARN(
-                this->get_logger(),
-                "js device changed from '%s' to '%s'; restart remote_controller to reopen the joystick device",
-                previous_js_device.c_str(),
-                config.js_device.c_str());
-        }
     }
 
     void dispatch_outputs(const std::vector<std::string> &outputs)
@@ -320,7 +323,7 @@ private:
 
 int main(int argc, const char *argv[])
 {
-    std::string driver_type = "joystick";
+    std::string driver_filter;
     std::string config_path;
     bool config_hot_reload_enabled = true;
 
@@ -328,9 +331,9 @@ int main(int argc, const char *argv[])
         const std::string arg = argv[i];
         if (arg == "--keyboard") {
             printf("in keyboard input mode\n");
-            driver_type = "keyboard";
+            driver_filter = "keyboard";
         } else if (arg == "--driver" && i + 1 < argc) {
-            driver_type = argv[++i];
+            driver_filter = argv[++i];
         } else if (arg == "--config" && i + 1 < argc) {
             config_path = argv[++i];
         } else if (arg == "--hot-reload" && i + 1 < argc) {
@@ -351,7 +354,7 @@ int main(int argc, const char *argv[])
     rclcpp::init(argc, argv);
     rclcpp::spin(std::make_shared<COMPublisher>(
         config_path,
-        driver_type,
+        driver_filter,
         config_hot_reload_enabled));
     rclcpp::shutdown();
 

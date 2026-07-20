@@ -163,7 +163,8 @@ char optional_key_from_name(const YAML::Node &node, const std::string &key, cons
 void load_keyboard_signal(
     const std::string &signal,
     const YAML::Node &signal_node,
-    RemoteConfig &config)
+    RemoteConfig &config,
+    KeyboardConfig &keyboard)
 {
     const std::string from = get_or<std::string>(signal_node, "from", "");
     if (from == "keyboard.axis") {
@@ -180,38 +181,38 @@ void load_keyboard_signal(
         if (negative == '\0' && positive == '\0') {
             throw std::runtime_error("keyboard axis source " + signal + " must contain negative or positive");
         }
-        config.keyboard.hold_ms_by_signal[signal] = get_or<int>(
+        keyboard.hold_ms_by_signal[signal] = get_or<int>(
             signal_node,
             "hold_ms",
-            config.keyboard.hold_ms);
-        if (config.keyboard.hold_ms_by_signal[signal] < 0) {
+            keyboard.hold_ms);
+        if (keyboard.hold_ms_by_signal[signal] < 0) {
             throw std::runtime_error("keyboard axis source " + signal + ".hold_ms must be >= 0");
         }
 
         const std::string role = tail_name(signal);
         if (role == "vx") {
-            config.keyboard.vx_source = signal;
+            keyboard.vx_source = signal;
             if (negative != '\0') {
-                config.keyboard.forward = negative;
+                keyboard.forward = negative;
             }
             if (positive != '\0') {
-                config.keyboard.backward = positive;
+                keyboard.backward = positive;
             }
         } else if (role == "vy") {
-            config.keyboard.vy_source = signal;
+            keyboard.vy_source = signal;
             if (negative != '\0') {
-                config.keyboard.strafe_left = negative;
+                keyboard.strafe_left = negative;
             }
             if (positive != '\0') {
-                config.keyboard.strafe_right = positive;
+                keyboard.strafe_right = positive;
             }
         } else if (role == "yaw") {
-            config.keyboard.yaw_source = signal;
+            keyboard.yaw_source = signal;
             if (negative != '\0') {
-                config.keyboard.yaw_left = negative;
+                keyboard.yaw_left = negative;
             }
             if (positive != '\0') {
-                config.keyboard.yaw_right = positive;
+                keyboard.yaw_right = positive;
             }
         } else {
             throw std::runtime_error(
@@ -228,12 +229,12 @@ void load_keyboard_signal(
             signal_node["key"].as<std::string>(),
             "keyboard key source " + signal + ".key");
         set_source_alias(config, signal, signal);
-        config.keyboard.signals_by_key[key].push_back(signal);
-        config.keyboard.hold_ms_by_signal[signal] = get_or<int>(
+        keyboard.signals_by_key[key].push_back(signal);
+        keyboard.hold_ms_by_signal[signal] = get_or<int>(
             signal_node,
             "hold_ms",
-            config.keyboard.hold_ms);
-        if (config.keyboard.hold_ms_by_signal[signal] < 0) {
+            keyboard.hold_ms);
+        if (keyboard.hold_ms_by_signal[signal] < 0) {
             throw std::runtime_error("keyboard key source " + signal + ".hold_ms must be >= 0");
         }
         return;
@@ -241,6 +242,30 @@ void load_keyboard_signal(
 
     throw std::runtime_error(
         "keyboard source " + signal + " has unsupported from: " + from);
+}
+
+void load_input_selection(const YAML::Node &node, RemoteConfig &config)
+{
+    if (!node) {
+        return;
+    }
+    require_map(node, "inputs");
+    const YAML::Node selection = node["selection"] ? node["selection"] : node;
+    require_map(selection, "inputs.selection");
+    config.input_selection.scan_interval_ms = get_or<int>(
+        selection,
+        "scan_interval_ms",
+        config.input_selection.scan_interval_ms);
+    config.input_selection.promote_stable_ms = get_or<int>(
+        selection,
+        "promote_stable_ms",
+        config.input_selection.promote_stable_ms);
+    if (config.input_selection.scan_interval_ms <= 0) {
+        throw std::runtime_error("inputs.selection.scan_interval_ms must be > 0");
+    }
+    if (config.input_selection.promote_stable_ms < 0) {
+        throw std::runtime_error("inputs.selection.promote_stable_ms must be >= 0");
+    }
 }
 
 void load_sources(const YAML::Node &node, RemoteConfig &config)
@@ -257,29 +282,61 @@ void load_sources(const YAML::Node &node, RemoteConfig &config)
             throw std::runtime_error("sources." + group + " must contain type");
         }
 
+        InputDeviceConfig device;
+        device.name = group;
+        device.type = type;
+        device.priority = get_or<int>(group_node, "priority", device.priority);
+        device.ready_timeout_ms = get_or<int>(
+            group_node,
+            "ready_timeout_ms",
+            device.ready_timeout_ms);
+        device.loss_timeout_ms = get_or<int>(
+            group_node,
+            "loss_timeout_ms",
+            device.loss_timeout_ms);
+        device.cooldown_ms = get_or<int>(group_node, "cooldown_ms", device.cooldown_ms);
+        if (device.ready_timeout_ms <= 0 || device.loss_timeout_ms < 0 || device.cooldown_ms < 0) {
+            throw std::runtime_error(
+                "sources." + group +
+                " ready_timeout_ms must be > 0; loss_timeout_ms and cooldown_ms must be >= 0");
+        }
+
+        const std::set<std::string> generic_keys = {
+            "type", "device", "js", "priority", "ready_timeout_ms", "loss_timeout_ms",
+            "cooldown_ms", "signals", "poll_timeout_us", "hold_ms", "stop"};
+        for (const auto &option_item : group_node) {
+            const std::string option_name = option_item.first.as<std::string>();
+            if (generic_keys.count(option_name) == 0 && option_item.second.IsScalar()) {
+                device.options[option_name] = option_item.second.as<std::string>();
+            }
+        }
+
         if (type == "joystick" || type == "gamepad") {
             config.js_device = get_or<std::string>(
                 group_node,
                 "device",
                 get_or<std::string>(group_node, "js", config.js_device));
+            device.device = config.js_device;
         } else if (type == "keyboard") {
-            config.keyboard.poll_timeout_us = get_or<int>(
+            device.keyboard.poll_timeout_us = get_or<int>(
                 group_node,
                 "poll_timeout_us",
-                config.keyboard.poll_timeout_us);
-            config.keyboard.hold_ms = get_or<int>(
+                device.keyboard.poll_timeout_us);
+            device.keyboard.hold_ms = get_or<int>(
                 group_node,
                 "hold_ms",
-                config.keyboard.hold_ms);
-            if (config.keyboard.poll_timeout_us < 0) {
+                device.keyboard.hold_ms);
+            if (device.keyboard.poll_timeout_us < 0) {
                 throw std::runtime_error("sources." + group + ".poll_timeout_us must be >= 0");
             }
-            if (config.keyboard.hold_ms < 0) {
+            if (device.keyboard.hold_ms < 0) {
                 throw std::runtime_error("sources." + group + ".hold_ms must be >= 0");
             }
-            config.keyboard.stop = required_key_from_name(
+            device.keyboard.stop = required_key_from_name(
                 get_or<std::string>(group_node, "stop", "space"),
                 "sources." + group + ".stop");
+        } else {
+            device.device = get_or<std::string>(group_node, "device", "");
         }
 
         const YAML::Node signals = group_node["signals"];
@@ -291,7 +348,9 @@ void load_sources(const YAML::Node &node, RemoteConfig &config)
             require_map(signal_node, "sources." + group + ".signals." + signal);
 
             if (type == "keyboard") {
-                load_keyboard_signal(signal, signal_node, config);
+                load_keyboard_signal(signal, signal_node, config, device.keyboard);
+                device.signals[signal] = signal;
+                device.raw_sources.insert(signal);
                 continue;
             }
 
@@ -301,6 +360,8 @@ void load_sources(const YAML::Node &node, RemoteConfig &config)
                     "sources." + group + ".signals." + signal + " must contain from");
             }
             set_source_alias(config, signal, from);
+            device.signals[signal] = from;
+            device.raw_sources.insert(from);
             const int timeout_ms = get_or<int>(signal_node, "timeout_ms", 0);
             if (timeout_ms < 0) {
                 throw std::runtime_error(
@@ -314,6 +375,11 @@ void load_sources(const YAML::Node &node, RemoteConfig &config)
                 config.source_runtime[from] = runtime;
             }
         }
+
+        if (type == "keyboard") {
+            config.keyboard = device.keyboard;
+        }
+        config.input_devices.push_back(device);
     }
 }
 
@@ -805,6 +871,7 @@ void warn_unknown_root_keys(const YAML::Node &root, RemoteConfig &config)
     }
 
     const std::set<std::string> allowed = {
+        "inputs",
         "sources",
         "curves",
         "controls",
@@ -1133,7 +1200,8 @@ void validate_config(RemoteConfig &config)
     add_diagnostic(
         config,
         "info",
-        "remote config loaded: " + std::to_string(config.source_aliases.size()) +
+        "remote config loaded: " + std::to_string(config.input_devices.size()) +
+        " input devices, " + std::to_string(config.source_aliases.size()) +
         " sources, " + std::to_string(config.controls.size()) +
         " controls, " + std::to_string(config.bindings.size()) +
         " bindings, " + std::to_string(config.analog_outputs.size()) +
@@ -1171,6 +1239,7 @@ RemoteConfig load_remote_config(const std::string &path)
     const YAML::Node root = YAML::LoadFile(path);
 
     warn_unknown_root_keys(root, config);
+    load_input_selection(root["inputs"], config);
     load_sources(root["sources"], config);
     load_curves(root["curves"], config);
     load_controls(root["controls"], config);

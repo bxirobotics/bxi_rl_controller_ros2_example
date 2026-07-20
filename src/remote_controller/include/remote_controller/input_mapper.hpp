@@ -22,7 +22,10 @@ public:
     std::vector<std::string> set_axis(int axis_index, double value);
     std::vector<std::string> set_signal(const std::string &source, double value);
     void touch_runtime_sources_with_prefix(const std::string &prefix);
+    void touch_runtime_sources(const std::set<std::string> &sources);
     void clear_signals_with_prefix(const std::string &prefix);
+    void clear_signals(const std::set<std::string> &sources);
+    void set_input_edges_enabled(bool enabled);
     void zero_motion_axes();
     void reset_motion();
     std::vector<std::string> tick();
@@ -45,6 +48,7 @@ private:
     std::map<std::string, std::chrono::steady_clock::time_point> signal_expiry_;
     std::map<std::string, std::chrono::steady_clock::time_point> signal_update_time_;
     std::set<std::string> timed_out_sources_;
+    bool input_edges_enabled_ = true;
     std::vector<bool> binding_active_;
     int output_slots_[kButtonSlotCount + 1] = {0};
     int edge_pulse_slots_[kButtonSlotCount + 1] = {0};

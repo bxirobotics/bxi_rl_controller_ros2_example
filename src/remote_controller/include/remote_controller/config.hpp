@@ -126,6 +126,28 @@ struct KeyboardConfig {
     std::map<std::string, int> hold_ms_by_signal;
 };
 
+// One physical input candidate.  The controller only activates one candidate
+// at a time; controls remain device-independent and can reference signals
+// from any candidate.
+struct InputDeviceConfig {
+    std::string name;
+    std::string type;
+    std::string device;
+    int priority = 0;
+    int ready_timeout_ms = 1000;
+    int loss_timeout_ms = 300;
+    int cooldown_ms = 1000;
+    std::map<std::string, std::string> signals;
+    std::set<std::string> raw_sources;
+    std::map<std::string, std::string> options;
+    KeyboardConfig keyboard;
+};
+
+struct InputSelectionConfig {
+    int scan_interval_ms = 100;
+    int promote_stable_ms = 500;
+};
+
 struct SystemMutexConfig {
     std::string name;
     std::string acquire;
@@ -139,6 +161,8 @@ struct RemoteConfig {
     std::map<std::string, std::string> source_aliases;
     std::map<std::string, CurveConfig> curves;
     std::map<std::string, SourceRuntimeConfig> source_runtime;
+    InputSelectionConfig input_selection;
+    std::vector<InputDeviceConfig> input_devices;
     std::vector<ControlConfig> controls;
     std::vector<AnalogOutputConfig> analog_outputs;
     std::vector<Binding> bindings;

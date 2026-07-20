@@ -1,13 +1,24 @@
+inputs:
+  # 所有候选设备严格独占。系统每 100 ms 扫描可用性；设备持续可用
+  # 500 ms 才允许抢占低优先级设备，避免插拔抖动造成频繁切换。
+  selection:
+    scan_interval_ms: 100
+    promote_stable_ms: 500
+
 sources:
   #手柄按键配置
   gamepad:
     type: joystick
     device: /dev/input/jsBattleDragon
+    priority: 50
+    ready_timeout_ms: 1000
+    loss_timeout_ms: 300
+    cooldown_ms: 1000
     signals:
       #ps4
-      # gamepad.left_y: {from: js.axis.4, timeout_ms: 3000, failsafe: 0.0}
-      # gamepad.left_x: {from: js.axis.0, timeout_ms: 3000, failsafe: 0.0}
-      # gamepad.yaw: {from: js.axis.6, timeout_ms: 3000, failsafe: 0.0}
+      # gamepad.left_y: {from: js.axis.4}
+      # gamepad.left_x: {from: js.axis.0}
+      # gamepad.yaw: {from: js.axis.6}
       # gamepad.trigger_left: {from: js.axis.2}
       # gamepad.trigger_right: {from: js.axis.5}
       # gamepad.stop: {from: js.button.9}
@@ -19,9 +30,9 @@ sources:
       # gamepad.x: {from: js.button.2}
       # gamepad.y: {from: js.button.3}
       #xbox
-      gamepad.left_y: {from: js.axis.3, timeout_ms: 3000, failsafe: 0.0}
-      gamepad.left_x: {from: js.axis.0, timeout_ms: 3000, failsafe: 0.0}
-      gamepad.yaw: {from: js.axis.6, timeout_ms: 3000, failsafe: 0.0}
+      gamepad.left_y: {from: js.axis.3}
+      gamepad.left_x: {from: js.axis.0}
+      gamepad.yaw: {from: js.axis.6}
       gamepad.trigger_left: {from: js.axis.5}
       gamepad.trigger_right: {from: js.axis.4}
       gamepad.stop: {from: js.button.11}
@@ -36,6 +47,10 @@ sources:
   #键盘按键配置
   keyboard:
     type: keyboard
+    priority: 0
+    ready_timeout_ms: 1000
+    loss_timeout_ms: 300
+    cooldown_ms: 1000
     poll_timeout_us: 20000
     hold_ms: 200
     stop: space

@@ -39,7 +39,11 @@ endif()
 
 add_library(${PROJECT_NAME}_core
   src/config.cpp
-  src/input_driver.cpp
+  src/drivers/driver_registry.cpp
+  src/drivers/input_driver_base.cpp
+  src/drivers/joystick_input_driver.cpp
+  src/drivers/keyboard_input_driver.cpp
+  src/input_device_manager.cpp
   src/input_mapper.cpp
   src/motion_commands_adapter.cpp
 )

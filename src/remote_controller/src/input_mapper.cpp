@@ -71,7 +71,11 @@ const RemoteConfig &InputMapper::config() const
 void InputMapper::reload_config(RemoteConfig config)
 {
     config_ = std::move(config);
+    signals_.clear();
     controls_.clear();
+    signal_expiry_.clear();
+    signal_update_time_.clear();
+    timed_out_sources_.clear();
     binding_active_.assign(config_.bindings.size(), false);
     std::fill(output_slots_, output_slots_ + kButtonSlotCount + 1, 0);
     std::fill(edge_pulse_slots_, edge_pulse_slots_ + kButtonSlotCount + 1, 0);
@@ -98,6 +102,14 @@ std::vector<std::string> InputMapper::set_signal(const std::string &source, doub
     return refresh_bindings();
 }
 
+void InputMapper::set_input_edges_enabled(bool enabled)
+{
+    input_edges_enabled_ = enabled;
+    if (!enabled) {
+        std::fill(edge_pulse_slots_, edge_pulse_slots_ + kButtonSlotCount + 1, 0);
+    }
+}
+
 void InputMapper::touch_runtime_sources_with_prefix(const std::string &prefix)
 {
     const auto now = std::chrono::steady_clock::now();
@@ -108,6 +120,18 @@ void InputMapper::touch_runtime_sources_with_prefix(const std::string &prefix)
         }
         signal_update_time_[source] = now;
         timed_out_sources_.erase(source);
+    }
+}
+
+void InputMapper::touch_runtime_sources(const std::set<std::string> &sources)
+{
+    const auto now = std::chrono::steady_clock::now();
+    for (const auto &item : config_.source_runtime) {
+        const std::string &source = item.second.source;
+        if (sources.count(source) > 0) {
+            signal_update_time_[source] = now;
+            timed_out_sources_.erase(source);
+        }
     }
 }
 
@@ -166,6 +190,35 @@ void InputMapper::clear_signals_with_prefix(const std::string &prefix)
         }
         for (const auto &source : control->sources) {
             if (cleared_sources.count(source.source) > 0 || starts_with(source.source, prefix)) {
+                item.second = ControlValue();
+                break;
+            }
+        }
+    }
+
+    refresh_bindings(false);
+}
+
+void InputMapper::clear_signals(const std::set<std::string> &sources)
+{
+    if (sources.empty()) {
+        return;
+    }
+
+    for (const auto &source : sources) {
+        signals_[source] = 0.0;
+        signal_expiry_.erase(source);
+        signal_update_time_.erase(source);
+        timed_out_sources_.erase(source);
+    }
+
+    for (auto &item : controls_) {
+        const ControlConfig *control = find_control_config(item.first);
+        if (control == nullptr) {
+            continue;
+        }
+        for (const auto &source : control->sources) {
+            if (sources.count(source.source) > 0) {
                 item.second = ControlValue();
                 break;
             }
@@ -375,7 +428,7 @@ std::vector<std::string> InputMapper::refresh_bindings(bool emit_edges)
         const bool active = conditions_match(binding);
 
         if (binding.mode == "edge") {
-            if (emit_edges && active && !binding_active_[index]) {
+            if (emit_edges && input_edges_enabled_ && active && !binding_active_[index]) {
                 if (!apply_edge_pulse_output(binding.output)) {
                     edge_outputs.push_back(binding.output);
                 }
