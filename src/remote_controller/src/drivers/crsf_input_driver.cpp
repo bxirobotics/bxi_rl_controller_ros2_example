@@ -7,7 +7,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fcntl.h>
+#include <iomanip>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <sys/select.h>
@@ -101,7 +103,9 @@ public:
           baud_rate_(option_int(config_, "baud_rate", kDefaultBaudRate, "baudrate")),
           channel_min_(option_int(config_, "channel_min", kDefaultChannelMin)),
           channel_max_(option_int(config_, "channel_max", kDefaultChannelMax)),
-          probe_parser_([this](const CrsfFrameParser::Channels &) { record_valid_frame(); }),
+          probe_parser_([this](const CrsfFrameParser::Channels &channels) {
+              handle_probe_frame(channels);
+          }),
           active_parser_([this](const CrsfFrameParser::Channels &channels) {
               handle_active_frame(channels);
           })
@@ -147,6 +151,29 @@ public:
         return ready_;
     }
 
+    void debug() const override
+    {
+        std::array<double, CrsfFrameParser::kChannelCount> channels{};
+        bool has_channels = false;
+        {
+            const std::lock_guard<std::mutex> guard(debug_lock_);
+            has_channels = has_debug_channels_;
+            channels = debug_channels_;
+        }
+
+        if (!has_channels) {
+            log("CRSF debug: no CRC-correct RC channel frame received yet");
+            return;
+        }
+
+        std::ostringstream stream;
+        stream << std::fixed << std::setprecision(3) << "CRSF channels:";
+        for (std::size_t index = 0; index < channels.size(); ++index) {
+            stream << " ch" << (index + 1) << '=' << channels[index];
+        }
+        log(stream.str());
+    }
+
     void start() override
     {
         stop();
@@ -159,6 +186,7 @@ public:
         last_valid_frame_ns_ = 0;
         ready_ = false;
         reader_open_ = false;
+        clear_debug_channels();
         stop_flag_ = false;
         started_ = true;
         thread_ = std::thread(&CrsfInputDriver::run, this);
@@ -174,6 +202,7 @@ public:
         reader_open_ = false;
         ready_ = false;
         last_valid_frame_ns_ = 0;
+        clear_debug_channels();
         const std::lock_guard<std::mutex> guard(io_lock_);
         close_fd(active_fd_);
         close_fd(probe_fd_);
@@ -188,6 +217,7 @@ private:
     const int channel_max_;
     std::thread thread_;
     std::mutex io_lock_;
+    mutable std::mutex debug_lock_;
     int probe_fd_ = -1;
     int active_fd_ = -1;
     CrsfFrameParser probe_parser_;
@@ -197,6 +227,8 @@ private:
     std::atomic<bool> probe_open_{false};
     std::atomic<bool> ready_{false};
     std::atomic<std::int64_t> last_valid_frame_ns_{0};
+    std::array<double, CrsfFrameParser::kChannelCount> debug_channels_{};
+    bool has_debug_channels_ = false;
 
     void record_valid_frame()
     {
@@ -213,6 +245,22 @@ private:
         const std::int64_t timeout_ns =
             static_cast<std::int64_t>(config_.loss_timeout_ms) * 1000000LL;
         return age_ns >= 0 && age_ns <= timeout_ns;
+    }
+
+    void clear_debug_channels()
+    {
+        const std::lock_guard<std::mutex> guard(debug_lock_);
+        debug_channels_.fill(0.0);
+        has_debug_channels_ = false;
+    }
+
+    void cache_debug_channels(const CrsfFrameParser::Channels &channels)
+    {
+        const std::lock_guard<std::mutex> guard(debug_lock_);
+        for (std::size_t index = 0; index < channels.size(); ++index) {
+            debug_channels_[index] = normalize_channel(channels[index]);
+        }
+        has_debug_channels_ = true;
     }
 
     int open_serial() const
@@ -274,6 +322,13 @@ private:
             if (count > 0) {
                 parser.push(bytes.data(), static_cast<std::size_t>(count));
                 continue;
+            }
+            // With VMIN=0/VTIME=0 a non-blocking tty can report a normal
+            // no-data condition as a zero-length read.  Keep the descriptor
+            // open so the next availability scan can receive the next CRSF
+            // frame; valid-frame freshness remains the disconnect guard.
+            if (count == 0) {
+                return true;
             }
             if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
                 return true;
@@ -365,6 +420,7 @@ private:
     void handle_active_frame(const CrsfFrameParser::Channels &channels)
     {
         record_valid_frame();
+        cache_debug_channels(channels);
 
         std::vector<std::pair<std::string, double>> signals;
         signals.reserve(CrsfFrameParser::kChannelCount);
@@ -380,6 +436,12 @@ private:
         }
         set_signals(signals);
         ready_ = true;
+    }
+
+    void handle_probe_frame(const CrsfFrameParser::Channels &channels)
+    {
+        record_valid_frame();
+        cache_debug_channels(channels);
     }
 };
 

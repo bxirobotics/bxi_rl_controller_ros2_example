@@ -22,6 +22,7 @@ public:
         std::mutex &mapper_lock,
         DriverOutputHandler output_handler,
         DriverLogHandler log_handler,
+        bool debug_enabled = false,
         std::string driver_filter = "");
     ~InputDeviceManager();
 
@@ -43,6 +44,7 @@ private:
     std::mutex &mapper_lock_;
     DriverOutputHandler output_handler_;
     DriverLogHandler log_handler_;
+    bool debug_enabled_ = false;
     std::string driver_filter_;
     InputSelectionConfig selection_;
     std::vector<std::unique_ptr<Candidate>> candidates_;
@@ -54,9 +56,11 @@ private:
     bool safe_output_pending_ = false;
     bool safe_output_published_ = false;
     std::chrono::steady_clock::time_point next_scan_{};
+    std::chrono::steady_clock::time_point next_debug_{};
 
     void log(const std::string &message) const;
     void configure_locked(const RemoteConfig &config);
+    void debug_drivers(std::chrono::steady_clock::time_point now);
     int best_ready_candidate_locked(std::chrono::steady_clock::time_point now) const;
     void update_availability_locked(std::chrono::steady_clock::time_point now);
     void start_candidate(int index);

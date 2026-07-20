@@ -6,8 +6,9 @@ inputs:
     promote_stable_ms: 500
 
 sources:
-  # CRSF 接收机。只有持续收到 CRC 正确的 RC 通道帧才会参与候选选择；
-  # CH1..CH16 均保留为可在 controls 中引用的归一化 source。
+  # CRSF 接收机。只有持续收到 CRC 正确的 RC 通道帧才会参与候选选择。
+  # 16 路 RC 通道在这里映射为与 Xbox 相同的语义输入，业务动作仍由
+  # controls/outputs 统一定义，因此可以复用手柄的全部组合键行为。
   crsf:
     type: crsf
     device: /dev/ttyCRSF
@@ -17,23 +18,22 @@ sources:
     loss_timeout_ms: 300
     cooldown_ms: 1000
     signals:
-      crsf.ch1:  {from: crsf.channel.1}
-      crsf.ch2:  {from: crsf.channel.2}
-      crsf.ch3:  {from: crsf.channel.3}
-      crsf.ch4:  {from: crsf.channel.4}
-      crsf.ch5:  {from: crsf.channel.5}
-      crsf.ch6:  {from: crsf.channel.6}
-      crsf.ch7:  {from: crsf.channel.7}
-      crsf.ch8:  {from: crsf.channel.8}
-      crsf.ch9:  {from: crsf.channel.9}
-      crsf.ch10: {from: crsf.channel.10}
-      crsf.ch11: {from: crsf.channel.11}
-      crsf.ch12: {from: crsf.channel.12}
-      crsf.ch13: {from: crsf.channel.13}
-      crsf.ch14: {from: crsf.channel.14}
-      crsf.ch15: {from: crsf.channel.15}
-      crsf.ch16: {from: crsf.channel.16}
-      crsf.connected: {from: crsf.connected}
+      crsf.left_x:       {from: crsf.channel.1}   # CH1 Roll
+      crsf.left_y:       {from: crsf.channel.2}   # CH2 Pitch
+      crsf.trigger_right: {from: crsf.channel.3}  # CH3 Throttle / RT
+      crsf.right_x:      {from: crsf.channel.4}   # CH4 Yaw
+      crsf.right_y:      {from: crsf.channel.5}   # CH5 Camera Y
+      crsf.trigger_left: {from: crsf.channel.6}   # CH6 Brake / LT
+      crsf.a:            {from: crsf.channel.7}   # CH7
+      crsf.b:            {from: crsf.channel.8}   # CH8
+      crsf.x:            {from: crsf.channel.9}   # CH9
+      crsf.y:            {from: crsf.channel.10}  # CH10
+      crsf.lb:           {from: crsf.channel.11}  # CH11
+      crsf.rb:           {from: crsf.channel.12}  # CH12
+      crsf.start:        {from: crsf.channel.13}  # CH13
+      crsf.stop:         {from: crsf.channel.14}  # CH14 / Back
+      crsf.dpad_x:       {from: crsf.channel.15}  # CH15 left / center / right
+      crsf.dpad_y:       {from: crsf.channel.16}  # CH16 down / center / up
 
   #手柄按键配置
   gamepad:
@@ -118,8 +118,10 @@ controls:
       - source: gamepad.left_y
         direction: -1
         curve: stick
-      # CRSF 旧遥控器布局：CH3 为前后速度。
-      - source: crsf.ch3
+      # CH2 对应 Xbox 左摇杆 Y；反向后与手柄前后方向一致。
+      - source: crsf.left_y
+        direction: -1
+        curve: stick
       - source: keyboard.vx
     deadzone: 0.03
     min: -1.0
@@ -133,9 +135,10 @@ controls:
       - source: gamepad.left_x
         direction: -1
         curve: stick
-      # CRSF 旧遥控器布局：CH4 为横移，方向与手柄相反。
-      - source: crsf.ch4
+      # CH1 对应 Xbox 左摇杆 X，沿用手柄横移方向。
+      - source: crsf.left_x
         direction: -1
+        curve: stick
       - source: keyboard.vy
     deadzone: 0.03
     min: -1.0
@@ -149,65 +152,96 @@ controls:
       - source: gamepad.yaw
         direction: -1
         curve: stick
-      # CRSF 旧遥控器布局：CH1 为偏航，方向与手柄相反。
-      - source: crsf.ch1
+      # CH4 对应 Xbox 右摇杆 X，沿用手柄偏航方向。
+      - source: crsf.right_x
         direction: -1
+        curve: stick
       - source: keyboard.yaw
     deadzone: 0.03
     min: -1.0
     max: 1.0
     alpha: 0.05
 
-  system.stop_event: {type: bool, source: gamepad.stop}
-  system.start_event: {type: bool, source: gamepad.start}
-  shoulder.left_event: {type: bool, source: gamepad.lb}
-  shoulder.right_event: {type: bool, source: gamepad.rb}
-  button.a_event: {type: bool, source: gamepad.a}
-  button.b_event: {type: bool, source: gamepad.b}
-  button.x_event: {type: bool, source: gamepad.x}
-  button.y_event: {type: bool, source: gamepad.y}
+  # 手柄保持原有的 0/1 按键阈值；CRSF AUX 按钮使用独立的二段判定。
+  gamepad.stop_event: {type: bool, source: gamepad.stop}
+  gamepad.start_event: {type: bool, source: gamepad.start}
+  gamepad.lb_event: {type: bool, source: gamepad.lb}
+  gamepad.rb_event: {type: bool, source: gamepad.rb}
+  gamepad.a_event: {type: bool, source: gamepad.a}
+  gamepad.b_event: {type: bool, source: gamepad.b}
+  gamepad.x_event: {type: bool, source: gamepad.x}
+  gamepad.y_event: {type: bool, source: gamepad.y}
 
-  trigger.left_event:
+  crsf.stop_event: {type: bool, source: crsf.stop, threshold: 0.5, hysteresis: 0.05}
+  crsf.start_event: {type: bool, source: crsf.start, threshold: 0.5, hysteresis: 0.05}
+  crsf.lb_event: {type: bool, source: crsf.lb, threshold: 0.5, hysteresis: 0.05}
+  crsf.rb_event: {type: bool, source: crsf.rb, threshold: 0.5, hysteresis: 0.05}
+  crsf.a_event: {type: bool, source: crsf.a, threshold: 0.5, hysteresis: 0.05}
+  crsf.b_event: {type: bool, source: crsf.b, threshold: 0.5, hysteresis: 0.05}
+  crsf.x_event: {type: bool, source: crsf.x, threshold: 0.5, hysteresis: 0.05}
+  crsf.y_event: {type: bool, source: crsf.y, threshold: 0.5, hysteresis: 0.05}
+
+  system.stop_event:
+    type: bool
+    expr:
+      any: [[gamepad.stop_event], [crsf.stop_event]]
+  system.start_event:
+    type: bool
+    expr:
+      any: [[gamepad.start_event], [crsf.start_event]]
+  shoulder.left_event:
+    type: bool
+    expr:
+      any: [[gamepad.lb_event], [crsf.lb_event]]
+  shoulder.right_event:
+    type: bool
+    expr:
+      any: [[gamepad.rb_event], [crsf.rb_event]]
+  button.a_event:
+    type: bool
+    expr:
+      any: [[gamepad.a_event], [crsf.a_event]]
+  button.b_event:
+    type: bool
+    expr:
+      any: [[gamepad.b_event], [crsf.b_event]]
+  button.x_event:
+    type: bool
+    expr:
+      any: [[gamepad.x_event], [crsf.x_event]]
+  button.y_event:
+    type: bool
+    expr:
+      any: [[gamepad.y_event], [crsf.y_event]]
+
+  gamepad.trigger.left_event:
     type: bool
     source: gamepad.trigger_left
     threshold: 0.85
     hysteresis: 0.05
-
-  trigger.right_event:
+  gamepad.trigger.right_event:
     type: bool
     source: gamepad.trigger_right
     threshold: 0.85
     hysteresis: 0.05
-
-  # 保持旧 CRSF 开关布局。CH5（导航控制）和 CH10（速度倍率）仅作为
-  # crsf.ch5/crsf.ch10 source 暴露，第一阶段不改变机器人业务行为。
-  crsf.mode:
-    type: enum
-    source: crsf.ch6
-    default: middle
-    hysteresis: 0.05
-    positions:
-      low: [-1.0, -0.5]
-      middle: [-0.49, 0.49]
-      high: [0.5, 1.0]
-
-  crsf.connected: {type: bool, source: crsf.connected}
-
-  crsf.system:
-    type: enum
-    source: crsf.ch8
-    default: middle
-    hysteresis: 0.05
-    positions:
-      low: [-1.0, -0.5]
-      middle: [-0.49, 0.49]
-      high: [0.5, 1.0]
-
-  crsf.pd_event:
+  crsf.trigger.left_event:
     type: bool
-    source: crsf.ch9
+    source: crsf.trigger_left
     threshold: 0.5
     hysteresis: 0.05
+  crsf.trigger.right_event:
+    type: bool
+    source: crsf.trigger_right
+    threshold: 0.5
+    hysteresis: 0.05
+  trigger.left_event:
+    type: bool
+    expr:
+      any: [[gamepad.trigger.left_event], [crsf.trigger.left_event]]
+  trigger.right_event:
+    type: bool
+    expr:
+      any: [[gamepad.trigger.right_event], [crsf.trigger.right_event]]
 
   keyboard.normal_event: {type: bool, source: keyboard.normal}
   keyboard.pd_break_event: {type: bool, source: keyboard.pd_break}
@@ -235,15 +269,9 @@ outputs:
   edge:
     #sysyem.<name>代表触发下面的特定命令
     - output: system.stop
-      when:
-        any:
-          - [system.stop_event]
-          - [crsf.connected, crsf.system=low]
+      when: [system.stop_event]
     - output: system.start
-      when:
-        any:
-          - [system.start_event]
-          - [crsf.connected, crsf.system=high]
+      when: [system.start_event]
 
   #电平触发，满足条件会一直输出
   level:
@@ -252,7 +280,6 @@ outputs:
         any:
           - [shoulder.right_event, button.x_event]
           - [keyboard.normal_event]
-          - [crsf.connected, crsf.mode=middle]
 
     - output: btn_2=1
       when: [shoulder.right_event, button.a_event]
@@ -262,13 +289,11 @@ outputs:
         any:
           - [shoulder.right_event, button.b_event]
           - [keyboard.pd_break_event]
-          - [crsf.connected, crsf.pd_event]
 
     - output: btn_4=1
       when:
         any:
           - [shoulder.right_event, button.y_event]
-          - [crsf.connected, crsf.mode=low]
 
     - output: btn_5=1
       when:
@@ -293,7 +318,6 @@ outputs:
         any:
           - [shoulder.left_event, button.y_event]
           - [keyboard.amp_run_event]
-          - [crsf.connected, crsf.mode=high]
 
     - output: btn_9=1
       when:

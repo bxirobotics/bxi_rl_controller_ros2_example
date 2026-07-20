@@ -48,6 +48,13 @@ public:
         return ready_;
     }
 
+    void debug() const override
+    {
+        log(
+            "joystick debug: available=" + std::string(available_ ? "true" : "false") +
+            ", ready=" + std::string(ready_ ? "true" : "false"));
+    }
+
     void start() override
     {
         stop();

@@ -81,7 +81,8 @@ public:
     COMPublisher(
         const std::string &config_path,
         const std::string &driver_filter,
-        bool config_hot_reload_enabled)
+        bool config_hot_reload_enabled,
+        bool driver_debug_enabled)
         : Node("COM_publisher"),
           config_path_(config_path),
           config_hot_reload_enabled_(config_hot_reload_enabled),
@@ -102,7 +103,11 @@ public:
             [this](const std::string &message) {
                 RCLCPP_INFO(this->get_logger(), "%s", message.c_str());
             },
+            driver_debug_enabled,
             driver_filter));
+        if (driver_debug_enabled) {
+            RCLCPP_INFO(this->get_logger(), "input driver debug is enabled");
+        }
     }
 
     ~COMPublisher()
@@ -326,6 +331,7 @@ int main(int argc, const char *argv[])
     std::string driver_filter;
     std::string config_path;
     bool config_hot_reload_enabled = true;
+    bool driver_debug_enabled = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -343,6 +349,8 @@ int main(int argc, const char *argv[])
             }
         } else if (arg == "--no-hot-reload") {
             config_hot_reload_enabled = false;
+        } else if (arg == "--DEBUG" || arg == "--debug") {
+            driver_debug_enabled = true;
         }
     }
 
@@ -355,7 +363,8 @@ int main(int argc, const char *argv[])
     rclcpp::spin(std::make_shared<COMPublisher>(
         config_path,
         driver_filter,
-        config_hot_reload_enabled));
+        config_hot_reload_enabled,
+        driver_debug_enabled));
     rclcpp::shutdown();
 
     return 0;

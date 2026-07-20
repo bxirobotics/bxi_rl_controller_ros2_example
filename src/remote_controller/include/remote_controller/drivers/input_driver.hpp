@@ -35,6 +35,11 @@ public:
     {
         return false;
     }
+    // Emits driver-specific diagnostics.  InputDeviceManager invokes it only
+    // when its runtime --DEBUG switch is enabled.
+    virtual void debug() const
+    {
+    }
     virtual void start() = 0;
     virtual void stop() = 0;
 };

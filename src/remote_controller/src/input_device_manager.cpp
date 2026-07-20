@@ -21,11 +21,13 @@ InputDeviceManager::InputDeviceManager(
     std::mutex &mapper_lock,
     DriverOutputHandler output_handler,
     DriverLogHandler log_handler,
+    bool debug_enabled,
     std::string driver_filter)
     : mapper_(mapper),
       mapper_lock_(mapper_lock),
       output_handler_(std::move(output_handler)),
       log_handler_(std::move(log_handler)),
+      debug_enabled_(debug_enabled),
       driver_filter_(std::move(driver_filter))
 {
     std::lock_guard<std::mutex> guard(state_lock_);
@@ -55,6 +57,7 @@ void InputDeviceManager::configure_locked(const RemoteConfig &config)
     safe_output_pending_ = false;
     safe_output_published_ = false;
     next_scan_ = std::chrono::steady_clock::time_point{};
+    next_debug_ = std::chrono::steady_clock::time_point{};
 
     for (const auto &device : config.input_devices) {
         if (!driver_filter_.empty() && device.type != driver_filter_) {
@@ -142,6 +145,31 @@ void InputDeviceManager::update_availability_locked(std::chrono::steady_clock::t
             candidate->unavailable_since = now;
             log("input candidate unavailable: " + candidate->config.name);
         }
+    }
+}
+
+void InputDeviceManager::debug_drivers(std::chrono::steady_clock::time_point now)
+{
+    if (!debug_enabled_) {
+        return;
+    }
+
+    std::vector<InputDriver *> drivers;
+    {
+        const std::lock_guard<std::mutex> guard(state_lock_);
+        if (now < next_debug_) {
+            return;
+        }
+        next_debug_ = now + std::chrono::seconds(1);
+        for (const auto &candidate : candidates_) {
+            if (candidate->driver) {
+                drivers.push_back(candidate->driver.get());
+            }
+        }
+    }
+
+    for (const auto *driver : drivers) {
+        driver->debug();
     }
 }
 
@@ -265,6 +293,7 @@ bool InputDeviceManager::tick()
             update_availability_locked(now);
         }
     }
+    debug_drivers(now);
 
     bool stop_for_loss = false;
     bool stop_for_timeout = false;
