@@ -35,11 +35,25 @@ if(BUILD_TESTING)
   # uncomment the line when this package is not in a git repo
   #set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+
+  add_executable(${PROJECT_NAME}_crsf_frame_parser_test
+    test/crsf_frame_parser_test.cpp
+  )
+  target_include_directories(${PROJECT_NAME}_crsf_frame_parser_test PRIVATE include)
+  add_test(
+    NAME ${PROJECT_NAME}_crsf_frame_parser_test
+    COMMAND ${PROJECT_NAME}_crsf_frame_parser_test
+  )
 endif()
 
 add_library(${PROJECT_NAME}_core
   src/config.cpp
-  src/input_driver.cpp
+  src/drivers/driver_registry.cpp
+  src/drivers/crsf_input_driver.cpp
+  src/drivers/input_driver_base.cpp
+  src/drivers/joystick_input_driver.cpp
+  src/drivers/keyboard_input_driver.cpp
+  src/input_device_manager.cpp
   src/input_mapper.cpp
   src/motion_commands_adapter.cpp
 )
@@ -49,6 +63,19 @@ target_include_directories(${PROJECT_NAME}_core PUBLIC
 )
 ament_target_dependencies(${PROJECT_NAME}_core communication)
 target_link_libraries(${PROJECT_NAME}_core yaml-cpp)
+
+if(BUILD_TESTING)
+  add_executable(${PROJECT_NAME}_control_rules_test
+    test/control_rules_test.cpp
+  )
+  target_include_directories(${PROJECT_NAME}_control_rules_test PRIVATE include)
+  ament_target_dependencies(${PROJECT_NAME}_control_rules_test communication)
+  target_link_libraries(${PROJECT_NAME}_control_rules_test ${PROJECT_NAME}_core)
+  add_test(
+    NAME ${PROJECT_NAME}_control_rules_test
+    COMMAND ${PROJECT_NAME}_control_rules_test
+  )
+endif()
 
 add_executable(${PROJECT_NAME}
   src/main.cpp

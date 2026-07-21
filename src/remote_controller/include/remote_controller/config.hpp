@@ -28,26 +28,48 @@ struct EnumPositionConfig {
     double max = 0.0;
 };
 
-struct BindingCondition {
-    std::string kind = "pressed";
+struct ConditionConfig {
+    // Leaf kinds: pressed, released, equals, range, raw_range.
+    // Composite kinds: all, any, not.
+    std::string kind;
     std::string control;
+    std::string source;
     std::string value;
     double min = 0.0;
     double max = 0.0;
+    std::vector<ConditionConfig> children;
+};
+
+enum class ControlInputKind {
+    kSource,
+    kConditionalValue,
+    kConstantValue,
+};
+
+struct ControlInputConfig {
+    std::string name;
+    int priority = 0;
+    ControlInputKind kind = ControlInputKind::kSource;
+    SignalSourceConfig source;
+    ConditionConfig when;
+    double analog_value = 0.0;
+    bool bool_value = false;
+    std::string enum_value;
 };
 
 struct ControlConfig {
     std::string name;
     std::string type = "bool";
-    std::string mix = "max_abs";
+    std::string mix;
     std::string curve;
-    std::string default_value;
-    std::vector<std::vector<BindingCondition>> expression_groups;
-    std::vector<SignalSourceConfig> sources;
+    double default_analog = 0.0;
+    bool default_bool = false;
+    std::string default_enum;
+    std::vector<ControlInputConfig> inputs;
     double deadzone = 0.0;
     double min_value = -1.0;
     double max_value = 1.0;
-    double alpha = 0.03;
+    double alpha = 1.0;
     double threshold = 0.5;
     double hysteresis = 0.0;
     double expo = 0.0;
@@ -68,7 +90,7 @@ struct AnalogOutputConfig {
 struct Binding {
     std::string output;
     std::string mode;
-    std::vector<std::vector<BindingCondition>> condition_groups;
+    ConditionConfig when;
 };
 
 struct CurvePoint {
@@ -126,6 +148,28 @@ struct KeyboardConfig {
     std::map<std::string, int> hold_ms_by_signal;
 };
 
+// One physical input candidate.  The controller only activates one candidate
+// at a time; controls remain device-independent and can reference signals
+// from any candidate.
+struct InputDeviceConfig {
+    std::string name;
+    std::string type;
+    std::string device;
+    int priority = 0;
+    int ready_timeout_ms = 1000;
+    int loss_timeout_ms = 300;
+    int cooldown_ms = 1000;
+    std::map<std::string, std::string> signals;
+    std::set<std::string> raw_sources;
+    std::map<std::string, std::string> options;
+    KeyboardConfig keyboard;
+};
+
+struct InputSelectionConfig {
+    int scan_interval_ms = 100;
+    int promote_stable_ms = 500;
+};
+
 struct SystemMutexConfig {
     std::string name;
     std::string acquire;
@@ -139,6 +183,8 @@ struct RemoteConfig {
     std::map<std::string, std::string> source_aliases;
     std::map<std::string, CurveConfig> curves;
     std::map<std::string, SourceRuntimeConfig> source_runtime;
+    InputSelectionConfig input_selection;
+    std::vector<InputDeviceConfig> input_devices;
     std::vector<ControlConfig> controls;
     std::vector<AnalogOutputConfig> analog_outputs;
     std::vector<Binding> bindings;
