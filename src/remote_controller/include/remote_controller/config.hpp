@@ -28,26 +28,48 @@ struct EnumPositionConfig {
     double max = 0.0;
 };
 
-struct BindingCondition {
-    std::string kind = "pressed";
+struct ConditionConfig {
+    // Leaf kinds: pressed, released, equals, range, raw_range.
+    // Composite kinds: all, any, not.
+    std::string kind;
     std::string control;
+    std::string source;
     std::string value;
     double min = 0.0;
     double max = 0.0;
+    std::vector<ConditionConfig> children;
+};
+
+enum class ControlInputKind {
+    kSource,
+    kConditionalValue,
+    kConstantValue,
+};
+
+struct ControlInputConfig {
+    std::string name;
+    int priority = 0;
+    ControlInputKind kind = ControlInputKind::kSource;
+    SignalSourceConfig source;
+    ConditionConfig when;
+    double analog_value = 0.0;
+    bool bool_value = false;
+    std::string enum_value;
 };
 
 struct ControlConfig {
     std::string name;
     std::string type = "bool";
-    std::string mix = "max_abs";
+    std::string mix;
     std::string curve;
-    std::string default_value;
-    std::vector<std::vector<BindingCondition>> expression_groups;
-    std::vector<SignalSourceConfig> sources;
+    double default_analog = 0.0;
+    bool default_bool = false;
+    std::string default_enum;
+    std::vector<ControlInputConfig> inputs;
     double deadzone = 0.0;
     double min_value = -1.0;
     double max_value = 1.0;
-    double alpha = 0.03;
+    double alpha = 1.0;
     double threshold = 0.5;
     double hysteresis = 0.0;
     double expo = 0.0;
@@ -68,7 +90,7 @@ struct AnalogOutputConfig {
 struct Binding {
     std::string output;
     std::string mode;
-    std::vector<std::vector<BindingCondition>> condition_groups;
+    ConditionConfig when;
 };
 
 struct CurvePoint {

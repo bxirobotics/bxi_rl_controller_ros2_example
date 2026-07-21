@@ -30,6 +30,10 @@ InputDeviceManager::InputDeviceManager(
       debug_enabled_(debug_enabled),
       driver_filter_(std::move(driver_filter))
 {
+    {
+        const std::lock_guard<std::mutex> guard(mapper_lock_);
+        mapper_.set_debug_enabled(debug_enabled_);
+    }
     std::lock_guard<std::mutex> guard(state_lock_);
     configure_locked(config);
 }
@@ -170,6 +174,14 @@ void InputDeviceManager::debug_drivers(std::chrono::steady_clock::time_point now
 
     for (const auto *driver : drivers) {
         driver->debug();
+    }
+    std::vector<std::string> control_messages;
+    {
+        const std::lock_guard<std::mutex> guard(mapper_lock_);
+        control_messages = mapper_.take_debug_messages();
+    }
+    for (const auto &message : control_messages) {
+        log(message);
     }
 }
 

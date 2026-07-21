@@ -486,8 +486,6 @@ void load_curves(const YAML::Node &node, RemoteConfig &config)
     }
 }
 
-std::vector<std::vector<BindingCondition>> load_condition_groups(const YAML::Node &node);
-
 SignalSourceConfig load_signal_source(const YAML::Node &node)
 {
     SignalSourceConfig source;
@@ -509,22 +507,149 @@ SignalSourceConfig load_signal_source(const YAML::Node &node)
     return source;
 }
 
-std::vector<SignalSourceConfig> load_signal_sources(const YAML::Node &node)
+ConditionConfig load_condition(
+    const YAML::Node &node,
+    const RemoteConfig &config,
+    const std::string &path)
 {
-    std::vector<SignalSourceConfig> sources;
     if (!node) {
-        return sources;
+        throw std::runtime_error(path + " must not be empty");
     }
 
-    if (node.IsScalar() || (node.IsMap() && node["source"])) {
-        sources.push_back(load_signal_source(node));
-        return sources;
+    if (node.IsScalar()) {
+        const std::string text = node.as<std::string>();
+        const auto eq_pos = text.find('=');
+        ConditionConfig condition;
+        if (eq_pos == std::string::npos) {
+            condition.kind = "pressed";
+            condition.control = text;
+        } else {
+            condition.kind = "equals";
+            condition.control = text.substr(0, eq_pos);
+            condition.value = text.substr(eq_pos + 1);
+        }
+        if (condition.control.empty()) {
+            throw std::runtime_error(path + " contains an empty control name");
+        }
+        return condition;
     }
 
-    for (const auto &item : node) {
-        sources.push_back(load_signal_source(item));
+    if (node.IsSequence()) {
+        ConditionConfig condition;
+        condition.kind = "all";
+        for (std::size_t index = 0; index < node.size(); ++index) {
+            condition.children.push_back(
+                load_condition(node[index], config, path + "[" + std::to_string(index) + "]"));
+        }
+        if (condition.children.empty()) {
+            throw std::runtime_error(path + " must not be an empty condition list");
+        }
+        return condition;
     }
-    return sources;
+
+    if (!node.IsMap() || node.size() != 1) {
+        throw std::runtime_error(path + " must be a condition scalar, list, or single-key map");
+    }
+
+    const YAML::Node::const_iterator item = node.begin();
+    ConditionConfig condition;
+    condition.kind = item->first.as<std::string>();
+    const YAML::Node value_node = item->second;
+    if (condition.kind == "pressed" || condition.kind == "released") {
+        condition.control = value_node.as<std::string>();
+    } else if (condition.kind == "equals") {
+        require_map(value_node, path + ".equals");
+        condition.control = get_or<std::string>(value_node, "control", "");
+        condition.value = get_or<std::string>(value_node, "value", "");
+    } else if (condition.kind == "range") {
+        require_map(value_node, path + ".range");
+        condition.control = get_or<std::string>(value_node, "control", "");
+        condition.min = get_or<double>(value_node, "min", -1.0);
+        condition.max = get_or<double>(value_node, "max", 1.0);
+    } else if (condition.kind == "raw_range") {
+        require_map(value_node, path + ".raw_range");
+        condition.source = resolve_source(config, get_or<std::string>(value_node, "source", ""));
+        condition.min = get_or<double>(value_node, "min", -1.0);
+        condition.max = get_or<double>(value_node, "max", 1.0);
+        if (condition.source.empty()) {
+            throw std::runtime_error(path + ".raw_range must contain source");
+        }
+    } else if (condition.kind == "all" || condition.kind == "any") {
+        require_sequence(value_node, path + "." + condition.kind);
+        for (std::size_t index = 0; index < value_node.size(); ++index) {
+            condition.children.push_back(load_condition(
+                value_node[index],
+                config,
+                path + "." + condition.kind + "[" + std::to_string(index) + "]"));
+        }
+        if (condition.children.empty()) {
+            throw std::runtime_error(path + "." + condition.kind + " must not be empty");
+        }
+    } else if (condition.kind == "not") {
+        condition.children.push_back(load_condition(value_node, config, path + ".not"));
+    } else {
+        throw std::runtime_error(path + " has unsupported condition kind: " + condition.kind);
+    }
+
+    if ((condition.kind == "pressed" || condition.kind == "released" ||
+         condition.kind == "equals" || condition.kind == "range") && condition.control.empty()) {
+        throw std::runtime_error(path + "." + condition.kind + " must contain control");
+    }
+    if ((condition.kind == "range" || condition.kind == "raw_range") &&
+        condition.min > condition.max) {
+        throw std::runtime_error(path + "." + condition.kind + " min must be <= max");
+    }
+    return condition;
+}
+
+void load_control_input(
+    const YAML::Node &node,
+    const RemoteConfig &config,
+    const ControlConfig &control,
+    const std::string &path,
+    ControlInputConfig &input)
+{
+    require_map(node, path);
+    input.name = get_or<std::string>(node, "name", path);
+    input.priority = get_or<int>(node, "priority", 0);
+
+    const bool has_source = static_cast<bool>(node["source"]);
+    const bool has_when = static_cast<bool>(node["when"]);
+    const bool has_value = static_cast<bool>(node["value"]);
+    if (has_source + has_when > 1 || has_source + has_value > 1) {
+        throw std::runtime_error(path + " must contain exactly one of source, when, or value");
+    }
+
+    if (has_source) {
+        input.kind = ControlInputKind::kSource;
+        input.source = load_signal_source(node);
+        input.source.source = resolve_source(config, input.source.source);
+        return;
+    }
+
+    if (has_when) {
+        if (!has_value) {
+            throw std::runtime_error(path + ".when must contain value");
+        }
+        input.kind = ControlInputKind::kConditionalValue;
+        input.when = load_condition(node["when"], config, path + ".when");
+    } else if (has_value) {
+        input.kind = ControlInputKind::kConstantValue;
+    } else {
+        throw std::runtime_error(path + " must contain source, when + value, or value");
+    }
+
+    const YAML::Node value = node["value"];
+    if (control.type == "analog") {
+        input.analog_value = value.as<double>();
+    } else if (control.type == "bool") {
+        input.bool_value = value.as<bool>();
+    } else {
+        input.enum_value = value.as<std::string>();
+        if (input.enum_value.empty()) {
+            throw std::runtime_error(path + ".value must not be empty for enum controls");
+        }
+    }
 }
 
 void load_controls(const YAML::Node &node, RemoteConfig &config)
@@ -536,11 +661,21 @@ void load_controls(const YAML::Node &node, RemoteConfig &config)
         control.name = item.first.as<std::string>();
         const YAML::Node control_node = item.second;
         require_map(control_node, "controls." + control.name);
+        if (control_node["source"] || control_node["sources"] || control_node["expr"]) {
+            throw std::runtime_error(
+                "controls." + control.name +
+                " uses removed source/sources/expr fields; use inputs instead");
+        }
 
         control.type = get_or<std::string>(control_node, "type", control.type);
-        control.mix = get_or<std::string>(control_node, "mix", control.mix);
+        if (control.type != "analog" && control.type != "bool" && control.type != "enum") {
+            throw std::runtime_error(
+                "controls." + control.name + ".type must be analog, bool, or enum");
+        }
+        const std::string default_mix = control.type == "analog" ? "max_abs" :
+            (control.type == "bool" ? "any" : "first_active");
+        control.mix = get_or<std::string>(control_node, "mix", default_mix);
         control.curve = get_or<std::string>(control_node, "curve", control.curve);
-        control.default_value = get_or<std::string>(control_node, "default", control.default_value);
         control.deadzone = get_or<double>(control_node, "deadzone", control.deadzone);
         control.min_value = get_or<double>(control_node, "min", control.min_value);
         control.max_value = get_or<double>(control_node, "max", control.max_value);
@@ -550,29 +685,12 @@ void load_controls(const YAML::Node &node, RemoteConfig &config)
         control.expo = get_or<double>(control_node, "expo", control.expo);
         control.invert = get_or<bool>(control_node, "invert", control.invert);
 
-        if (control_node["expr"]) {
-            control.expression_groups = load_condition_groups(control_node["expr"]);
-        }
-        if (control_node["sources"]) {
-            control.sources = load_signal_sources(control_node["sources"]);
-        } else if (control_node["source"]) {
-            control.sources = load_signal_sources(control_node["source"]);
-        }
-        if (!control.expression_groups.empty() && !control.sources.empty()) {
-            throw std::runtime_error("controls." + control.name + " cannot contain both expr and source/sources");
-        }
-        if (control.sources.size() == 1) {
-            control.sources[0].direction = get_or<double>(
-                control_node,
-                "direction",
-                control.sources[0].direction);
-            control.sources[0].scale = get_or<double>(
-                control_node,
-                "scale",
-                control.sources[0].scale);
-        }
-        for (auto &source : control.sources) {
-            source.source = resolve_source(config, source.source);
+        if (control.type == "analog") {
+            control.default_analog = get_or<double>(control_node, "default", control.default_analog);
+        } else if (control.type == "bool") {
+            control.default_bool = get_or<bool>(control_node, "default", control.default_bool);
+        } else {
+            control.default_enum = get_or<std::string>(control_node, "default", "");
         }
 
         const YAML::Node positions = control_node["positions"];
@@ -593,8 +711,20 @@ void load_controls(const YAML::Node &node, RemoteConfig &config)
             }
         }
 
-        if (control.sources.empty() && control.expression_groups.empty()) {
-            throw std::runtime_error("controls." + control.name + " must contain source, sources, or expr");
+        const YAML::Node inputs = control_node["inputs"];
+        require_sequence(inputs, "controls." + control.name + ".inputs");
+        if (inputs.size() == 0) {
+            throw std::runtime_error("controls." + control.name + ".inputs must not be empty");
+        }
+        for (std::size_t index = 0; index < inputs.size(); ++index) {
+            ControlInputConfig input;
+            load_control_input(
+                inputs[index],
+                config,
+                control,
+                "controls." + control.name + ".inputs[" + std::to_string(index) + "]",
+                input);
+            control.inputs.push_back(input);
         }
         config.controls.push_back(control);
     }
@@ -670,87 +800,6 @@ void load_analog_outputs(const YAML::Node &node, RemoteConfig &config, const std
     }
 }
 
-BindingCondition load_condition(const YAML::Node &node)
-{
-    BindingCondition condition;
-    if (node.IsScalar()) {
-        const std::string text = node.as<std::string>();
-        const auto eq_pos = text.find('=');
-        if (eq_pos == std::string::npos) {
-            condition.kind = "pressed";
-            condition.control = text;
-        } else {
-            condition.kind = "equals";
-            condition.control = text.substr(0, eq_pos);
-            condition.value = text.substr(eq_pos + 1);
-        }
-        return condition;
-    }
-
-    if (!node.IsMap() || node.size() != 1) {
-        throw std::runtime_error("binding condition must be scalar or single-key map");
-    }
-
-    const YAML::Node::const_iterator item = node.begin();
-    condition.kind = item->first.as<std::string>();
-    const YAML::Node value_node = item->second;
-
-    if (condition.kind == "pressed" || condition.kind == "released") {
-        condition.control = value_node.as<std::string>();
-    } else if (condition.kind == "equals") {
-        condition.control = get_or<std::string>(value_node, "control", "");
-        condition.value = get_or<std::string>(value_node, "value", "");
-    } else if (condition.kind == "range") {
-        condition.control = get_or<std::string>(value_node, "control", "");
-        condition.min = get_or<double>(value_node, "min", -1.0);
-        condition.max = get_or<double>(value_node, "max", 1.0);
-    } else {
-        throw std::runtime_error("unknown binding condition kind: " + condition.kind);
-    }
-
-    if (condition.control.empty()) {
-        throw std::runtime_error("binding condition must contain control");
-    }
-    return condition;
-}
-
-std::vector<BindingCondition> load_condition_list(const YAML::Node &node)
-{
-    std::vector<BindingCondition> conditions;
-    if (!node) {
-        return conditions;
-    }
-
-    if (node.IsScalar() || (node.IsMap() && !node["all"])) {
-        conditions.push_back(load_condition(node));
-        return conditions;
-    }
-
-    const YAML::Node list_node = node["all"] ? node["all"] : node;
-    for (const auto &item : list_node) {
-        conditions.push_back(load_condition(item));
-    }
-    return conditions;
-}
-
-std::vector<std::vector<BindingCondition>> load_condition_groups(const YAML::Node &node)
-{
-    std::vector<std::vector<BindingCondition>> groups;
-    if (!node) {
-        return groups;
-    }
-
-    if (node.IsMap() && node["any"]) {
-        for (const auto &item : node["any"]) {
-            groups.push_back(load_condition_list(item));
-        }
-    } else {
-        groups.push_back(load_condition_list(node));
-    }
-
-    return groups;
-}
-
 void load_bindings(const YAML::Node &node, RemoteConfig &config, const std::string &mode)
 {
     if (!node) {
@@ -766,8 +815,9 @@ void load_bindings(const YAML::Node &node, RemoteConfig &config, const std::stri
         }
         binding.output = item["output"].as<std::string>();
         binding.mode = mode;
-        binding.condition_groups = load_condition_groups(item["when"]);
-        if (binding.output.empty() || binding.condition_groups.empty()) {
+        binding.when = load_condition(
+            item["when"], config, "outputs." + mode + "[].when");
+        if (binding.output.empty()) {
             throw std::runtime_error("binding must contain output and when");
         }
         config.bindings.push_back(binding);
@@ -888,18 +938,23 @@ void warn_unknown_root_keys(const YAML::Node &root, RemoteConfig &config)
     }
 }
 
-void collect_condition_controls(
-    const std::vector<std::vector<BindingCondition>> &groups,
-    std::set<std::string> &controls)
+void collect_condition_references(
+    const ConditionConfig &condition,
+    std::set<std::string> &controls,
+    std::set<std::string> &raw_sources)
 {
-    for (const auto &group : groups) {
-        for (const auto &condition : group) {
-            controls.insert(condition.control);
-        }
+    if (condition.kind == "pressed" || condition.kind == "released" ||
+        condition.kind == "equals" || condition.kind == "range") {
+        controls.insert(condition.control);
+    } else if (condition.kind == "raw_range") {
+        raw_sources.insert(condition.source);
+    }
+    for (const auto &child : condition.children) {
+        collect_condition_references(child, controls, raw_sources);
     }
 }
 
-void visit_expression_control(
+void visit_control_dependency(
     const std::string &control,
     const std::map<std::string, std::set<std::string>> &dependencies,
     std::set<std::string> &visiting,
@@ -917,7 +972,7 @@ void visit_expression_control(
     if (dependency_it != dependencies.end()) {
         for (const auto &dependency : dependency_it->second) {
             if (dependencies.count(dependency) > 0) {
-                visit_expression_control(dependency, dependencies, visiting, visited);
+                visit_control_dependency(dependency, dependencies, visiting, visited);
             }
         }
     }
@@ -968,7 +1023,7 @@ void validate_config(RemoteConfig &config)
     std::set<std::string> used_raw_sources;
     std::set<std::string> used_curves;
     std::set<std::string> control_names;
-    std::map<std::string, std::set<std::string>> expression_dependencies;
+    std::map<std::string, std::set<std::string>> condition_dependencies;
     for (const auto &control : config.controls) {
         if (!is_valid_name(control.name)) {
             add_diagnostic(config, "warning", "control name contains unusual characters: " + control.name);
@@ -978,14 +1033,21 @@ void validate_config(RemoteConfig &config)
         }
         control_names.insert(control.name);
 
-        if (control.type != "analog" && control.type != "bool" && control.type != "enum") {
+        const bool analog = control.type == "analog";
+        const bool boolean = control.type == "bool";
+        const bool enumeration = control.type == "enum";
+        if (!analog && !boolean && !enumeration) {
             throw std::runtime_error("controls." + control.name + ".type must be analog, bool, or enum");
         }
-        if (!control.expression_groups.empty() && control.type != "bool") {
-            throw std::runtime_error("controls." + control.name + ".expr is only supported for bool controls");
-        }
-        if (control.mix != "max_abs" && control.mix != "sum" && control.mix != "first_active") {
-            throw std::runtime_error("controls." + control.name + ".mix must be max_abs, sum, or first_active");
+        const bool valid_mix =
+            (analog && (control.mix == "max_abs" || control.mix == "sum" ||
+                        control.mix == "first_active")) ||
+            (boolean && (control.mix == "any" || control.mix == "all" ||
+                         control.mix == "first_active")) ||
+            (enumeration && control.mix == "first_active");
+        if (!valid_mix) {
+            throw std::runtime_error(
+                "controls." + control.name + " has an unsupported mix for type " + control.type);
         }
         if (control.deadzone < 0.0) {
             throw std::runtime_error("controls." + control.name + ".deadzone must be >= 0");
@@ -1005,30 +1067,41 @@ void validate_config(RemoteConfig &config)
         if (!control.curve.empty()) {
             used_curves.insert(control.curve);
         }
-        for (const auto &source : control.sources) {
-            used_raw_sources.insert(source.source);
-            if (!source.curve.empty()) {
-                used_curves.insert(source.curve);
+        bool enum_uses_source = false;
+        for (const auto &input : control.inputs) {
+            if (input.kind == ControlInputKind::kSource) {
+                const SignalSourceConfig &source = input.source;
+                enum_uses_source = enum_uses_source || enumeration;
+                used_raw_sources.insert(source.source);
+                if (!source.curve.empty()) {
+                    used_curves.insert(source.curve);
+                }
+                if (raw_sources.count(source.source) == 0) {
+                    throw std::runtime_error(
+                        "controls." + control.name + " references unknown source: " + source.source);
+                }
+                if (source.deadzone < 0.0) {
+                    throw std::runtime_error(
+                        "controls." + control.name + " source " + source.source + " deadzone must be >= 0");
+                }
+                if (source.expo < 0.0 || source.expo > 1.0) {
+                    throw std::runtime_error(
+                        "controls." + control.name + " source " + source.source +
+                        " expo must be between 0 and 1");
+                }
+            } else if (input.kind == ControlInputKind::kConditionalValue) {
+                collect_condition_references(
+                    input.when,
+                    condition_dependencies[control.name],
+                    used_raw_sources);
             }
-            if (raw_sources.count(source.source) == 0) {
-                throw std::runtime_error(
-                    "controls." + control.name + " references unknown source: " + source.source);
-            }
-            if (source.deadzone < 0.0) {
-                throw std::runtime_error(
-                    "controls." + control.name + " source " + source.source + " deadzone must be >= 0");
-            }
-            if (source.expo < 0.0 || source.expo > 1.0) {
-                throw std::runtime_error(
-                    "controls." + control.name + " source " + source.source + " expo must be between 0 and 1");
-            }
-        }
-        if (!control.expression_groups.empty()) {
-            collect_condition_controls(control.expression_groups, expression_dependencies[control.name]);
         }
 
-        if (control.type == "enum") {
-            if (control.positions.empty()) {
+        if (enumeration) {
+            if (control.default_enum.empty()) {
+                throw std::runtime_error("enum control " + control.name + " must contain a non-empty default");
+            }
+            if (enum_uses_source && control.positions.empty()) {
                 throw std::runtime_error("enum control " + control.name + " must contain positions");
             }
             std::vector<EnumPositionConfig> positions = control.positions;
@@ -1051,33 +1124,26 @@ void validate_config(RemoteConfig &config)
                         "enum control " + control.name + " has overlapping positions: " +
                         positions[index - 1].value + " and " + positions[index].value);
                 }
-                if (index > 0 && positions[index].min > positions[index - 1].max &&
-                    control.default_value.empty()) {
-                    add_diagnostic(
-                        config,
-                        "warning",
-                        "enum control " + control.name + " has an uncovered range and no default value");
-                }
             }
         }
     }
 
-    for (const auto &item : expression_dependencies) {
+    for (const auto &item : condition_dependencies) {
         for (const auto &dependency : item.second) {
             if (control_names.count(dependency) == 0) {
                 throw std::runtime_error(
-                    "controls." + item.first + ".expr references unknown control: " + dependency);
+                    "controls." + item.first + ".inputs references unknown control: " + dependency);
             }
         }
     }
-    std::set<std::string> visiting_expression_controls;
-    std::set<std::string> visited_expression_controls;
-    for (const auto &item : expression_dependencies) {
-        visit_expression_control(
+    std::set<std::string> visiting_condition_controls;
+    std::set<std::string> visited_condition_controls;
+    for (const auto &item : condition_dependencies) {
+        visit_control_dependency(
             item.first,
-            expression_dependencies,
-            visiting_expression_controls,
-            visited_expression_controls);
+            condition_dependencies,
+            visiting_condition_controls,
+            visited_condition_controls);
     }
 
     for (const auto &curve_name : used_curves) {
@@ -1146,13 +1212,13 @@ void validate_config(RemoteConfig &config)
                 throw std::runtime_error("output references unknown system action: " + binding.output);
             }
         }
-        for (const auto &group : binding.condition_groups) {
-            for (const auto &condition : group) {
-                used_controls.insert(condition.control);
-                if (control_names.count(condition.control) == 0) {
-                    throw std::runtime_error(
-                        "binding " + binding.output + " references unknown control: " + condition.control);
-                }
+        std::set<std::string> binding_controls;
+        collect_condition_references(binding.when, binding_controls, used_raw_sources);
+        for (const auto &control : binding_controls) {
+            used_controls.insert(control);
+            if (control_names.count(control) == 0) {
+                throw std::runtime_error(
+                    "binding " + binding.output + " references unknown control: " + control);
             }
         }
     }
@@ -1165,7 +1231,7 @@ void validate_config(RemoteConfig &config)
                 " has multiple possible pulse values: " + join_ints(item.second));
         }
     }
-    for (const auto &item : expression_dependencies) {
+    for (const auto &item : condition_dependencies) {
         for (const auto &dependency : item.second) {
             used_controls.insert(dependency);
         }
@@ -1191,6 +1257,12 @@ void validate_config(RemoteConfig &config)
     for (const auto &action : config.reset_motion_after_system) {
         if (config.system_commands.count(action) == 0) {
             throw std::runtime_error("system_reset_motion_after references unknown action: " + action);
+        }
+    }
+
+    for (const auto &source : used_raw_sources) {
+        if (raw_sources.count(source) == 0) {
+            throw std::runtime_error("condition references unknown raw source: " + source);
         }
     }
 

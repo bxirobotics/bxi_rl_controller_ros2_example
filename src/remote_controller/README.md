@@ -79,19 +79,22 @@ sources:
       crsf.right_x:      {from: crsf.channel.4}   # CH4 / Xbox 右摇杆 X
       crsf.right_y:      {from: crsf.channel.5}   # CH5 / Xbox 右摇杆 Y
       crsf.trigger_left: {from: crsf.channel.6}   # CH6 / LT
-      # CH7..CH14 -> A, B, X, Y, LB, RB, Start, Back；CH15/CH16 -> D-pad X/Y
+      crsf.button_group_a: {from: crsf.channel.7} # A/B/X/Y 编码组
+      crsf.button_group_b: {from: crsf.channel.8} # LB/RB/Back/Start/D-pad 编码组
 ```
 
-`xbox_default.yaml` 完整保留 CH1..CH16，并把它们映射为虚拟 Xbox 输入：
+`xbox_default.yaml` 把 CH1..CH8 映射为虚拟 Xbox 输入：
 
 - CH1/CH2：左摇杆 X/Y（Y 在 `move.vx` 中反向）
 - CH3/CH6：RT/LT；CH4/CH5：右摇杆 X/Y（Y 留给未来的相机或辅助控制）
-- CH7..CH14：A、B、X、Y、LB、RB、Start、Back
-- CH15/CH16：十字键 X/Y
+- CH7：按键组 A，`200/400/600/800` 分别表示 A/B/X/Y，`992` 为空闲
+- CH8：按键组 B，`200/400/600/800` 分别表示 LB/RB/Back/Start；
+  `1180/1380/1580/1780` 分别表示十字键上/下/左/右，`992` 为空闲
 
-CH1、CH2、CH4 和全部按键会复用手柄已有的运动、组合键和系统 start/stop 逻辑；CH5、
-CH15、CH16 已作为 source 暴露，等待上层需要相机或十字键动作时再绑定。`crsf.channel.1`
-到 `crsf.channel.16` 默认按旧接收机范围 `174..1811` 归一化至 `[-1, 1]`。未激活时
+按键组中的 A/B/X/Y/LB/RB/Start/Back 会复用手柄已有的组合键和系统 start/stop 逻辑。CH8 的
+左、右十字键通过 enum 条件规则映射为 CRSF yaw 的 `+1/-1`；上、下仍以
+`crsf.button_group_b=dpad_up` 等 enum 暴露，可按需绑定。`crsf.channel.1` 到 `crsf.channel.16` 默认按旧接收机范围
+`174..1811` 归一化至 `[-1, 1]`。未激活时
 driver 做非阻塞协议 probe，只有近期收到 CRC 正确帧才会参与抢占；激活后停止收到有效帧
 超过 `loss_timeout_ms` 就会断连。尚未编译的其他 `type` 不会导致节点启动失败：节点会记录
 warning、忽略该候选项，并自动使用下一个可用设备；没有任何可用设备时保持安全停止。

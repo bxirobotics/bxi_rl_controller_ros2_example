@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <sstream>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -127,6 +129,26 @@ void InputMapper::set_input_edges_enabled(bool enabled)
     }
 }
 
+void InputMapper::set_debug_enabled(bool enabled)
+{
+    debug_enabled_ = enabled;
+    debug_messages_.clear();
+    if (!debug_enabled_) {
+        return;
+    }
+    for (auto &control : controls_) {
+        control.second.debug_trace.clear();
+    }
+    refresh_controls();
+}
+
+std::vector<std::string> InputMapper::take_debug_messages()
+{
+    std::vector<std::string> messages;
+    messages.swap(debug_messages_);
+    return messages;
+}
+
 void InputMapper::touch_runtime_sources_with_prefix(const std::string &prefix)
 {
     const auto now = std::chrono::steady_clock::now();
@@ -205,8 +227,10 @@ void InputMapper::clear_signals_with_prefix(const std::string &prefix)
         if (control == nullptr) {
             continue;
         }
-        for (const auto &source : control->sources) {
-            if (cleared_sources.count(source.source) > 0 || starts_with(source.source, prefix)) {
+        for (const auto &input : control->inputs) {
+            if (input.kind == ControlInputKind::kSource &&
+                (cleared_sources.count(input.source.source) > 0 ||
+                 starts_with(input.source.source, prefix))) {
                 item.second = ControlValue();
                 break;
             }
@@ -234,8 +258,9 @@ void InputMapper::clear_signals(const std::set<std::string> &sources)
         if (control == nullptr) {
             continue;
         }
-        for (const auto &source : control->sources) {
-            if (sources.count(source.source) > 0) {
+        for (const auto &input : control->inputs) {
+            if (input.kind == ControlInputKind::kSource &&
+                sources.count(input.source.source) > 0) {
                 item.second = ControlValue();
                 break;
             }
@@ -265,8 +290,10 @@ void InputMapper::reset_motion()
                 if (control.name != output_control) {
                     continue;
                 }
-                for (const auto &source : control.sources) {
-                    motion_sources.insert(source.source);
+                for (const auto &input : control.inputs) {
+                    if (input.kind == ControlInputKind::kSource) {
+                        motion_sources.insert(input.source.source);
+                    }
                 }
             }
         }
@@ -501,7 +528,7 @@ void InputMapper::evaluate_control_recursive(
         return;
     }
     if (visiting.count(control) > 0) {
-        throw std::runtime_error("derived control expression cycle detected at: " + control);
+        throw std::runtime_error("control condition cycle detected at: " + control);
     }
 
     const ControlConfig *config = find_control_config(control);
@@ -510,9 +537,9 @@ void InputMapper::evaluate_control_recursive(
     }
 
     visiting.insert(control);
-    for (const auto &group : config->expression_groups) {
-        for (const auto &condition : group) {
-            evaluate_control_recursive(condition.control, visiting, evaluated);
+    for (const auto &input : config->inputs) {
+        if (input.kind == ControlInputKind::kConditionalValue) {
+            evaluate_condition_dependencies(input.when, visiting, evaluated);
         }
     }
     controls_[control] = evaluate_control(*config);
@@ -530,72 +557,177 @@ const ControlConfig *InputMapper::find_control_config(const std::string &control
     return nullptr;
 }
 
+void InputMapper::evaluate_condition_dependencies(
+    const ConditionConfig &condition,
+    std::set<std::string> &visiting,
+    std::set<std::string> &evaluated)
+{
+    if (condition.kind == "pressed" || condition.kind == "released" ||
+        condition.kind == "equals" || condition.kind == "range") {
+        evaluate_control_recursive(condition.control, visiting, evaluated);
+    }
+    for (const auto &child : condition.children) {
+        evaluate_condition_dependencies(child, visiting, evaluated);
+    }
+}
+
 InputMapper::ControlValue InputMapper::evaluate_control(const ControlConfig &control)
 {
     const ControlValue previous = controls_[control.name];
-    ControlValue value = previous;
-
-    double raw = mix_sources(control);
-    if (control.invert) {
-        raw = -raw;
+    ControlValue value;
+    std::vector<InputCandidate> all_candidates;
+    std::vector<InputCandidate> candidates;
+    int selected_priority = std::numeric_limits<int>::min();
+    for (const auto &input : control.inputs) {
+        InputCandidate candidate = evaluate_input(control, input, previous);
+        all_candidates.push_back(candidate);
+        if (!candidate.active) {
+            continue;
+        }
+        if (input.priority > selected_priority) {
+            selected_priority = input.priority;
+        }
     }
-    raw = apply_curve(raw, control.curve);
-    raw = apply_expo(raw, control.expo);
-
-    if (!control.expression_groups.empty()) {
-        value.pressed = condition_groups_match(control.expression_groups);
-        value.analog = value.pressed ? 1.0 : 0.0;
-        value.value = value.pressed ? "true" : "false";
-        return value;
+    if (selected_priority != std::numeric_limits<int>::min()) {
+        for (const auto &candidate : all_candidates) {
+            if (candidate.config->priority != selected_priority) {
+                continue;
+            }
+            if (candidate.active ||
+                (control.type == "bool" && control.mix == "all" &&
+                 candidate.config->kind == ControlInputKind::kSource)) {
+                candidates.push_back(candidate);
+            }
+        }
     }
+
+    std::ostringstream trace;
+    trace << control.name << " priority=";
+    if (candidates.empty()) {
+        trace << "default";
+    } else {
+        trace << selected_priority;
+    }
+    trace << " active=[";
+    for (std::size_t index = 0; index < candidates.size(); ++index) {
+        if (index > 0) {
+            trace << ", ";
+        }
+        trace << candidates[index].config->name << "=";
+        if (control.type == "analog") {
+            trace << candidates[index].analog;
+        } else if (control.type == "bool") {
+            trace << (candidates[index].boolean ? "true" : "false");
+        } else {
+            trace << candidates[index].enumeration;
+        }
+    }
+    trace << "] ";
 
     if (control.type == "analog") {
-        double analog = raw;
+        double analog = control.default_analog;
+        if (!candidates.empty()) {
+            analog = 0.0;
+            if (control.mix == "sum") {
+                for (const auto &candidate : candidates) {
+                    analog += candidate.analog;
+                }
+            } else if (control.mix == "first_active") {
+                analog = candidates.front().analog;
+            } else {
+                for (const auto &candidate : candidates) {
+                    if (std::fabs(candidate.analog) > std::fabs(analog)) {
+                        analog = candidate.analog;
+                    }
+                }
+            }
+        }
+        if (control.invert) {
+            analog = -analog;
+        }
+        analog = apply_curve(analog, control.curve);
+        analog = apply_expo(analog, control.expo);
         if (std::fabs(analog) <= control.deadzone) {
             analog = 0.0;
         }
-        if (analog > 0.0) {
-            analog *= control.max_value;
-        } else if (analog < 0.0) {
-            analog *= -control.min_value;
-        }
+        analog = std::max(control.min_value, std::min(control.max_value, analog));
         value.analog = analog * control.alpha + previous.analog * (1.0 - control.alpha);
         value.pressed = std::fabs(value.analog) > 0.0;
-        value.value = control.default_value;
+        trace << "value=" << value.analog;
+        value.debug_trace = trace.str();
+        record_debug_trace(control.name, value);
         return value;
     }
 
     if (control.type == "enum") {
-        const double sticky_margin = control.hysteresis;
-        for (const auto &position : control.positions) {
-            if (position.value == previous.value &&
-                raw >= position.min - sticky_margin &&
-                raw <= position.max + sticky_margin) {
-                value.value = position.value;
-                value.pressed = true;
-                value.analog = raw;
-                return value;
-            }
+        value.value = control.default_enum;
+        if (!candidates.empty()) {
+            value.value = candidates.front().enumeration;
+            value.analog = candidates.front().analog;
         }
-        value.value = control.default_value;
-        for (const auto &position : control.positions) {
-            if (raw >= position.min && raw <= position.max) {
-                value.value = position.value;
-                break;
-            }
-        }
-        value.pressed = !value.value.empty();
-        value.analog = raw;
+        value.pressed = !candidates.empty() && value.value != control.default_enum;
+        trace << "value=" << value.value;
+        value.debug_trace = trace.str();
+        record_debug_trace(control.name, value);
         return value;
     }
 
-    const double press_threshold = previous.pressed ?
-        control.threshold - control.hysteresis :
-        control.threshold + control.hysteresis;
-    value.pressed = raw >= press_threshold;
-    value.analog = raw;
-    value.value = value.pressed ? "true" : "false";
+    bool pressed = control.default_bool;
+    if (!candidates.empty()) {
+        if (control.mix == "all") {
+            pressed = true;
+            for (const auto &candidate : candidates) {
+                pressed = pressed && candidate.boolean;
+            }
+        } else if (control.mix == "first_active") {
+            pressed = candidates.front().boolean;
+        } else {
+            pressed = false;
+            for (const auto &candidate : candidates) {
+                pressed = pressed || candidate.boolean;
+            }
+        }
+    }
+    value.pressed = pressed;
+    value.analog = pressed ? 1.0 : 0.0;
+    value.value = pressed ? "true" : "false";
+    trace << "value=" << value.value;
+    value.debug_trace = trace.str();
+    record_debug_trace(control.name, value);
     return value;
+}
+
+InputMapper::InputCandidate InputMapper::evaluate_input(
+    const ControlConfig &control,
+    const ControlInputConfig &input,
+    const ControlValue &previous) const
+{
+    InputCandidate candidate;
+    candidate.config = &input;
+    if (input.kind == ControlInputKind::kSource) {
+        candidate.analog = read_source(input.source);
+        candidate.active = std::fabs(candidate.analog) > 0.0;
+        if (control.type == "bool") {
+            const double threshold = previous.pressed ?
+                control.threshold - control.hysteresis :
+                control.threshold + control.hysteresis;
+            candidate.boolean = candidate.analog >= threshold;
+        } else if (control.type == "enum") {
+            candidate.enumeration = enum_from_raw(control, candidate.analog, previous.value);
+        }
+        return candidate;
+    }
+
+    candidate.active = input.kind == ControlInputKind::kConstantValue ||
+        condition_matches(input.when);
+    if (control.type == "analog") {
+        candidate.analog = input.analog_value;
+    } else if (control.type == "bool") {
+        candidate.boolean = input.bool_value;
+    } else {
+        candidate.enumeration = input.enum_value;
+    }
+    return candidate;
 }
 
 double InputMapper::read_source(const SignalSourceConfig &source) const
@@ -610,38 +742,46 @@ double InputMapper::read_source(const SignalSourceConfig &source) const
     return apply_expo(value, source.expo);
 }
 
-double InputMapper::mix_sources(const ControlConfig &control) const
+std::string InputMapper::enum_from_raw(
+    const ControlConfig &control,
+    double raw,
+    const std::string &previous) const
 {
-    if (control.sources.empty()) {
-        return 0.0;
-    }
-
-    if (control.mix == "sum") {
-        double value = 0.0;
-        for (const auto &source : control.sources) {
-            value += read_source(source);
+    for (const auto &position : control.positions) {
+        if (position.value == previous &&
+            raw >= position.min - control.hysteresis &&
+            raw <= position.max + control.hysteresis) {
+            return position.value;
         }
-        return std::max(-1.0, std::min(1.0, value));
     }
+    for (const auto &position : control.positions) {
+        if (raw >= position.min && raw <= position.max) {
+            return position.value;
+        }
+    }
+    return control.default_enum;
+}
 
-    if (control.mix == "first_active") {
-        for (const auto &source : control.sources) {
-            const double value = read_source(source);
-            if (std::fabs(value) > 0.0) {
-                return value;
+void InputMapper::record_debug_trace(const std::string &control, ControlValue &value)
+{
+    const ControlConfig *config = find_control_config(control);
+    bool has_value_rule = false;
+    if (config != nullptr) {
+        for (const auto &input : config->inputs) {
+            if (input.kind != ControlInputKind::kSource) {
+                has_value_rule = true;
+                break;
             }
         }
-        return 0.0;
     }
-
-    double value = 0.0;
-    for (const auto &source : control.sources) {
-        const double candidate = read_source(source);
-        if (std::fabs(candidate) > std::fabs(value)) {
-            value = candidate;
-        }
+    if (!has_value_rule) {
+        return;
     }
-    return value;
+    const auto previous = controls_.find(control);
+    if (debug_enabled_ &&
+        (previous == controls_.end() || previous->second.debug_trace != value.debug_trace)) {
+        debug_messages_.push_back("control debug: " + value.debug_trace);
+    }
 }
 
 double InputMapper::apply_expo(double value, double expo) const
@@ -735,28 +875,36 @@ double InputMapper::apply_curve(double value, const std::string &curve_name) con
 
 bool InputMapper::conditions_match(const Binding &binding) const
 {
-    return condition_groups_match(binding.condition_groups);
+    return condition_matches(binding.when);
 }
 
-bool InputMapper::condition_groups_match(const std::vector<std::vector<BindingCondition>> &groups) const
+bool InputMapper::condition_matches(const ConditionConfig &condition) const
 {
-    for (const auto &group : groups) {
-        bool group_matches = true;
-        for (const auto &condition : group) {
-            if (!condition_matches(condition)) {
-                group_matches = false;
-                break;
+    if (condition.kind == "all") {
+        for (const auto &child : condition.children) {
+            if (!condition_matches(child)) {
+                return false;
             }
         }
-        if (group_matches) {
-            return true;
-        }
+        return true;
     }
-    return false;
-}
+    if (condition.kind == "any") {
+        for (const auto &child : condition.children) {
+            if (condition_matches(child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (condition.kind == "not") {
+        return condition.children.size() == 1 && !condition_matches(condition.children.front());
+    }
 
-bool InputMapper::condition_matches(const BindingCondition &condition) const
-{
+    if (condition.kind == "raw_range") {
+        const auto signal_it = signals_.find(condition.source);
+        const double value = signal_it == signals_.end() ? 0.0 : signal_it->second;
+        return value >= condition.min && value <= condition.max;
+    }
     const auto control_it = controls_.find(condition.control);
     const ControlValue value = control_it == controls_.end() ? ControlValue() : control_it->second;
 

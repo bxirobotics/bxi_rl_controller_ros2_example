@@ -64,6 +64,19 @@ target_include_directories(${PROJECT_NAME}_core PUBLIC
 ament_target_dependencies(${PROJECT_NAME}_core communication)
 target_link_libraries(${PROJECT_NAME}_core yaml-cpp)
 
+if(BUILD_TESTING)
+  add_executable(${PROJECT_NAME}_control_rules_test
+    test/control_rules_test.cpp
+  )
+  target_include_directories(${PROJECT_NAME}_control_rules_test PRIVATE include)
+  ament_target_dependencies(${PROJECT_NAME}_control_rules_test communication)
+  target_link_libraries(${PROJECT_NAME}_control_rules_test ${PROJECT_NAME}_core)
+  add_test(
+    NAME ${PROJECT_NAME}_control_rules_test
+    COMMAND ${PROJECT_NAME}_control_rules_test
+  )
+endif()
+
 add_executable(${PROJECT_NAME}
   src/main.cpp
 )
