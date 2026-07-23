@@ -4,7 +4,9 @@ import importlib.util
 from importlib.machinery import SourceFileLoader
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -220,6 +222,19 @@ def create_mod(context):
 
 
 class ToolingTest(unittest.TestCase):
+    def test_repository_tool_bootstraps_source_tree(self):
+        environment = os.environ.copy()
+        environment.pop("PYTHONPATH", None)
+        result = subprocess.run(
+            [str(_TOOL_PATH), "--help"],
+            cwd=_TOOL_PATH.parent.parent,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_schema_is_json_and_cli_scaffolds_without_overwrite(self):
         schema = (
             Path(__file__).parents[1] / "schema" / "mod.schema.json"
@@ -243,6 +258,8 @@ class ToolingTest(unittest.TestCase):
                         "wave",
                         "--template",
                         "procedural",
+                        "--slot",
+                        "test_generated_slot",
                     ]
                 )
             self.assertEqual(result, 0)
