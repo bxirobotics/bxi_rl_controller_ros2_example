@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bxi.example/schema/mod.schema.json",
+  "title": "BXI Mod manifest",
+  "type": "object",
+  "required": ["id", "version"],
+  "properties": {
+    "schema": {"const": 1, "default": 1},
+    "api": {"const": 1, "default": 1},
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)+$"
+    },
+    "version": {"type": "string", "pattern": "^\\d+(?:\\.\\d+)*$"},
+    "entrypoint": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "visibility": {"enum": ["public", "protected"]},
+    "requires": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {"type": "string"},
+          {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": {"type": "string"},
+              "version": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "python_exports": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_-]*$"},
+      "additionalProperties": {"$ref": "#/$defs/state"}
+    },
+    "events": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {"type": "string"},
+          {
+            "type": "object",
+            "required": ["slot"],
+            "properties": {
+              "slot": {"type": "string"},
+              "value": {"type": "integer"}
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "routes": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/route"}
+    },
+    "speed_profiles": {"type": "object"},
+    "transition_profiles": {"type": "object"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "label": {"type": "string"},
+        "index": {"type": "integer", "minimum": 0},
+        "group": {"type": "string"},
+        "icon": {"type": "string"},
+        "confirm": {"type": "boolean"},
+        "confirm_message": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "factory": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "id": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "label": {"type": "string"},
+        "index": {"type": "integer", "minimum": 0},
+        "group": {"type": "string"},
+        "icon": {"type": "string"},
+        "confirm": {"type": "boolean"},
+        "confirm_message": {"type": "string"},
+        "manifest": {"$ref": "#/$defs/manifest"},
+        "params": {"type": "object"},
+        "speed_profile": {"type": "string"},
+        "transitions": {"type": "object", "maxProperties": 0}
+      },
+      "additionalProperties": false
+    },
+    "route": {
+      "type": "object",
+      "required": ["from", "event"],
+      "properties": {
+        "from": {"type": "string"},
+        "event": {"type": "string"},
+        "to": {"type": "string"},
+        "action": {"type": "string"},
+        "transition": {
+          "oneOf": [{"type": "string"}, {"type": "object"}]
+        },
+        "delay": {"type": "number", "minimum": 0}
+      },
+      "anyOf": [{"required": ["to"]}, {"required": ["action"]}],
+      "additionalProperties": false
+    }
+  }
+}

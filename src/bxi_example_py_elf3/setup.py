@@ -82,6 +82,19 @@ def get_mod_files():
     return data_files
 
 
+def get_schema_files():
+    schema_dir = "schema"
+    if not os.path.isdir(schema_dir):
+        return []
+    return [
+        (os.path.join("share", package_name, "schema"), [
+            os.path.join(schema_dir, file)
+        ])
+        for file in sorted(os.listdir(schema_dir))
+        if file.endswith(".json")
+    ]
+
+
 setup(
     name=package_name,
     version="0.0.0",
@@ -89,11 +102,13 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
+        ("bin", ["../../tools/bxi-mod"]),
     ]
     + get_data_files()
     + get_launch_files()
     + get_config_files()
-    + get_mod_files(),
+    + get_mod_files()
+    + get_schema_files(),
     install_requires=["setuptools"],
     zip_safe=True,
     maintainer="liufq",

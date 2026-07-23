@@ -1,0 +1,271 @@
+#!/usr/bin/env python3
+"""Create, validate, and inspect BXI Mods."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import re
+import sys
+from textwrap import dedent
+from typing import Mapping, Sequence, cast
+
+import yaml
+
+from bxi_example_py_elf3.utils.mod_system import ModRuntime, load_mod_runtime
+from bxi_example_py_elf3.utils.robot_state_builder import build_robot_states
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+SOURCE_PACKAGE_ROOT = REPOSITORY_ROOT / "src" / "bxi_example_py_elf3"
+
+
+def _default_share_root() -> Path:
+    if (SOURCE_PACKAGE_ROOT / "mods").is_dir():
+        return SOURCE_PACKAGE_ROOT
+    try:
+        from ament_index_python.packages import get_package_share_directory
+
+        return Path(get_package_share_directory("bxi_example_py_elf3"))
+    except (ImportError, LookupError):
+        return SOURCE_PACKAGE_ROOT
+
+
+DEFAULT_SHARE_ROOT = _default_share_root()
+DEFAULT_MOD_ROOT = DEFAULT_SHARE_ROOT / "mods"
+DEFAULT_CONFIG = DEFAULT_SHARE_ROOT / "config" / "elf3_state_machine.yaml"
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="bxi-mod",
+        description="Create, validate, and inspect BXI Mods.",
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    create = commands.add_parser("new", help="create a minimal Mod")
+    create.add_argument("mod_id")
+    create.add_argument("--state", default="hello")
+    create.add_argument(
+        "--template",
+        choices=("pose", "procedural", "raw"),
+        default="pose",
+    )
+    create.add_argument(
+        "--root",
+        type=Path,
+        default=Path("mods"),
+        help="destination Mod root (default: ./mods)",
+    )
+    create.add_argument("--label", default="My State")
+    create.add_argument("--index", type=int, default=20)
+    create.add_argument("--slot", default="btn_10")
+    create.add_argument("--value", type=int, default=8)
+
+    for name in ("validate", "inspect"):
+        command = commands.add_parser(name, help=f"{name} a Mod or Mod root")
+        command.add_argument("path", type=Path)
+        command.add_argument("--built-in-root", type=Path, default=DEFAULT_MOD_ROOT)
+        command.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    arguments = _parser().parse_args(argv)
+    try:
+        if arguments.command == "new":
+            target = _new_mod(arguments)
+            print(f"created {target}")
+            print(f"next: bxi-mod validate {target}")
+            return 0
+        runtime = _load_for_cli(
+            arguments.path,
+            arguments.built_in_root,
+            arguments.config,
+        )
+        try:
+            build_robot_states(runtime.config, runtime.state_factories)
+            if arguments.command == "validate":
+                events = cast(
+                    Mapping[str, object],
+                    runtime.config["remote_events"],
+                )
+                print(
+                    f"OK: {len(runtime.mods)} Mods, "
+                    f"{len(runtime.state_factories)} states, "
+                    f"{len(events)} events"
+                )
+            else:
+                _print_runtime(runtime)
+        finally:
+            runtime.close()
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _new_mod(arguments: argparse.Namespace) -> Path:
+    mod_id = arguments.mod_id
+    state_name = arguments.state
+    if not _valid_mod_id(mod_id):
+        raise ValueError(f"invalid namespaced Mod id: {mod_id!r}")
+    if not _valid_state_name(state_name):
+        raise ValueError(f"invalid state name: {state_name!r}")
+    if arguments.index < 0:
+        raise ValueError("--index must be non-negative")
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", arguments.slot) is None:
+        raise ValueError("--slot must be a valid MotionCommands field name")
+    target = (arguments.root.expanduser() / mod_id).resolve()
+    if target.exists():
+        raise FileExistsError(f"refusing to overwrite existing path: {target}")
+    target.mkdir(parents=True)
+    class_name = "".join(
+        part.title() for part in re.split(r"[_-]", state_name)
+    ) + "State"
+    label = json.dumps(arguments.label, ensure_ascii=False)
+    manifest = dedent(
+        f"""\
+        id: {mod_id}
+        version: 1.0.0
+
+        requires:
+          - {{id: com.bxi.basic_actions, version: \">=1,<2\"}}
+
+        events:
+          activate: {{slot: {arguments.slot}, value: {arguments.value}}}
+
+        states:
+          {state_name}:
+            factory: state:{class_name}
+            label: {label}
+            index: {arguments.index}
+            group: Custom
+            icon: extension
+
+        routes:
+          - from: com.bxi.basic_actions/normal
+            event: activate
+            to: {state_name}
+            transition: soft_switch
+          - from: {state_name}
+            event: com.bxi.basic_actions/normal
+            to: com.bxi.basic_actions/normal
+            transition: dual_running_blend
+          - from: {state_name}
+            event: com.bxi.basic_actions/zero_torque
+            to: com.bxi.basic_actions/zero_torque
+        """
+    )
+    source = _state_template(arguments.template, class_name)
+    (target / "mod.yaml").write_text(manifest, encoding="utf-8")
+    (target / "state.py").write_text(source, encoding="utf-8")
+    return target
+
+
+def _state_template(template: str, class_name: str) -> str:
+    if template == "pose":
+        return dedent(
+            f'''\
+            from bxi_example_py_elf3.utils.state_library import PoseState
+
+
+            class {class_name}(PoseState):
+                def target_position(self, ctx):
+                    # Start safely: hold the position measured on the last cycle.
+                    return ctx.pos_last.copy()
+            '''
+        )
+    if template == "procedural":
+        return dedent(
+            f'''\
+            from dataclasses import dataclass
+            import math
+
+            from bxi_example_py_elf3.utils.state_library import ProceduralState
+
+
+            @dataclass(frozen=True)
+            class Params:
+                joint: int = 0
+                amplitude: float = 0.15
+                frequency: float = 0.5
+
+
+            class {class_name}(ProceduralState[Params]):
+                Params = Params
+
+                def compute_frame(self, ctx, elapsed):
+                    qpos = ctx.pos_last.copy()
+                    qpos[self.params.joint] += self.params.amplitude * math.sin(
+                        2.0 * math.pi * self.params.frequency * elapsed
+                    )
+                    return self.frame(ctx, qpos)
+            '''
+        )
+    return dedent(
+        f'''\
+        from bxi_example_py_elf3.utils.robot_state_base import RobotControlState
+
+
+        class {class_name}(RobotControlState):
+            def on_update(self, ctx, dt):
+                ctx.set_motor_target(ctx.pos_last, ctx.joint_kp, ctx.joint_kd)
+        '''
+    )
+
+
+def _load_for_cli(path: Path, built_in_root: Path, config_path: Path) -> ModRuntime:
+    candidate = path.expanduser().resolve()
+    if not candidate.exists():
+        raise FileNotFoundError(candidate)
+    config = _yaml_map(config_path)
+    built_in = built_in_root.expanduser().resolve()
+    if (candidate / "com.bxi.basic_actions" / "mod.yaml").is_file():
+        built_in = candidate
+    is_built_in = candidate == built_in or (
+        (candidate / "mod.yaml").is_file() and built_in in candidate.parents
+    )
+    extras: tuple[Path, ...] = () if is_built_in else (candidate,)
+    return load_mod_runtime(config, built_in_root=built_in, extra_roots=extras)
+
+
+def _print_runtime(runtime: ModRuntime) -> None:
+    print("Mods (dependency/load order):")
+    for index, mod in enumerate(runtime.mods, 1):
+        dependencies = ", ".join(mod.requires) if mod.requires else "-"
+        print(f"  {index}. {mod.id} {mod.version} requires={dependencies}")
+    print("States (resolved UI indexes):")
+    states = cast(Mapping[str, object], runtime.config["states"])
+    for name, raw_state in states.items():
+        state = cast(Mapping[str, object], raw_state)
+        manifest = cast(Mapping[str, object], state.get("manifest", {}))
+        print(
+            f"  {name}: index={manifest.get('index', '-')} "
+            f"label={manifest.get('label', '-')}"
+        )
+        transitions = cast(Mapping[str, object], state.get("transitions", {}))
+        on_event = cast(Mapping[str, object], transitions.get("on_event", {}))
+        for event, rule in on_event.items():
+            print(f"    {event} -> {rule}")
+
+
+def _yaml_map(path: Path) -> Mapping[str, object]:
+    with path.open("r", encoding="utf-8") as input_file:
+        value = yaml.safe_load(input_file) or {}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{path}: YAML root must be a map")
+    return cast(Mapping[str, object], value)
+
+
+def _valid_mod_id(value: str) -> bool:
+    return re.fullmatch(r"[a-z0-9]+(?:[._-][a-z0-9]+)+", value) is not None
+
+
+def _valid_state_name(value: str) -> bool:
+    return re.fullmatch(r"[a-z][a-z0-9_-]*", value) is not None
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

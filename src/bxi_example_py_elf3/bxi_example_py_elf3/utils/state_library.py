@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import Generic, Protocol, TypeVar
 
 import numpy as np
@@ -44,6 +45,233 @@ class ReplayPolicy(Protocol):
 
 
 ReplayPolicyT = TypeVar("ReplayPolicyT", bound=ReplayPolicy)
+ParamsT = TypeVar("ParamsT")
+PolicyT = TypeVar("PolicyT")
+
+
+class _FrameState(
+    RobotControlState,
+    EntryFrameProvider,
+    RunningFrameProvider,
+    ABC,
+):
+    def gains(self, ctx: BxiExample) -> tuple[object, object]:
+        """Return kp/kd. Override this when a state needs custom gains."""
+        kp = getattr(ctx, "joint_kp", None)
+        kd = getattr(ctx, "joint_kd", None)
+        if kp is None or kd is None:
+            kp = getattr(ctx, "kp_last", None)
+            kd = getattr(ctx, "kd_last", None)
+        if kp is None or kd is None:
+            raise ValueError(
+                f"state '{self.name}' needs ctx.joint_kp/joint_kd or "
+                "ctx.kp_last/kd_last"
+            )
+        return kp, kd
+
+    def frame(
+        self,
+        ctx: BxiExample,
+        qpos: object,
+        *,
+        kp: object | None = None,
+        kd: object | None = None,
+    ) -> MotorFrame:
+        if kp is None or kd is None:
+            default_kp, default_kd = self.gains(ctx)
+            kp = default_kp if kp is None else kp
+            kd = default_kd if kd is None else kd
+        return self._motor_frame(qpos, kp, kd)
+
+
+class PoseState(_FrameState, Generic[ParamsT], ABC):
+    """A fixed-pose state with transition capabilities supplied by the library."""
+
+    def __init__(
+        self,
+        name: str,
+        state_id: int,
+        params: ParamsT | None = None,
+    ) -> None:
+        super().__init__(name, state_id)
+        self.params = params
+
+    @abstractmethod
+    def target_position(self, ctx: BxiExample) -> object:
+        """Return the target joint positions for this update."""
+
+    def get_entry_frame(self, ctx: BxiExample) -> MotorFrame:
+        return self.frame(ctx, self.target_position(ctx))
+
+    def sample_running_frame(
+        self,
+        ctx: BxiExample,
+        dt: float,
+        *,
+        advance: bool,
+    ) -> MotorFrame:
+        return self.get_entry_frame(ctx)
+
+    def on_update(self, ctx: BxiExample, dt: float) -> None:
+        self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
+
+
+class ProceduralState(_FrameState, Generic[ParamsT], ABC):
+    """A time-varying state with transition-safe sampling semantics."""
+
+    def __init__(
+        self,
+        name: str,
+        state_id: int,
+        params: ParamsT | None = None,
+    ) -> None:
+        super().__init__(name, state_id)
+        self.params = params
+        self.elapsed = 0.0
+
+    def on_enter(self, ctx: BxiExample) -> None:
+        self.elapsed = 0.0
+
+    @abstractmethod
+    def compute_frame(self, ctx: BxiExample, elapsed: float) -> MotorFrame:
+        """Compute output at ``elapsed`` without mutating time."""
+
+    def get_entry_frame(self, ctx: BxiExample) -> MotorFrame:
+        return self.compute_frame(ctx, 0.0)
+
+    def sample_running_frame(
+        self,
+        ctx: BxiExample,
+        dt: float,
+        *,
+        advance: bool,
+    ) -> MotorFrame:
+        frame = self.compute_frame(ctx, self.elapsed)
+        if advance:
+            self.elapsed += dt
+        return frame
+
+    def on_update(self, ctx: BxiExample, dt: float) -> None:
+        self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
+
+
+class PolicyState(_FrameState, Generic[PolicyT], ABC):
+    """Shared lifecycle for lazy policy resources and live inference states."""
+
+    def __init__(
+        self,
+        name: str,
+        state_id: int,
+        params_or_policy: object | ResourceHandle[PolicyT] | None = None,
+    ) -> None:
+        super().__init__(name, state_id)
+        self._policy_handle = (
+            params_or_policy
+            if isinstance(params_or_policy, ResourceHandle)
+            else None
+        )
+        self.params = None if self._policy_handle is not None else params_or_policy
+        self._policy: PolicyT | None = None
+
+    @property
+    def policy(self) -> PolicyT:
+        if self._policy_handle is not None:
+            return self._policy_handle.get()
+        if self._policy is None:
+            raise RuntimeError(
+                f"state '{self.name}' policy is not prepared yet; use it from "
+                "lifecycle methods or call resolve_policy(ctx)"
+            )
+        return self._policy
+
+    def create_policy(self, ctx: BxiExample) -> PolicyT:
+        """Override for a state-local policy; shared models should use a Resource."""
+        raise NotImplementedError(
+            f"state '{self.name}' needs create_policy() or a ResourceHandle"
+        )
+
+    def resolve_policy(self, ctx: BxiExample) -> PolicyT:
+        if self._policy_handle is not None:
+            return self._policy_handle.get()
+        if self._policy is None:
+            self._policy = self.create_policy(ctx)
+        return self._policy
+
+    def reset_policy(self, ctx: BxiExample, policy: PolicyT) -> None:
+        """Override when a model has recurrent state or a playback cursor."""
+
+    def preheat_policy(self, ctx: BxiExample, policy: PolicyT) -> None:
+        """Use the controller's standard preheater for compatible model APIs."""
+        preheat = getattr(ctx, "preheat_model", None)
+        has_standard_inference = callable(getattr(policy, "inference_step", None))
+        has_mjlab_inference = callable(getattr(policy, "infer_step", None))
+        if callable(preheat) and (has_standard_inference or has_mjlab_inference):
+            preheat(policy)
+
+    def on_prepare(
+        self,
+        ctx: BxiExample,
+        from_state: StateBehavior[BxiExample],
+    ) -> None:
+        policy = self.resolve_policy(ctx)
+        self.reset_policy(ctx, policy)
+        self.preheat_policy(ctx, policy)
+
+    def on_enter(self, ctx: BxiExample) -> None:
+        self.reset_policy(ctx, self.resolve_policy(ctx))
+
+    @abstractmethod
+    def policy_entry_position(self, ctx: BxiExample, policy: PolicyT) -> object:
+        """Return the stable position used by entry transitions."""
+
+    @abstractmethod
+    def infer_position(
+        self,
+        ctx: BxiExample,
+        policy: PolicyT,
+        dt: float,
+        *,
+        advance: bool,
+    ) -> object:
+        """Run or sample inference; advance=False must not mutate policy time."""
+
+    def policy_gains(
+        self,
+        ctx: BxiExample,
+        policy: PolicyT,
+    ) -> tuple[object, object]:
+        kp = getattr(policy, "kps", None)
+        kd = getattr(policy, "kds", None)
+        return self.gains(ctx) if kp is None or kd is None else (kp, kd)
+
+    def get_entry_frame(self, ctx: BxiExample) -> MotorFrame:
+        policy = self.resolve_policy(ctx)
+        kp, kd = self.policy_gains(ctx, policy)
+        return self.frame(
+            ctx,
+            self.policy_entry_position(ctx, policy),
+            kp=kp,
+            kd=kd,
+        )
+
+    def sample_running_frame(
+        self,
+        ctx: BxiExample,
+        dt: float,
+        *,
+        advance: bool,
+    ) -> MotorFrame:
+        policy = self.resolve_policy(ctx)
+        kp, kd = self.policy_gains(ctx, policy)
+        return self.frame(
+            ctx,
+            self.infer_position(ctx, policy, dt, advance=advance),
+            kp=kp,
+            kd=kd,
+        )
+
+    def on_update(self, ctx: BxiExample, dt: float) -> None:
+        self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
 
 
 class MotionReplayState(
@@ -134,6 +362,9 @@ class MotionReplayState(
 __all__ = [
     "MotionReplayState",
     "NORMAL_STATE",
+    "PolicyState",
+    "PoseState",
+    "ProceduralState",
     "ReplayPolicy",
     "ZERO_TORQUE_STATE",
 ]
