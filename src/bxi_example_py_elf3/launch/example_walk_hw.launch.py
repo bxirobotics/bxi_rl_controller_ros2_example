@@ -7,7 +7,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
 
-    onnx_file_name = "mods/com.bxi.normal_run/assets/model_normal.onnx"
+    onnx_file_name = "mods/com.bxi.basic_actions/assets/model_normal.onnx"
     onnx_file = os.path.join(get_package_share_path("bxi_example_py_elf3"), onnx_file_name)
 
     return LaunchDescription(

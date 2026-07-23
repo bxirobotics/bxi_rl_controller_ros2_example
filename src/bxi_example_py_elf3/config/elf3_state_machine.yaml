@@ -1,5 +1,5 @@
 # 系统级配置。状态、事件、速度配置和状态图由各 Mod 的 mod.yaml 提供。
-initial_state: com.bxi.zero_torque/zero_torque
+initial_state: com.bxi.basic_actions/zero_torque
 
 # 可追加客户 Mod 根目录；内置 Mods 总是从安装包的 mods/ 自动发现。
 mod_paths:

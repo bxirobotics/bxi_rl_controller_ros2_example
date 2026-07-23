@@ -21,8 +21,8 @@ if TYPE_CHECKING:
     from bxi_example_py_elf3.bxi_example_demo import BxiExample
 
 
-NORMAL_STATE = "com.bxi.normal/normal"
-ZERO_TORQUE_STATE = "com.bxi.zero_torque/zero_torque"
+NORMAL_STATE = "com.bxi.basic_actions/normal"
+ZERO_TORQUE_STATE = "com.bxi.basic_actions/zero_torque"
 
 
 class ReplayPolicy(Protocol):

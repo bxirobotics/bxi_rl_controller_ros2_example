@@ -1,0 +1,173 @@
+schema: 1
+id: com.bxi.basic_actions
+version: 1.0.0
+api: 1
+entrypoint: plugin:create_mod
+
+events:
+  normal: {slot: btn_1, value: 1}
+  zero_torque: {slot: btn_2, value: 1}
+  pd_brake: {slot: btn_3, value: 1}
+  initial_pos: {slot: btn_4, value: 1}
+  dance: {slot: btn_5, value: 1}
+  recover: {slot: btn_6, value: 1}
+  normal_run: {slot: btn_7, value: 1}
+  amp_run: {slot: btn_8, value: 1}
+  toggle_pause: {slot: btn_9, value: 1}
+  applause: {slot: btn_10, value: 5}
+  hello: {slot: btn_10, value: 6}
+  lie_down: {slot: btn_10, value: 7}
+
+speed_profiles:
+  normal:
+    vx_scale: 1.0
+    vx_min: -1.0
+    vx_max: 1.0
+    vy_scale: 0.5
+    yaw_scale: 1.5
+  normal_run:
+    vx_scale: 2.0
+    vx_min: -1.0
+    vx_max: 2.0
+    vy_scale: 0.5
+    yaw_scale: 1.0
+  amp_run:
+    vx_scale: 4.0
+    vx_min: -2.0
+    vx_max: 4.0
+    vy_scale: 0.5
+    yaw_scale: 1.5
+
+states:
+  normal:
+    manifest:
+      label: 走路
+      index: 0
+      group: Base
+      icon: directions_walk
+    speed_profile: normal
+  zero_torque:
+    manifest:
+      label: 零力矩
+      index: 1
+      group: Base
+      icon: do_not_disturb_on
+  pd_brake:
+    manifest:
+      label: 初始姿态
+      index: 2
+      group: Base
+      icon: settings_backup_restore
+  initial_pos:
+    manifest:
+      label: 零位模式
+      index: 4
+      group: Base
+      icon: anchor
+  dance:
+    manifest:
+      label: 跳舞
+      index: 5
+      group: Advanced
+      icon: star_shine
+      confirm: true
+      confirm_message: 请确保机器人周围1米范围内没有障碍物
+    params:
+      start_frame: 100
+  recover:
+    manifest:
+      label: 起身
+      index: 6
+      group: Advanced
+      icon: accessibility_new
+      confirm: true
+      confirm_message: 请确保机器人周围1米范围内没有障碍物
+  amp_run:
+    manifest:
+      label: 高速奔跑
+      index: 7
+      group: Advanced
+      icon: sprint
+      confirm: true
+      confirm_message: 高速跑步4m/s，没有越障能力
+    speed_profile: amp_run
+  normal_run:
+    manifest:
+      label: 中速奔跑
+      index: 8
+      group: Advanced
+      icon: directions_run
+      confirm: true
+      confirm_message: 高速跑步2m/s，没有越障能力
+    speed_profile: normal_run
+  applause:
+    manifest:
+      label: 鼓掌
+      index: 12
+      group: Base
+      icon: cheer
+    speed_profile: normal
+  hello:
+    manifest:
+      label: 挥手
+      index: 13
+      group: Base
+      icon: waving_hand
+    speed_profile: normal
+  lie_down:
+    manifest:
+      label: 躺下
+      index: 14
+      group: Advanced
+      icon: rotate_right
+      confirm: true
+      confirm_message: 请确保机器人前方3米范围内没有障碍物
+
+routes:
+  - {from: pd_brake, event: normal, to: normal, transition: soft_switch}
+
+  - {from: normal, event: zero_torque, to: zero_torque}
+  - {from: pd_brake, event: zero_torque, to: zero_torque}
+  - {from: initial_pos, event: zero_torque, to: zero_torque}
+  - {from: dance, event: zero_torque, to: zero_torque}
+  - {from: recover, event: zero_torque, to: zero_torque}
+
+  - {from: normal, event: pd_brake, to: pd_brake, transition: first_frame_switch}
+  - {from: zero_torque, event: pd_brake, to: pd_brake, transition: first_frame_switch}
+  - {from: initial_pos, event: pd_brake, to: pd_brake, transition: first_frame_switch}
+
+  - {from: normal, event: initial_pos, to: initial_pos, transition: first_frame_switch}
+  - {from: zero_torque, event: initial_pos, to: initial_pos, transition: first_frame_switch}
+  - {from: pd_brake, event: initial_pos, to: initial_pos, transition: first_frame_switch}
+
+  - {from: normal, event: dance, to: dance, transition: soft_switch}
+  - from: dance
+    event: normal
+    to: normal
+    transition: {profile: dual_running_blend, duration: 1.0}
+  - {from: dance, event: toggle_pause, action: toggle_pause}
+
+  - {from: pd_brake, event: recover, to: recover, transition: first_frame_switch}
+
+  - {from: normal, event: normal_run, to: normal_run, transition: soft_switch}
+  - {from: normal_run, event: normal, to: normal, transition: soft_switch}
+
+  - {from: normal, event: amp_run, to: amp_run, transition: soft_switch}
+  - {from: amp_run, event: normal, to: normal, transition: soft_switch}
+
+  - {from: normal, event: applause, to: applause, transition: dual_running_blend}
+  - from: applause
+    event: normal
+    to: normal
+    transition: {profile: dual_running_blend, duration: 1.0}
+  - {from: applause, event: toggle_pause, action: toggle_pause}
+
+  - {from: normal, event: hello, to: hello, transition: dual_running_blend}
+  - from: hello
+    event: normal
+    to: normal
+    transition: {profile: dual_running_blend, duration: 1.0}
+  - {from: hello, event: toggle_pause, action: toggle_pause}
+
+  - {from: normal, event: lie_down, to: lie_down, transition: soft_switch}
+  - {from: lie_down, event: toggle_pause, action: toggle_pause}

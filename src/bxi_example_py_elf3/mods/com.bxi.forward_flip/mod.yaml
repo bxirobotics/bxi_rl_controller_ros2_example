@@ -3,6 +3,9 @@ id: com.bxi.forward_flip
 version: 1.0.0
 api: 1
 entrypoint: plugin:create_mod
+requires:
+  - id: com.bxi.basic_actions
+    version: ">=1,<2"
 events:
   activate: {slot: btn_10, value: 2}
 states:
@@ -15,5 +18,5 @@ states:
       confirm: true
       confirm_message: 请确保机器人前方3米范围内没有障碍物
 routes:
-  - {from: com.bxi.normal/normal, event: activate, to: forward_flip, transition: soft_switch}
-  - {from: forward_flip, event: com.bxi.zero_torque/activate, to: com.bxi.zero_torque/zero_torque}
+  - {from: com.bxi.basic_actions/normal, event: activate, to: forward_flip, transition: soft_switch}
+  - {from: forward_flip, event: com.bxi.basic_actions/zero_torque, to: com.bxi.basic_actions/zero_torque}

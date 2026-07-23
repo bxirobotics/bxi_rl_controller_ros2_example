@@ -8,6 +8,7 @@ from itertools import count
 from pathlib import Path
 import re
 import sys
+import warnings
 from types import ModuleType
 from typing import Generic, TypeVar, cast
 
@@ -773,7 +774,7 @@ def _compose_config(
     config["speed_profiles"] = speed_profiles
     config["transition_profiles"] = transition_profiles
     _validate_remote_inputs(states, remote_events)
-    _validate_state_manifest_indexes(states)
+    _resolve_state_manifest_indexes(states)
     for state_name, raw_state in states.items():
         state = cast(Mapping[str, object], raw_state)
         speed_profile = state.get("speed_profile")
@@ -866,8 +867,13 @@ def _validate_remote_inputs(
         raise ValueError(f"remote events have no routes: {unused}")
 
 
-def _validate_state_manifest_indexes(states: Mapping[str, object]) -> None:
-    owners: dict[int, str] = {}
+def _resolve_state_manifest_indexes(states: Mapping[str, object]) -> None:
+    declared_indexes: set[int] = set()
+    indexed_states: list[tuple[str, dict[str, object], Mapping[str, object], int]] = []
+
+    # Validate and reserve every explicitly declared index before assigning new
+    # ones. This prevents an earlier conflict from taking an index that a later
+    # state legitimately declares.
     for state_name, raw_state in states.items():
         state = _mapping(raw_state, f"states.{state_name}")
         manifest = _mapping(state.get("manifest"), f"states.{state_name}.manifest")
@@ -878,13 +884,33 @@ def _validate_state_manifest_indexes(states: Mapping[str, object]) -> None:
             raise ValueError(
                 f"state '{state_name}' manifest index must be a non-negative integer"
             )
+        indexed_states.append(
+            (state_name, cast(dict[str, object], state), manifest, index)
+        )
+        declared_indexes.add(index)
+
+    owners: dict[int, str] = {}
+    allocated_indexes = set(declared_indexes)
+    for state_name, state, manifest, index in indexed_states:
         previous = owners.get(index)
-        if previous is not None:
-            raise ValueError(
-                f"state manifest index conflict: '{previous}' and '{state_name}' "
-                f"both use index {index}"
-            )
-        owners[index] = state_name
+        if previous is None:
+            owners[index] = state_name
+            continue
+
+        new_index = index + 1
+        while new_index in allocated_indexes:
+            new_index += 1
+        allocated_indexes.add(new_index)
+        owners[new_index] = state_name
+        updated_manifest = dict(manifest)
+        updated_manifest["index"] = new_index
+        state["manifest"] = updated_manifest
+        warnings.warn(
+            f"state manifest index conflict: '{previous}' keeps index {index}; "
+            f"'{state_name}' was reassigned to index {new_index}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def _qualify(mod_id: str, local_or_canonical: str) -> str:
