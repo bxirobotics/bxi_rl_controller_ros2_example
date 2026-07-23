@@ -17,14 +17,14 @@ import os
 import math
 import json
 from collections import deque
+from collections.abc import Mapping
+from pathlib import Path
 from std_msgs.msg import Header, String
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
 
-from bxi_example_py_elf3.inference.beyondmimic import *
-from bxi_example_py_elf3.inference.normal import *
-from bxi_example_py_elf3.inference.amp import *
+from bxi_example_py_elf3.inference.normal import NormalMotionPolicyMjlab
 from bxi_example_py_elf3.utils.hot_reload import HotReloadMixin
 from bxi_example_py_elf3.utils.state_machine import (
     RobotStateMachine,
@@ -32,8 +32,9 @@ from bxi_example_py_elf3.utils.state_machine import (
     load_state_machine_config,
 )
 from bxi_example_py_elf3.utils.robot_state_builder import build_robot_states
+from bxi_example_py_elf3.utils.mod_system import ModRuntime, load_mod_runtime
+from bxi_example_py_elf3.utils.robot_state_base import RobotControlState
 from bxi_example_py_elf3.utils.transition_core import TransitionSpec
-import bxi_example_py_elf3.robot_states  # 加载 State 类，供 build_robot_states() 自动发现
 from bxi_example_py_elf3.utils.tfs import quaternion_to_euler_array
 
 robot_name = "elf3"
@@ -121,8 +122,10 @@ class BxiExample(HotReloadMixin, Node):
         # 加载运行参数
         self.load_files()
 
-        # 加载模型
-        self.load_models()
+        # 发现 Mods，并将它们的状态图片段组合为运行配置。
+        self.mod_runtime = self.load_mod_runtime(self.base_state_machine_config)
+        self.resources = self.mod_runtime.resources
+        self.state_machine_config = self.mod_runtime.config
 
         self.initial_pos = np.zeros(dof_num, dtype=np.double)
 
@@ -161,7 +164,10 @@ class BxiExample(HotReloadMixin, Node):
         self.current_raw_cmd_vel = np.zeros(3, dtype=np.float32)
         self.current_cmd_vel = np.zeros(3, dtype=np.float32)
 
-        robot_states = build_robot_states(self.state_machine_config)
+        robot_states = build_robot_states(
+            self.state_machine_config,
+            self.mod_runtime.state_factories,
+        )
         self.robot_states = robot_states
         self.state_id_by_name = {
             name: state.state_id for name, state in robot_states.items()
@@ -178,6 +184,7 @@ class BxiExample(HotReloadMixin, Node):
         self.remote_event_adapter = RemoteEventAdapter(
             self.state_machine_config.get("remote_events", {})
         )
+        self.log_mod_runtime(self.mod_runtime, action="loaded")
         self.init_hot_reload()
 
         self.state = self.state_machine.current_state_id
@@ -208,9 +215,10 @@ class BxiExample(HotReloadMixin, Node):
         self.state_machine_config_path = self.get_parameter(
             "/state_machine_config"
         ).value
-        self.state_machine_config = load_state_machine_config(
+        self.base_state_machine_config = load_state_machine_config(
             self.state_machine_config_path
         )
+        self.state_machine_config = self.base_state_machine_config
 
         self.declare_parameter("/state_machine_info_topic", "")
         self.state_machine_info_topic = (
@@ -227,69 +235,45 @@ class BxiExample(HotReloadMixin, Node):
         self.declare_parameter("/hot_reload", False)
         self.hot_reload_enabled = bool(self.get_parameter("/hot_reload").value)
 
-    def load_models(self):
-        data_dir = os.path.join(
-            get_package_share_directory("bxi_example_py_elf3"),
-            "data",
-        )
-        model_file_paths: list[str] = []
+    def mod_search_roots(
+        self, base_config: Mapping[str, object]
+    ) -> tuple[Path, tuple[Path, ...]]:
+        package_share = Path(get_package_share_directory("bxi_example_py_elf3"))
+        raw_paths = base_config.get("mod_paths", ())
+        if not isinstance(raw_paths, list) or not all(
+            isinstance(path, str) for path in raw_paths
+        ):
+            raise ValueError("mod_paths must be a list of directory strings")
+        return package_share / "mods", tuple(Path(path) for path in raw_paths)
 
-        def model_file(file_name: str) -> str:
-            path = os.path.join(data_dir, file_name)
-            model_file_paths.append(path)
-            return path
+    def load_mod_runtime(self, base_config: Mapping[str, object]) -> ModRuntime:
+        built_in_root, extra_roots = self.mod_search_roots(base_config)
+        return load_mod_runtime(
+            base_config,
+            built_in_root=built_in_root,
+            extra_roots=extra_roots,
+        )
 
-        self.normal: HumanoidGaitPolicyLiteIsaaclab = HumanoidGaitPolicyLiteIsaaclab(
-            model_file("isaaclab_model/amp_terrain.onnx")
-        )
-        self.recover: DanceMotionPolicyMjlab = DanceMotionPolicyMjlab(
-            model_file("mjlab_model/recover.npz"),
-            model_file("mjlab_model/recover.onnx"),
-            start_frame=600,
-        )
-        self.dance: DanceMotionPolicyGravityIsaaclabV3 = DanceMotionPolicyGravityIsaaclabV3(
-            model_file("isaaclab_model/shuishou.npz"),
-            model_file("isaaclab_model/shuishou.onnx"),
-            start_frame=60,
-            fixed_pos=True
-        )
-        self.amp_run: HumanoidGaitPolicyLiteIsaaclab = HumanoidGaitPolicyLiteIsaaclab(
-            model_file("isaaclab_model/amp_run.onnx")
-        )
-        self.normal_run: NormalMotionPolicyMjlab = NormalMotionPolicyMjlab(
-            model_file("mjlab_model/model_normal.onnx")
-        )
-        self.back_flip: DanceMotionPolicyGravityIsaaclab = (
-            DanceMotionPolicyGravityIsaaclab(
-                model_file("isaaclab_model/back_flip.npz"),
-                model_file("isaaclab_model/back_flip.onnx"),
-                start_frame=40,
-            )
-        )
-        self.forward_flip: DanceMotionPolicyGravityIsaaclab = (
-            DanceMotionPolicyGravityIsaaclab(
-                model_file("isaaclab_model/forward_flip.npz"),
-                model_file("isaaclab_model/forward_flip.onnx"),
-                start_frame=150,
-            )
-        )
-        self.ballet: DanceMotionPolicyGravityIsaaclabV3 = (
-            DanceMotionPolicyGravityIsaaclabV3(
-                model_file("isaaclab_model/ballet.npz"),
-                model_file("isaaclab_model/ballet.onnx"),
-                start_frame=60,
-                fixed_pos=True
-            )
-        )
-        self.withoutarm: HumanoidGaitPolicyLiteIsaaclab = HumanoidGaitPolicyLiteIsaaclab(
-            model_file("isaaclab_model/withoutarm.onnx")
-        )
-        self.model_file_paths: tuple[str, ...] = tuple(model_file_paths)
-        self.pd_pos: np.ndarray = self.normal.default_dof_pos
-
-    def bind_robot_states(self, robot_states):
+    def bind_robot_states(
+        self, robot_states: Mapping[str, RobotControlState]
+    ) -> None:
         for state in robot_states.values():
             state.on_bind(self)
+
+    def destroy_node(self):
+        runtime = getattr(self, "mod_runtime", None)
+        if runtime is not None and not getattr(self, "_mod_runtime_closed", False):
+            for state in getattr(self, "robot_states", {}).values():
+                try:
+                    state.on_unbind(self)
+                except Exception as exc:
+                    self.get_logger().warning(f"Mod state cleanup failed: {exc}")
+            try:
+                runtime.close()
+            except Exception as exc:
+                self.get_logger().warning(f"Mod runtime cleanup failed: {exc}")
+            self._mod_runtime_closed = True
+        return super().destroy_node()
 
     # ---------------------------------------------------------------------------- #
     #                                    ROS话题部分                                   #

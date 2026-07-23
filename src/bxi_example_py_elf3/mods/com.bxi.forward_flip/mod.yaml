@@ -1,0 +1,19 @@
+schema: 1
+id: com.bxi.forward_flip
+version: 1.0.0
+api: 1
+entrypoint: plugin:create_mod
+events:
+  activate: {slot: btn_10, value: 2}
+states:
+  forward_flip:
+    manifest:
+      label: 前空翻
+      index: 10
+      group: Advanced
+      icon: rotate_right
+      confirm: true
+      confirm_message: 请确保机器人前方3米范围内没有障碍物
+routes:
+  - {from: com.bxi.normal/normal, event: activate, to: forward_flip, transition: soft_switch}
+  - {from: forward_flip, event: com.bxi.zero_torque/activate, to: com.bxi.zero_torque/zero_torque}

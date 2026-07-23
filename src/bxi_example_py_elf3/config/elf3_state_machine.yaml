@@ -1,73 +1,27 @@
-#程序初始的状态
-initial_state: zero_torque
+# 系统级配置。状态、事件、速度配置和状态图由各 Mod 的 mod.yaml 提供。
+initial_state: com.bxi.zero_torque/zero_torque
 
-#状态机可视化输出
+# 可追加客户 Mod 根目录；内置 Mods 总是从安装包的 mods/ 自动发现。
+mod_paths:
+  - /opt/bxi/mods
+
 graph:
   validate: true
   export:
     dot: /tmp/elf3_state_machine.dot
     mermaid: /tmp/elf3_state_machine.mmd
 
-#将MotionCommands映射为事件
-remote_events:
-  normal_event:
-    slot: btn_1
-    value: 1
-  zero_torque_event:
-    slot: btn_2
-    value: 1
-  pd_brake_event:
-    slot: btn_3
-    value: 1
-  initial_pos_event:
-    slot: btn_4
-    value: 1
-  dance_event:
-    slot: btn_5
-    value: 1
-  recover_event:
-    slot: btn_6
-    value: 1
-  normal_run_event:
-    slot: btn_7
-    value: 1
-  amp_run_event:
-    slot: btn_8
-    value: 1
-  toggle_dance_pause_event:
-    slot: btn_9
-    value: 1
-  back_flip_event:
-    slot: btn_10
-    value: 1
-  forward_flip_event:
-    slot: btn_10
-    value: 2
-  ballet_event:
-    slot: btn_10
-    value: 3
-  applause_event:
-    slot: btn_10
-    value: 5
-  hello_event:
-    slot: btn_10
-    value: 6
-
-#预设的一些过渡方式
 default_transition: instant
 
+# 系统共享的过渡预设。Mod 也可以在自己的 mod.yaml 中新增命名空间预设。
 transition_profiles:
-
-  #直接切换状态，相当于不填transition
   instant:
     type: instant
 
-  #软切换，会保持一段时间当前电机状态再切换下一状态
   soft_switch:
     type: hold
     duration: 0.02
 
-  #缓慢增加kp或kd过度到目标状态的第一帧
   first_frame_switch:
     type: sequence
     steps:
@@ -75,278 +29,14 @@ transition_profiles:
         duration: 0.02
       - type: entry_gain_ramp
         duration: 1.0
-        kp_from: zero #kp从0开始过渡到目标状态的kp
-        kd_from: target #kd从目标状态的kd开始过渡
+        kp_from: zero
+        kd_from: target
 
-  #旧状态和新状态都持续生成电机目标，再按进入进度混合输出
   dual_running_blend:
     type: running_blend
     duration: 0.3
     curve: smoothstep
-    sample_from: true #是否采样当前状态电机
-    sample_to: true #是否采样目标状态电机
+    sample_from: true
+    sample_to: true
     advance_from: false
     advance_to: false
-
-#速度的预设配置
-speed_profiles:
-  normal:
-    vx_scale: 1.0
-    vx_min: -1.0
-    vx_max: 1.0
-    vy_scale: 0.5
-    yaw_scale: 1.5
-
-  normal_run:
-    vx_scale: 2.0
-    vx_min: -1.0
-    vx_max: 2.0
-    vy_scale: 0.5
-    yaw_scale: 1.0
-
-  amp_run:
-    vx_scale: 4.0
-    vx_min: -2.0
-    vx_max: 4.0
-    vy_scale: 0.5
-    yaw_scale: 1.5
-
-#状态机
-states:
-  normal:
-    manifest:
-      label: 走路
-      index: 0
-      group: Base
-      icon: directions_walk
-    behavior: NormalState
-    speed_profile: normal
-    transitions:
-      on_event:
-        zero_torque_event: zero_torque
-        pd_brake_event: 
-            to: pd_brake
-            transition: first_frame_switch
-        initial_pos_event: 
-            to: initial_pos
-            transition: first_frame_switch
-        amp_run_event:
-          to: amp_run
-          transition: soft_switch
-        normal_run_event:
-          to: normal_run
-          transition: soft_switch
-        dance_event:
-          to: dance
-          transition: soft_switch
-        back_flip_event:
-          to: back_flip
-          transition: soft_switch
-        forward_flip_event:
-          to: forward_flip
-          transition: soft_switch
-        ballet_event:
-          to: ballet
-          transition: soft_switch
-        applause_event:
-          to: applause
-          transition: dual_running_blend
-        hello_event:
-          to: hello
-          transition: dual_running_blend
-
-  zero_torque:
-    manifest:
-      label: 零力矩
-      index: 1
-      group: Base
-      icon: do_not_disturb_on
-    behavior: ZeroTorqueState
-    transitions:
-      on_event:
-        pd_brake_event: 
-          to: pd_brake
-          transition: first_frame_switch
-        initial_pos_event: 
-          to: initial_pos
-          transition: first_frame_switch
-
-  pd_brake:
-    manifest:
-      label: 初始姿态
-      index: 2
-      group: Base
-      icon: settings_backup_restore
-    behavior: PdBrakeState
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: soft_switch
-        zero_torque_event: zero_torque
-        initial_pos_event: 
-          to: initial_pos
-          transition: first_frame_switch
-        recover_event:
-          to: recover
-          transition: first_frame_switch
-
-  initial_pos:
-    manifest:
-      label: 零位模式
-      index: 4
-      group: Base
-      icon: anchor
-    behavior: InitialPosState
-    transitions:
-      on_event:
-        pd_brake_event: 
-          to: pd_brake
-          transition: first_frame_switch
-        zero_torque_event: zero_torque
-
-  dance:
-    manifest:
-      label: 跳舞
-      index: 5
-      group: Advanced
-      icon: star_shine
-      confirm: true
-      confirm_message: 请确保机器人周围1米范围内没有障碍物
-    behavior: DanceState
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: 
-            profile: dual_running_blend
-            duration: 1.0
-        zero_torque_event: zero_torque
-        toggle_dance_pause_event:
-          action: toggle_dance_pause
-
-  recover:
-    manifest:
-      label: 起身
-      index: 6
-      group: Advanced
-      icon: accessibility_new
-      confirm: true
-      confirm_message: 请确保机器人周围1米范围内没有障碍物
-    behavior: RecoverState
-    transitions:
-      on_event:
-        zero_torque_event: zero_torque
-
-  amp_run:
-    manifest:
-      label: 高速奔跑
-      index: 7
-      group: Advanced
-      icon: sprint
-      confirm: true
-      confirm_message: 高速跑步4m/s，没有越障能力
-    behavior: AmpRunState
-    speed_profile: amp_run
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: soft_switch
-
-  normal_run:
-    manifest:
-      label: 中速奔跑
-      index: 8
-      group: Advanced
-      icon: directions_run
-      confirm: true
-      confirm_message: 高速跑步2m/s，没有越障能力
-    behavior: NormalRunState
-    speed_profile: normal_run
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: soft_switch
-
-  back_flip:
-    manifest:
-      label: 后空翻
-      index: 9
-      group: Advanced
-      icon: rotate_left
-      confirm: true
-      confirm_message: 请确保机器人后方3米范围内没有障碍物
-    behavior: BackFlipState
-    transitions:
-      on_event:
-        zero_torque_event: zero_torque
-
-  forward_flip:
-    manifest:
-      label: 前空翻
-      index: 10
-      group: Advanced
-      icon: rotate_right
-      confirm: true
-      confirm_message: 请确保机器人前方3米范围内没有障碍物
-    behavior: ForwardFlipState
-    transitions:
-      on_event:
-        zero_torque_event: zero_torque
-
-  ballet:
-    manifest:
-      label: 芭蕾舞
-      index: 11
-      group: Advanced
-      icon: wand_stars
-      confirm: true
-      confirm_message: 请确保机器人周围5米范围内没有障碍物
-    behavior: BalletState
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: 
-            profile: dual_running_blend
-            duration: 1.0
-        toggle_dance_pause_event:
-          action: toggle_dance_pause
-
-  applause:
-    manifest:
-      label: 鼓掌
-      index: 12
-      group: Base
-      icon: cheer
-    behavior: ApplauseState
-    speed_profile: normal
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: 
-            profile: dual_running_blend
-            duration: 1.0
-        toggle_dance_pause_event:
-          action: toggle_dance_pause
-          
-  hello:
-    manifest:
-      label: 挥手
-      index: 13
-      group: Base
-      icon: waving_hand
-    behavior: HelloState
-    speed_profile: normal
-    transitions:
-      on_event:
-        normal_event:
-          to: normal
-          transition: 
-            profile: dual_running_blend
-            duration: 1.0
-        toggle_dance_pause_event:
-          action: toggle_dance_pause

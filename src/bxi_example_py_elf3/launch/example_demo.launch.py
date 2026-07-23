@@ -34,7 +34,7 @@ def generate_launch_description():
                 parameters=[
                     {"/topic_prefix": "simulation/"},
                     {"/state_machine_config": state_machine_config},
-                    {"/hot_reload": True},
+                    {"/hot_reload": False},
                 ],
                 emulate_tty=True,
                 arguments=[("__log_level:=debug")],

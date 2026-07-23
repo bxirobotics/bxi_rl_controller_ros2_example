@@ -86,7 +86,7 @@ class StateBehavior(Generic[CtxT]):
         self.state_id = state_id
         self.manifest: dict[str, object] = {
             "label": "Unknown",
-            "index": "0",
+            "index": None,
             "group": "Base",
             "icon": "warning",
             "confirm": False,
@@ -94,6 +94,10 @@ class StateBehavior(Generic[CtxT]):
         }
 
     def on_bind(self, ctx: CtxT) -> None:
+        pass
+
+    def on_unbind(self, ctx: CtxT) -> None:
+        """Release subscriptions, timers, or other state-owned handles."""
         pass
 
     def on_prepare(self, ctx: CtxT, from_state: StateBehavior[CtxT]) -> None:
@@ -165,6 +169,8 @@ class RobotStateMachine:
         config: Mapping[str, object],
         states: Mapping[str, StateBehavior[BxiExample]],
         action_handlers: Mapping[str, Callable[[], None]] | None = None,
+        *,
+        enter_initial: bool = True,
     ) -> None:
         self._ctx = ctx
         self._config = dict(config)
@@ -198,7 +204,8 @@ class RobotStateMachine:
         self._pending: PendingTransition | None = None
         self._active: ActiveTransition | None = None
         self._fired_after_rules: set[tuple[str, int]] = set()
-        self.current.on_enter(self._ctx)
+        if enter_initial:
+            self.current.on_enter(self._ctx)
 
     @property
     def current_state_id(self) -> int:

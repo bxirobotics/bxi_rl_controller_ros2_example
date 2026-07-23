@@ -11,7 +11,10 @@ def get_data_files():
 
     # 遍历源目录下的所有文件和子目录
     for root, dirs, files in os.walk(source_dir):
+        dirs[:] = [directory for directory in dirs if directory != "__pycache__"]
         for file in files:
+            if file.endswith((".pyc", ".pyo")):
+                continue
             file_path = os.path.join(root, file)
             # 计算相对于源目录的相对路径，以保持子目录结构
             relative_path = os.path.relpath(root, source_dir)
@@ -57,6 +60,28 @@ def get_config_files():
     return data_files
 
 
+def get_mod_files():
+    data_files = []
+    source_dir = "mods"
+    target_dir = os.path.join("share", package_name, "mods")
+
+    for root, dirs, files in os.walk(source_dir):
+        dirs[:] = [directory for directory in dirs if directory != "__pycache__"]
+        for file in files:
+            if file.endswith((".pyc", ".pyo")):
+                continue
+            file_path = os.path.join(root, file)
+            relative_path = os.path.relpath(root, source_dir)
+            install_dir = (
+                target_dir
+                if relative_path == "."
+                else os.path.join(target_dir, relative_path)
+            )
+            data_files.append((install_dir, [file_path]))
+
+    return data_files
+
+
 setup(
     name=package_name,
     version="0.0.0",
@@ -67,7 +92,8 @@ setup(
     ]
     + get_data_files()
     + get_launch_files()
-    + get_config_files(),
+    + get_config_files()
+    + get_mod_files(),
     install_requires=["setuptools"],
     zip_safe=True,
     maintainer="liufq",

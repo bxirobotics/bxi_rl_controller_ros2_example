@@ -43,7 +43,6 @@ jobs:
       - name: Generate Public Release Tree
         run: |
           python3 tools/sanitize_release.py \
-            --manifest src/bxi_example_py_elf3/config/release_protection.yaml \
             --out "${PUBLIC_DIR}" \
             --self-check
 
@@ -51,8 +50,8 @@ jobs:
         run: |
           test -f "${PUBLIC_DIR}/.github/workflows/auto_release.yml"
           test ! -f "${PUBLIC_DIR}/.github/workflows/sync_public_main.yml"
-          test ! -f "${PUBLIC_DIR}/release_protection.yaml"
-          test ! -f "${PUBLIC_DIR}/src/bxi_example_py_elf3/config/release_protection.yaml"
+          test ! -d "${PUBLIC_DIR}/src/bxi_example_py_elf3/mods/com.bxi.back_flip"
+          test ! -d "${PUBLIC_DIR}/src/bxi_example_py_elf3/mods/com.bxi.ballet"
           test ! -f "${PUBLIC_DIR}/tools/sanitize_release.py"
 
       - name: Checkout Public Main
