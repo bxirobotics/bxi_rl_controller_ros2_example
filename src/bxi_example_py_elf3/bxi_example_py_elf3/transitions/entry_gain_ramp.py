@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Literal
+
+import numpy as np
+
+from bxi_example_py_elf3.utils.transition_core import (
+    ConfigReader,
+    FloatArray,
+    MotorFrame,
+    SingleClassTransition,
+    require_entry_frame_provider,
+)
+
+if TYPE_CHECKING:
+    from bxi_example_py_elf3.bxi_example_demo import BxiExample
+    from bxi_example_py_elf3.utils.state_machine import StateBehavior
+
+
+GainStart = Literal["current", "zero", "target"]
+
+
+class EntryGainRampTransition(SingleClassTransition):
+    type_name = "entry_gain_ramp"
+
+    def __init__(
+        self,
+        name: str,
+        duration: float,
+        kp_from: GainStart,
+        kd_from: GainStart,
+    ):
+        super().__init__(name, duration)
+        self._kp_from = kp_from
+        self._kd_from = kd_from
+        self._target: MotorFrame | None = None
+        self._kp_start: FloatArray | None = None
+        self._kd_start: FloatArray | None = None
+
+    @classmethod
+    def from_config(
+        cls,
+        name: str,
+        raw: Mapping[str, object],
+    ) -> "EntryGainRampTransition":
+        reader = ConfigReader(raw, name)
+        duration = reader.float("duration", minimum=0.0)
+        kp_from = reader.literal(
+            "kp_from",
+            ("current", "zero", "target"),
+            default="current",
+        )
+        kd_from = reader.literal(
+            "kd_from",
+            ("current", "zero", "target"),
+            default="target",
+        )
+        reader.finish()
+        return cls(name, duration, kp_from, kd_from)
+
+    def validate_states(
+        self,
+        from_state: "StateBehavior[BxiExample]",
+        to_state: "StateBehavior[BxiExample]",
+    ) -> None:
+        require_entry_frame_provider(to_state)
+
+    def on_start(
+        self,
+        ctx: "BxiExample",
+        from_state: "StateBehavior[BxiExample]",
+        to_state: "StateBehavior[BxiExample]",
+    ) -> None:
+        target = require_entry_frame_provider(to_state).get_entry_frame(ctx)
+        self._target = target
+        self._kp_start = self._gain_start(self._kp_from, target.kp, ctx.kp_last)
+        self._kd_start = self._gain_start(self._kd_from, target.kd, ctx.kd_last)
+
+    def apply(self, ctx: "BxiExample", dt: float, progress: float) -> None:
+        target = self._target
+        kp_start = self._kp_start
+        kd_start = self._kd_start
+        if target is None or kp_start is None or kd_start is None:
+            raise RuntimeError("entry gain ramp transition has not started")
+        kp = kp_start + (target.kp - kp_start) * progress
+        kd = kd_start + (target.kd - kd_start) * progress
+        ctx.set_motor_target(target.qpos, kp, kd)
+
+    def config_snapshot(self) -> dict[str, object]:
+        return {
+            "kp_from": self._kp_from,
+            "kd_from": self._kd_from,
+        }
+
+    @staticmethod
+    def _gain_start(
+        mode: GainStart,
+        target: FloatArray,
+        current: object,
+    ) -> FloatArray:
+        if mode == "target":
+            return target.copy()
+        if mode == "zero":
+            return np.zeros_like(target)
+        current_array = np.asarray(current, dtype=np.float32)
+        if current_array.shape != target.shape:
+            raise ValueError(
+                f"current gain shape {current_array.shape} does not match "
+                f"target {target.shape}"
+            )
+        return current_array.copy()

@@ -1,75 +1,111 @@
-from dataclasses import dataclass, field
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 import os
-from typing import Any, Callable, Dict, Generic, Iterable, List, Optional, Set, Tuple, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar, cast
 
 import yaml
 
+from bxi_example_py_elf3.utils.transition_core import (
+    TransitionPlan,
+    TransitionSession,
+    TransitionSpec,
+    compile_transition,
+)
+
+if TYPE_CHECKING:
+    from bxi_example_py_elf3.bxi_example_demo import BxiExample
+
 
 CtxT = TypeVar("CtxT")
+ConfigMap = dict[str, object]
 
 
-def load_state_machine_config(path: str) -> Dict:
+def load_state_machine_config(path: str) -> ConfigMap:
     with open(path, "r", encoding="utf-8") as config_file:
-        data = yaml.safe_load(config_file) or {}
+        data: object = yaml.safe_load(config_file) or {}
     if not isinstance(data, dict):
         raise ValueError(f"state machine config must be a YAML map: {path}")
-    return data
+    return cast(ConfigMap, data)
 
 
 class RemoteEventAdapter:
-    """Converts legacy MotionCommands btn_N fields to named edge events."""
+    """Converts MotionCommands fields to named edge events."""
 
     def __init__(
         self,
-        event_slots: Dict[str, Any],
-        initial_values: Optional[Dict[str, int]] = None,
-    ):
+        event_slots: Mapping[str, object],
+        initial_values: Mapping[str, int] | None = None,
+    ) -> None:
         self._event_slots = dict(event_slots)
-        self._last_values: Dict[str, int] = {
-            event_name: 0 for event_name in self._event_slots
-        }
+        self._last_values = {name: 0 for name in self._event_slots}
         if initial_values:
-            for event_name, value in initial_values.items():
-                if event_name in self._last_values:
-                    self._last_values[event_name] = int(value)
+            self._last_values.update(
+                {
+                    name: int(value)
+                    for name, value in initial_values.items()
+                    if name in self._last_values
+                }
+            )
 
-    def extract_events(self, msg, sync_only: bool = False) -> List[str]:
-        events: List[str] = []
+    def extract_events(self, msg: object, sync_only: bool = False) -> list[str]:
+        events: list[str] = []
         for event_name, slot_config in self._event_slots.items():
-            if isinstance(slot_config, dict):
+            if isinstance(slot_config, Mapping):
                 slot_name = slot_config.get("slot")
                 expected_value = slot_config.get("value")
             else:
                 slot_name = slot_config
                 expected_value = None
-
+            if not isinstance(slot_name, str):
+                raise ValueError(
+                    f"remote event '{event_name}' must define a string slot"
+                )
             value = int(getattr(msg, slot_name, 0))
             previous = self._last_values.get(event_name, 0)
             self._last_values[event_name] = value
             if sync_only:
                 continue
-
             if expected_value is None and value != previous:
                 events.append(event_name)
-            elif expected_value is not None and value == int(expected_value) and value != previous:
+            elif (
+                expected_value is not None
+                and value == int(expected_value)
+                and value != previous
+            ):
                 events.append(event_name)
         return events
 
 
 class StateBehavior(Generic[CtxT]):
-    """Base class for user-defined robot states."""
+    """Small, transition-agnostic base class for user-defined states."""
 
     def __init__(self, name: str, state_id: int):
         self.name = name
         self.state_id = state_id
-        self.manifest = {
-            'label': 'Unknown',
-            'index': '0',
-            'group': 'Base',
-            'icon': 'warning',
-            'confirm': 'false',
-            'confirm_message': ''
+        self.manifest: dict[str, object] = {
+            "label": "Unknown",
+            "index": "0",
+            "group": "Base",
+            "icon": "warning",
+            "confirm": False,
+            "confirm_message": "",
         }
+
+    def on_bind(self, ctx: CtxT) -> None:
+        pass
+
+    def on_prepare(self, ctx: CtxT, from_state: StateBehavior[CtxT]) -> None:
+        pass
+
+    def on_prepare_cancel(
+        self,
+        ctx: CtxT,
+        from_state: StateBehavior[CtxT],
+    ) -> None:
+        """Release resources when a prepared transition is cancelled."""
+        pass
 
     def on_enter(self, ctx: CtxT) -> None:
         pass
@@ -80,82 +116,24 @@ class StateBehavior(Generic[CtxT]):
     def on_exit(self, ctx: CtxT) -> None:
         pass
 
-    def on_prepare_enter(
-        self,
-        ctx: CtxT,
-        from_state: "StateBehavior[CtxT]",
-        transition: "TransitionProfile",
-    ) -> None:
-        pass
-
-    def on_exit_transition(
-        self,
-        ctx: CtxT,
-        to_state: "StateBehavior[CtxT]",
-        progress: float,
-        transition: "TransitionProfile",
-    ) -> None:
-        pass
-
-    def on_enter_transition(
-        self,
-        ctx: CtxT,
-        from_state: "StateBehavior[CtxT]",
-        progress: float,
-        transition: "TransitionProfile",
-    ) -> None:
-        pass
-
-    def on_transition_commit(
-        self,
-        ctx: CtxT,
-        from_state: "StateBehavior[CtxT]",
-        transition: "TransitionProfile",
-    ) -> None:
-        self.on_enter(ctx)
-
     def on_action(self, ctx: CtxT, action_name: str) -> bool:
         return False
 
 
 @dataclass(frozen=True)
-class TransitionProfile:
+class ResolvedTransition:
     name: str
-    duration: float = 0.0
-    exit_duration: Optional[float] = None
-    enter_duration: Optional[float] = None
-    exit_behavior: str = "hold_last_motor"
-    enter_behavior: str = "none"
-    data: Dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        exit_duration = self.duration if self.exit_duration is None else self.exit_duration
-        enter_duration = self.duration if self.enter_duration is None else self.enter_duration
-        duration = max(float(self.duration), float(exit_duration), float(enter_duration))
-        data = self._copy_data(self.data)
-        object.__setattr__(self, "duration", duration)
-        object.__setattr__(self, "exit_duration", float(exit_duration))
-        object.__setattr__(self, "enter_duration", float(enter_duration))
-        object.__setattr__(self, "data", data)
-
-    @staticmethod
-    def _copy_data(value: object) -> Dict[str, Any]:
-        if value is None:
-            return {}
-        if not isinstance(value, dict):
-            raise ValueError(f"transition data must be a YAML map: {value}")
-        return dict(value)
+    plan: TransitionPlan
 
 
 @dataclass(frozen=True)
 class TransitionRule:
-    to_state: Optional[str] = None
-    event: Optional[str] = None
-    after: Optional[float] = None
+    to_state: str | None = None
+    event: str | None = None
+    after: float | None = None
     delay: float = 0.0
-    action: Optional[str] = None
-    transition: str = "instant"
-    profile: Optional[TransitionProfile] = None
+    action: str | None = None
+    transition: ResolvedTransition | None = None
 
 
 @dataclass
@@ -166,12 +144,12 @@ class PendingTransition:
 
 
 @dataclass
-class ActiveTransition(Generic[CtxT]):
-    from_state: StateBehavior[CtxT]
-    to_state: StateBehavior[CtxT]
-    profile: TransitionProfile
+class ActiveTransition:
+    from_state: StateBehavior[BxiExample]
+    to_state: StateBehavior[BxiExample]
+    transition: ResolvedTransition
+    session: TransitionSession
     trigger: str
-    elapsed: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -180,37 +158,46 @@ class GraphDiagnostic:
     message: str
 
 
-class RobotStateMachine(Generic[CtxT]):
-    """Unity-style state machine with user-defined StateBehavior classes."""
-
+class RobotStateMachine:
     def __init__(
         self,
-        ctx: CtxT,
-        config: Dict,
-        states: Dict[str, StateBehavior[CtxT]],
-        action_handlers: Optional[Dict[str, Callable[[], None]]] = None,
-    ):
-        self._ctx: CtxT = ctx
-        self._config = config
+        ctx: BxiExample,
+        config: Mapping[str, object],
+        states: Mapping[str, StateBehavior[BxiExample]],
+        action_handlers: Mapping[str, Callable[[], None]] | None = None,
+    ) -> None:
+        self._ctx = ctx
+        self._config = dict(config)
         self._states = dict(states)
-        self._actions = action_handlers or {}
-        self._profiles = self._parse_profiles(config.get("transition_profiles", {}))
-        self._rules = self._parse_state_rules(config.get("states", {}))
+        self._actions = dict(action_handlers or {})
+        self._profile_configs = self._parse_profile_configs(
+            self._mapping(config.get("transition_profiles"), "transition_profiles")
+        )
+        self._profiles = {
+            name: self._compile_profile(name, raw)
+            for name, raw in self._profile_configs.items()
+        }
+        self._default_transition = self._read_default_transition(config)
+        self._rules = self._parse_state_rules(
+            self._mapping(config.get("states"), "states")
+        )
 
-        initial_state_name = config.get("initial_state")
-        if initial_state_name is None:
-            initial_state_name = next(iter(self._states))
-        if initial_state_name not in self._states:
-            raise ValueError(f"unknown initial_state in state machine config: {initial_state_name}")
+        raw_initial = config.get("initial_state")
+        initial = (
+            str(raw_initial) if raw_initial is not None else next(iter(self._states))
+        )
+        if initial not in self._states:
+            raise ValueError(
+                f"unknown initial_state in state machine config: {initial}"
+            )
 
-        self._run_graph_checks(initial_state_name)
-        self._export_graph_from_config(initial_state_name)
-
-        self.current = self._states[initial_state_name]
+        self._run_graph_checks(initial)
+        self._export_graph_from_config(initial)
+        self.current = self._states[initial]
         self.state_elapsed = 0.0
-        self._pending: Optional[PendingTransition] = None
-        self._active: Optional[ActiveTransition[CtxT]] = None
-        self._fired_after_rules = set()
+        self._pending: PendingTransition | None = None
+        self._active: ActiveTransition | None = None
+        self._fired_after_rules: set[tuple[str, int]] = set()
         self.current.on_enter(self._ctx)
 
     @property
@@ -225,47 +212,27 @@ class RobotStateMachine(Generic[CtxT]):
     def in_transition(self) -> bool:
         return self._active is not None
 
-    def snapshot(self, include_graph: bool = False) -> Dict[str, object]:
-        data: Dict[str, object] = {
-            "mode": self._runtime_mode(),
-            "current": {
-                "name": self.current.name,
-                "id": self.current.state_id,
-                "elapsed": float(self.state_elapsed),
-            },
-            "in_transition": self._active is not None,
-            "transition": self._active_snapshot(),
-            "pending": self._pending_snapshot(),
-        }
-        if include_graph:
-            data["graph"] = self._graph_snapshot()
-        return data
-
     def update(self, dt: float, events: Iterable[str]) -> bool:
         if self._active is not None:
-            self._update_active_transition(dt)
+            self._handle_events(events)
+            if self._active is not None:
+                self._update_active_transition(dt)
             return True
-
         self._handle_events(events)
-
         if self._pending is not None:
             self._pending.elapsed += dt
             if self._pending.elapsed >= self._pending.rule.delay:
                 pending = self._pending
                 self._pending = None
                 self._begin_transition(pending.rule, pending.trigger)
-
         if self._active is not None:
             self._update_active_transition(dt)
             return True
-
         self.state_elapsed += dt
         self._handle_after_rules()
-
         if self._active is not None:
             self._update_active_transition(0.0)
             return True
-
         return False
 
     def update_current_state(self, dt: float) -> None:
@@ -276,43 +243,53 @@ class RobotStateMachine(Generic[CtxT]):
         self,
         to_state: str,
         trigger: str = "code",
-        transition: Any = "instant",
+        transition: TransitionSpec = None,
         delay: float = 0.0,
     ) -> None:
-        transition_name, profile = self._parse_transition_spec(
-            transition,
-            {},
-            f"request:{trigger}:{to_state}",
-        )
+        if delay < 0.0:
+            raise ValueError("transition delay must be >= 0")
+        resolved = self._resolve_transition(transition, f"request:{trigger}:{to_state}")
         rule = TransitionRule(
             to_state=to_state,
             delay=delay,
-            transition=transition_name,
-            profile=profile,
+            transition=resolved,
         )
         if delay > 0.0:
-            self._pending = PendingTransition(rule=rule, trigger=trigger)
+            self._cancel_active_transition()
+            self._pending = PendingTransition(rule, trigger)
         else:
             self._begin_transition(rule, trigger)
 
+    def snapshot(self, include_graph: bool = False) -> dict[str, object]:
+        result: dict[str, object] = {
+            "mode": self._runtime_mode(),
+            "current": {
+                "name": self.current.name,
+                "id": self.current.state_id,
+                "elapsed": self.state_elapsed,
+            },
+            "in_transition": self.in_transition,
+            "transition": self._active_snapshot(),
+            "pending": self._pending_snapshot(),
+        }
+        if include_graph:
+            result["graph"] = self._graph_snapshot()
+        return result
+
     def _handle_events(self, events: Iterable[str]) -> None:
         event_set = set(events)
-        if not event_set:
-            return
-
         for rule in self._rules.get(self.current.name, []):
             if rule.event not in event_set:
                 continue
-
-            if rule.action and not rule.to_state:
+            if rule.action:
                 self._run_action(rule.action)
-                continue
-
-            if rule.delay > 0.0:
-                self._pending = PendingTransition(rule=rule, trigger=rule.event or "")
+            if not rule.to_state:
                 return
-
-            self._begin_transition(rule, rule.event or "")
+            if rule.delay > 0.0:
+                self._cancel_active_transition()
+                self._pending = PendingTransition(rule, rule.event or "")
+            else:
+                self._begin_transition(rule, rule.event or "")
             return
 
     def _handle_after_rules(self) -> None:
@@ -320,16 +297,13 @@ class RobotStateMachine(Generic[CtxT]):
             if rule.after is None:
                 continue
             key = (self.current.name, index)
-            if key in self._fired_after_rules:
+            if key in self._fired_after_rules or self.state_elapsed < rule.after:
                 continue
-            if self.state_elapsed < rule.after:
-                continue
-
             self._fired_after_rules.add(key)
-            if rule.action and not rule.to_state:
+            if rule.action:
                 self._run_action(rule.action)
-                continue
-            self._begin_transition(rule, f"after:{rule.after}")
+            if rule.to_state:
+                self._begin_transition(rule, f"after:{rule.after}")
             return
 
     def _begin_transition(self, rule: TransitionRule, trigger: str) -> None:
@@ -340,467 +314,346 @@ class RobotStateMachine(Generic[CtxT]):
         if rule.to_state not in self._states:
             raise ValueError(f"unknown transition target: {rule.to_state}")
         if rule.to_state == self.current.name:
+            if self._active is not None:
+                self._cancel_active_transition()
             return
-
+        self._cancel_active_transition()
+        transition = rule.transition or self._default_transition
         to_state = self._states[rule.to_state]
-        profile = rule.profile or self._profiles.get(rule.transition, self._profiles["instant"])
-
-        print(f"switch {self.current.name} -> {to_state.name} via {profile.name} ({trigger})")
-        self.current.on_exit(self._ctx)
-        to_state.on_prepare_enter(self._ctx, self.current, profile)
-
+        transition.plan.validate_states(self.current, to_state)
+        print(
+            f"switch {self.current.name} -> {to_state.name} "
+            f"via {transition.name} ({trigger})"
+        )
+        to_state.on_prepare(self._ctx, self.current)
+        try:
+            session = transition.plan.create_session(self._ctx, self.current, to_state)
+        except Exception:
+            to_state.on_prepare_cancel(self._ctx, self.current)
+            raise
         self._active = ActiveTransition(
             from_state=self.current,
             to_state=to_state,
-            profile=profile,
+            transition=transition,
+            session=session,
             trigger=trigger,
         )
-
-        if profile.duration <= 0.0:
+        if session.duration <= 0.0:
+            try:
+                session.update(self._ctx, 0.0)
+            except Exception:
+                self._cancel_active_transition()
+                raise
             self._finish_active_transition()
 
     def _update_active_transition(self, dt: float) -> None:
-        if self._active is None:
+        active = self._active
+        if active is None:
             return
-
-        self._active.elapsed += dt
-        profile = self._active.profile
-        progress = self._progress(self._active.elapsed, profile.duration)
-        exit_progress = self._progress(self._active.elapsed, float(profile.exit_duration or 0.0))
-        enter_progress = self._progress(self._active.elapsed, float(profile.enter_duration or 0.0))
-
-        self._active.from_state.on_exit_transition(
-            self._ctx,
-            self._active.to_state,
-            exit_progress,
-            profile,
-        )
-        self._active.to_state.on_enter_transition(
-            self._ctx,
-            self._active.from_state,
-            enter_progress,
-            profile,
-        )
-
-        if progress >= 1.0:
+        try:
+            finished = active.session.update(self._ctx, dt)
+        except Exception:
+            self._cancel_active_transition()
+            raise
+        if finished:
             self._finish_active_transition()
 
-    def _progress(self, elapsed: float, duration: float) -> float:
-        if duration <= 0.0:
-            return 1.0
-        return min(float(elapsed) / duration, 1.0)
+    def _cancel_active_transition(self) -> None:
+        active = self._active
+        if active is None:
+            return
+        self._active = None
+        active.to_state.on_prepare_cancel(self._ctx, active.from_state)
 
     def _finish_active_transition(self) -> None:
-        if self._active is None:
-            return
-
         active = self._active
+        if active is None:
+            return
+        active.from_state.on_exit(self._ctx)
         self.current = active.to_state
         self.state_elapsed = 0.0
         self._pending = None
         self._active = None
         self._fired_after_rules.clear()
-        self.current.on_transition_commit(self._ctx, active.from_state, active.profile)
+        self.current.on_enter(self._ctx)
 
     def _run_action(self, action_name: str) -> None:
         handler = self._actions.get(action_name)
         if handler is not None:
             handler()
-            return
+        elif not self.current.on_action(self._ctx, action_name):
+            raise ValueError(f"state machine action has no handler: {action_name}")
 
-        if self.current.on_action(self._ctx, action_name):
-            return
-
-        raise ValueError(f"state machine action has no handler: {action_name}")
-
-    def _runtime_mode(self) -> str:
-        if self._active is not None:
-            return "transition"
-        if self._pending is not None:
-            return "pending"
-        return "state"
-
-    def _active_snapshot(self) -> Optional[Dict[str, object]]:
-        if self._active is None:
-            return None
-
-        profile = self._active.profile
-        duration = float(profile.duration)
-        progress = self._progress(float(self._active.elapsed), duration)
-        exit_duration = float(profile.exit_duration or 0.0)
-        enter_duration = float(profile.enter_duration or 0.0)
-
-        return {
-            "from": {
-                "name": self._active.from_state.name,
-                "id": self._active.from_state.state_id,
-            },
-            "to": {
-                "name": self._active.to_state.name,
-                "id": self._active.to_state.state_id,
-            },
-            "profile": profile.name,
-            "trigger": self._active.trigger,
-            "elapsed": float(self._active.elapsed),
-            "duration": duration,
-            "progress": progress,
-            "exit_duration": exit_duration,
-            "exit_progress": self._progress(float(self._active.elapsed), exit_duration),
-            "exit_behavior": profile.exit_behavior,
-            "enter_duration": enter_duration,
-            "enter_progress": self._progress(float(self._active.elapsed), enter_duration),
-            "enter_behavior": profile.enter_behavior,
-            "data": dict(profile.data),
-        }
-
-    def _pending_snapshot(self) -> Optional[Dict[str, object]]:
-        if self._pending is None:
-            return None
-
-        delay = float(self._pending.rule.delay)
-        if delay <= 0.0:
-            progress = 1.0
-        else:
-            progress = min(float(self._pending.elapsed) / delay, 1.0)
-
-        return {
-            "to": self._pending.rule.to_state,
-            "event": self._pending.rule.event,
-            "after": self._pending.rule.after,
-            "trigger": self._pending.trigger,
-            "elapsed": float(self._pending.elapsed),
-            "delay": delay,
-            "progress": progress,
-            "action": self._pending.rule.action,
-            "transition": self._pending.rule.transition,
-        }
-
-    def _graph_snapshot(self) -> Dict[str, object]:
-        return {
-            "states": [
-                {
-                    "name": state.name,
-                    "id": state.state_id,
-                    "behavior": state.__class__.__name__,
-                    **state.manifest
-                }
-                for state in self._states.values()
-            ],
-            "transition_profiles": {
-                name: self._profile_snapshot(profile)
-                for name, profile in self._profiles.items()
-            },
-            "remote_events": dict(self._config.get("remote_events", {}) or {}),
-            "transitions": [
-                {
-                    "from": from_state,
-                    "to": to_state,
-                    "label": label,
-                    "event": rule.event,
-                    "after": rule.after,
-                    "delay": float(rule.delay),
-                    "action": rule.action,
-                    "transition": rule.transition,
-                    "transition_profile": self._profile_snapshot(self._rule_profile(rule)),
-                }
-                for from_state, to_state, label, rule in self._graph_edges()
-            ],
-        }
-
-    def _profile_snapshot(self, profile: TransitionProfile) -> Dict[str, object]:
-        return {
-            "name": profile.name,
-            "duration": float(profile.duration),
-            "exit_duration": float(profile.exit_duration or 0.0),
-            "enter_duration": float(profile.enter_duration or 0.0),
-            "exit_behavior": profile.exit_behavior,
-            "enter_behavior": profile.enter_behavior,
-            "data": dict(profile.data),
-        }
-
-    def _rule_profile(self, rule: TransitionRule) -> TransitionProfile:
-        return rule.profile or self._profiles.get(rule.transition, self._profiles["instant"])
-
-    def _parse_profiles(self, raw_profiles: Dict) -> Dict[str, TransitionProfile]:
-        profiles = {
-            "instant": TransitionProfile(name="instant", duration=0.0),
-        }
-
-        for name, raw_profile in raw_profiles.items():
-            profiles[name] = self._build_transition_profile(name, raw_profile or {}, profiles["instant"])
-
+    def _parse_profile_configs(
+        self, raw_profiles: Mapping[str, object]
+    ) -> dict[str, Mapping[str, object]]:
+        profiles: dict[str, Mapping[str, object]] = {}
+        for name, raw in raw_profiles.items():
+            profiles[name] = self._mapping(raw, f"transition_profiles.{name}")
         return profiles
 
-    def _build_transition_profile(
-        self,
-        name: str,
-        raw_profile: Dict[str, object],
-        base: TransitionProfile,
-    ) -> TransitionProfile:
-        has_duration = "duration" in raw_profile
-        has_side_duration = "exit_duration" in raw_profile or "enter_duration" in raw_profile
-        if has_duration:
-            duration = float(raw_profile.get("duration") or 0.0)
-        elif has_side_duration:
-            duration = 0.0
+    def _read_default_transition(
+        self, config: Mapping[str, object]
+    ) -> ResolvedTransition:
+        profile_name = config.get("default_transition")
+        if not isinstance(profile_name, str) or not profile_name:
+            raise ValueError("state machine config must define default_transition")
+        profile = self._profiles.get(profile_name)
+        if profile is None:
+            raise ValueError(
+                "default_transition references unknown profile " f"'{profile_name}'"
+            )
+        return profile
+
+    def _compile_profile(
+        self, name: str, raw: Mapping[str, object]
+    ) -> ResolvedTransition:
+        return ResolvedTransition(name=name, plan=compile_transition(name, raw))
+
+    def _resolve_transition(
+        self, spec: TransitionSpec, context: str
+    ) -> ResolvedTransition:
+        if spec is None:
+            return self._default_transition
+        if isinstance(spec, str):
+            profile = self._profiles.get(spec)
+            if profile is None:
+                raise ValueError(
+                    f"transition '{context}' references unknown profile '{spec}'"
+                )
+            return profile
+        raw = dict(self._mapping(spec, context))
+        base_name = raw.pop("profile", None)
+        if base_name is None:
+            merged: dict[str, object] = {}
         else:
-            duration = float(base.duration or 0.0)
-        exit_duration = self._optional_float(raw_profile.get("exit_duration"))
-        enter_duration = self._optional_float(raw_profile.get("enter_duration"))
-        if exit_duration is None:
-            exit_duration = duration if has_duration else float(base.exit_duration or 0.0)
-        if enter_duration is None:
-            enter_duration = duration if has_duration else float(base.enter_duration or 0.0)
-        data = self._merge_transition_data(base.data, raw_profile.get("data"))
+            if not isinstance(base_name, str) or base_name not in self._profile_configs:
+                raise ValueError(
+                    f"transition '{context}' references unknown profile '{base_name}'"
+                )
+            merged = dict(self._profile_configs[base_name])
+        merged.update(raw)
+        name = f"inline:{context}"
+        return self._compile_profile(name, merged)
 
-        return TransitionProfile(
-            name=name,
-            duration=duration,
-            exit_duration=exit_duration,
-            enter_duration=enter_duration,
-            exit_behavior=raw_profile.get("exit_behavior", base.exit_behavior),
-            enter_behavior=raw_profile.get("enter_behavior", base.enter_behavior),
-            data=data,
-        )
-
-    def _optional_float(self, value: object) -> Optional[float]:
-        if value is None:
-            return None
-        return float(value)
-
-    def _merge_transition_data(
-        self,
-        base_data: Dict[str, Any],
-        raw_data: object,
-    ) -> Dict[str, Any]:
-        data = dict(base_data or {})
-        if raw_data is None:
-            return data
-        if not isinstance(raw_data, dict):
-            raise ValueError(f"transition data must be a YAML map: {raw_data}")
-        data.update(raw_data)
-        return data
-
-    def _parse_state_rules(self, states_config: Dict) -> Dict[str, List[TransitionRule]]:
-        rules: Dict[str, List[TransitionRule]] = {}
-        for state_name, state_config in states_config.items():
+    def _parse_state_rules(
+        self, states_config: Mapping[str, object]
+    ) -> dict[str, list[TransitionRule]]:
+        result: dict[str, list[TransitionRule]] = {}
+        for state_name, raw_state in states_config.items():
             if state_name not in self._states:
                 raise ValueError(f"unknown state in state machine config: {state_name}")
+            state = self._mapping(raw_state, f"states.{state_name}")
+            transitions = self._mapping(
+                state.get("transitions"), f"states.{state_name}.transitions"
+            )
+            rules = self._parse_event_rules(
+                state_name,
+                self._mapping(
+                    transitions.get("on_event"),
+                    f"states.{state_name}.transitions.on_event",
+                ),
+            )
+            raw_after = transitions.get("after", [])
+            if not isinstance(raw_after, Sequence) or isinstance(
+                raw_after, (str, bytes)
+            ):
+                raise ValueError(
+                    f"states.{state_name}.transitions.after must be a list"
+                )
+            rules.extend(self._parse_after_rules(state_name, raw_after))
+            result[state_name] = rules
+        return result
 
-            transitions = (state_config or {}).get("transitions", {})
-            state_rules: List[TransitionRule] = []
-            state_rules.extend(self._parse_event_rules(state_name, transitions.get("on_event", {})))
-            state_rules.extend(self._parse_after_rules(state_name, transitions.get("after", [])))
-            rules[state_name] = state_rules
-
-        return rules
-
-    def _parse_event_rules(self, state_name: str, raw_rules: Dict) -> List[TransitionRule]:
-        rules: List[TransitionRule] = []
-        for event_name, raw_rule in raw_rules.items():
-            if isinstance(raw_rule, str):
-                rules.append(TransitionRule(to_state=raw_rule, event=event_name))
+    def _parse_event_rules(
+        self, state_name: str, raw_rules: Mapping[str, object]
+    ) -> list[TransitionRule]:
+        rules: list[TransitionRule] = []
+        for event, raw in raw_rules.items():
+            if isinstance(raw, str):
+                rules.append(
+                    TransitionRule(
+                        to_state=raw,
+                        event=event,
+                        transition=self._default_transition,
+                    )
+                )
                 continue
-
-            raw_rule = raw_rule or {}
-            transition, profile = self._parse_transition_spec(
-                raw_rule.get("transition", "instant"),
-                raw_rule,
-                f"{state_name}.{event_name}",
-            )
+            item = self._mapping(raw, f"{state_name}.{event}")
             rules.append(
                 TransitionRule(
-                    to_state=raw_rule.get("to"),
-                    event=event_name,
-                    delay=float(raw_rule.get("delay", 0.0) or 0.0),
-                    action=raw_rule.get("action"),
-                    transition=transition,
-                    profile=profile,
+                    to_state=self._optional_string(item.get("to")),
+                    event=event,
+                    delay=self._number(
+                        item.get("delay", 0.0),
+                        f"{state_name}.{event}.delay",
+                        minimum=0.0,
+                    ),
+                    action=self._optional_string(item.get("action")),
+                    transition=self._resolve_transition(
+                        item.get("transition"), f"{state_name}.{event}"
+                    ),
                 )
             )
         return rules
 
-    def _parse_after_rules(self, state_name: str, raw_rules: List[Dict]) -> List[TransitionRule]:
-        rules: List[TransitionRule] = []
-        for index, raw_rule in enumerate(raw_rules):
-            raw_rule = raw_rule or {}
-            seconds = raw_rule.get("seconds", raw_rule.get("after"))
-            transition, profile = self._parse_transition_spec(
-                raw_rule.get("transition", "instant"),
-                raw_rule,
-                f"{state_name}.after[{index}]",
-            )
+    def _parse_after_rules(
+        self, state_name: str, raw_rules: Sequence[object]
+    ) -> list[TransitionRule]:
+        rules: list[TransitionRule] = []
+        for index, raw in enumerate(raw_rules):
+            item = self._mapping(raw, f"{state_name}.after[{index}]")
+            seconds = item.get("seconds", item.get("after"))
             rules.append(
                 TransitionRule(
-                    to_state=raw_rule.get("to"),
-                    after=float(seconds),
-                    action=raw_rule.get("action"),
-                    transition=transition,
-                    profile=profile,
+                    to_state=self._optional_string(item.get("to")),
+                    after=self._number(
+                        seconds,
+                        f"{state_name}.after[{index}].seconds",
+                        minimum=0.0,
+                    ),
+                    action=self._optional_string(item.get("action")),
+                    transition=self._resolve_transition(
+                        item.get("transition"),
+                        f"{state_name}.after[{index}]",
+                    ),
                 )
             )
         return rules
 
-    def _parse_transition_spec(
-        self,
-        transition_spec: object,
-        raw_rule: Dict[str, object],
-        context: str,
-    ) -> Tuple[str, Optional[TransitionProfile]]:
-        profile_fields = {
-            "duration",
-            "exit_duration",
-            "enter_duration",
-            "exit_behavior",
-            "enter_behavior",
-            "data",
-        }
-        inline_overrides = {
-            key: raw_rule[key]
-            for key in profile_fields
-            if key in raw_rule
-        }
-
-        if isinstance(transition_spec, dict):
-            raw_profile = dict(transition_spec)
-            base_name = raw_profile.pop("profile", None)
-            if base_name is None:
-                base_name = raw_profile.pop("base", None)
-            if base_name is None:
-                base_name = raw_profile.pop("extends", "instant")
-            base_name = str(base_name)
-            base = self._profiles.get(base_name)
-            if base is None:
-                raise ValueError(f"transition '{context}' references unknown base profile '{base_name}'")
-            inline_name = str(raw_profile.pop("name", f"inline:{context}"))
-            merged_data = None
-            if "data" in raw_profile and "data" in inline_overrides:
-                merged_data = self._merge_transition_data(
-                    TransitionProfile._copy_data(raw_profile["data"]),
-                    inline_overrides["data"],
-                )
-            raw_profile.update(inline_overrides)
-            if merged_data is not None:
-                raw_profile["data"] = merged_data
-            return inline_name, self._build_transition_profile(inline_name, raw_profile, base)
-
-        transition_name = str(transition_spec or "instant")
-        if not inline_overrides:
-            return transition_name, None
-
-        base = self._profiles.get(transition_name)
-        if base is None:
-            raise ValueError(f"transition '{context}' references unknown profile '{transition_name}'")
-        inline_name = f"{transition_name}@{context}"
-        return inline_name, self._build_transition_profile(inline_name, inline_overrides, base)
-
-    def _graph_config(self) -> Dict:
-        graph_config = self._config.get("graph", {}) or {}
-        if graph_config is True:
-            return {"validate": True}
-        if not isinstance(graph_config, dict):
-            return {}
-        return graph_config
-
-    def _run_graph_checks(self, initial_state_name: str) -> None:
-        graph_config = self._graph_config()
-        if graph_config.get("validate", True) is False:
-            return
-
-        diagnostics = self.validate_graph(initial_state_name)
-        errors = [item for item in diagnostics if item.severity == "error"]
-        for item in diagnostics:
-            self._report_graph_diagnostic(item)
-        if errors:
-            messages = "; ".join(item.message for item in errors)
-            raise ValueError(f"state machine graph validation failed: {messages}")
-
-    def _report_graph_diagnostic(self, diagnostic: GraphDiagnostic) -> None:
-        logger = getattr(self._ctx, "get_logger", None)
-        if callable(logger):
-            ros_logger = logger()
-            if diagnostic.severity == "warning":
-                if hasattr(ros_logger, "warning"):
-                    ros_logger.warning(diagnostic.message)
-                else:
-                    ros_logger.warn(diagnostic.message)
-            else:
-                ros_logger.info(diagnostic.message)
-            return
-        print(f"{diagnostic.severity}: {diagnostic.message}")
-
-    def validate_graph(self, initial_state_name: str) -> List[GraphDiagnostic]:
-        diagnostics: List[GraphDiagnostic] = []
-        declared_events = set((self._config.get("remote_events", {}) or {}).keys())
-
+    def validate_graph(self, initial: str) -> list[GraphDiagnostic]:
+        diagnostics: list[GraphDiagnostic] = []
+        declared_events = set(
+            self._mapping(self._config.get("remote_events"), "remote_events")
+        )
         edges = self._graph_edges()
-        for from_state, to_state, label, rule in edges:
-            if to_state and to_state not in self._states:
-                diagnostics.append(GraphDiagnostic(
-                    "error",
-                    f"state '{from_state}' transition '{label}' targets unknown state '{to_state}'",
-                ))
-            if rule.profile is None and rule.transition not in self._profiles:
-                diagnostics.append(GraphDiagnostic(
-                    "error",
-                    f"state '{from_state}' transition '{label}' references unknown profile '{rule.transition}'",
-                ))
+        for from_name, to_name, label, rule in edges:
+            if not to_name and not rule.action:
+                diagnostics.append(
+                    GraphDiagnostic(
+                        "error",
+                        f"state '{from_name}' transition '{label}' must define "
+                        "either 'to' or 'action'",
+                    )
+                )
+            if to_name and to_name not in self._states:
+                diagnostics.append(
+                    GraphDiagnostic(
+                        "error",
+                        f"state '{from_name}' transition '{label}' targets "
+                        f"unknown state '{to_name}'",
+                    )
+                )
+                continue
+            if to_name and rule.transition:
+                try:
+                    rule.transition.plan.validate_states(
+                        self._states[from_name], self._states[to_name]
+                    )
+                except ValueError as exc:
+                    diagnostics.append(
+                        GraphDiagnostic(
+                            "error",
+                            f"invalid transition {from_name} -> {to_name} via "
+                            f"'{rule.transition.name}': {exc}",
+                        )
+                    )
             if rule.event and rule.event not in declared_events:
-                diagnostics.append(GraphDiagnostic(
-                    "warning",
-                    f"state '{from_state}' listens to undeclared remote event '{rule.event}'",
-                ))
-
-        reachable = self._reachable_states(initial_state_name, edges)
+                diagnostics.append(
+                    GraphDiagnostic(
+                        "warning",
+                        f"state '{from_name}' listens to undeclared remote "
+                        f"event '{rule.event}'",
+                    )
+                )
+        reachable = self._reachable_states(initial, edges)
         for state_name in self._states:
             if state_name not in reachable:
-                diagnostics.append(GraphDiagnostic("warning", f"state '{state_name}' is unreachable from '{initial_state_name}'"))
+                diagnostics.append(
+                    GraphDiagnostic(
+                        "warning",
+                        f"state '{state_name}' is unreachable from '{initial}'",
+                    )
+                )
             if not self._rules.get(state_name):
-                diagnostics.append(GraphDiagnostic("warning", f"state '{state_name}' has no configured outgoing transitions"))
-
+                diagnostics.append(
+                    GraphDiagnostic(
+                        "warning",
+                        f"state '{state_name}' has no configured outgoing transitions",
+                    )
+                )
         for cycle in self._after_transition_cycles():
-            diagnostics.append(GraphDiagnostic(
-                "warning",
-                "automatic after-transition cycle detected: " + " -> ".join(cycle),
-            ))
-
-        diagnostics.append(GraphDiagnostic(
-            "info",
-            f"state graph loaded: {len(self._states)} states, {len(edges)} transitions",
-        ))
+            diagnostics.append(
+                GraphDiagnostic(
+                    "warning",
+                    "automatic after-transition cycle detected: " + " -> ".join(cycle),
+                )
+            )
+        diagnostics.append(
+            GraphDiagnostic(
+                "info",
+                f"state graph loaded: {len(self._states)} states, "
+                f"{len(edges)} transitions",
+            )
+        )
         return diagnostics
 
-    def _graph_edges(self) -> List[Tuple[str, Optional[str], str, TransitionRule]]:
-        edges: List[Tuple[str, Optional[str], str, TransitionRule]] = []
-        for from_state, rules in self._rules.items():
+    def _run_graph_checks(self, initial: str) -> None:
+        graph = self._mapping(self._config.get("graph"), "graph")
+        if graph.get("validate", True) is False:
+            return
+        diagnostics = self.validate_graph(initial)
+        for diagnostic in diagnostics:
+            self._report_graph_diagnostic(diagnostic)
+        errors = [item.message for item in diagnostics if item.severity == "error"]
+        if errors:
+            raise ValueError(
+                "state machine graph validation failed: " + "; ".join(errors)
+            )
+
+    def _report_graph_diagnostic(self, diagnostic: GraphDiagnostic) -> None:
+        logger_factory = getattr(self._ctx, "get_logger", None)
+        if callable(logger_factory):
+            logger = logger_factory()
+            if diagnostic.severity == "warning":
+                logger.warning(diagnostic.message)
+            elif diagnostic.severity == "error":
+                logger.error(diagnostic.message)
+            else:
+                logger.info(diagnostic.message)
+        else:
+            print(f"{diagnostic.severity}: {diagnostic.message}")
+
+    def _graph_edges(self) -> list[tuple[str, str | None, str, TransitionRule]]:
+        edges: list[tuple[str, str | None, str, TransitionRule]] = []
+        for from_name, rules in self._rules.items():
             for rule in rules:
-                if rule.event:
-                    label = rule.event
-                elif rule.after is not None:
-                    label = f"after {rule.after:g}s"
-                elif rule.action:
-                    label = f"action {rule.action}"
-                else:
-                    label = "transition"
+                label = rule.event or (
+                    f"after {rule.after:g}s" if rule.after is not None else "transition"
+                )
                 if rule.action:
                     label += f" / {rule.action}"
-                if rule.transition != "instant":
-                    label += f" [{rule.transition}]"
-                edges.append((from_state, rule.to_state, label, rule))
+                transition_name = (
+                    rule.transition.name
+                    if rule.transition
+                    else self._default_transition.name
+                )
+                if transition_name != self._default_transition.name:
+                    label += f" [{transition_name}]"
+                edges.append((from_name, rule.to_state, label, rule))
         return edges
 
     def _reachable_states(
         self,
-        initial_state_name: str,
-        edges: List[Tuple[str, Optional[str], str, TransitionRule]],
-    ) -> Set[str]:
-        adjacency: Dict[str, List[str]] = {}
-        for from_state, to_state, _label, _rule in edges:
-            if to_state:
-                adjacency.setdefault(from_state, []).append(to_state)
-
-        reachable: Set[str] = set()
-        stack = [initial_state_name]
+        initial: str,
+        edges: Sequence[tuple[str, str | None, str, TransitionRule]],
+    ) -> set[str]:
+        adjacency: dict[str, list[str]] = {}
+        for source, target, _label, _rule in edges:
+            if target:
+                adjacency.setdefault(source, []).append(target)
+        reachable: set[str] = set()
+        stack = [initial]
         while stack:
             state = stack.pop()
             if state in reachable:
@@ -809,90 +662,185 @@ class RobotStateMachine(Generic[CtxT]):
             stack.extend(adjacency.get(state, []))
         return reachable
 
-    def _after_transition_cycles(self) -> List[List[str]]:
-        adjacency: Dict[str, List[str]] = {}
+    def _after_transition_cycles(self) -> list[list[str]]:
+        adjacency: dict[str, list[str]] = {}
         for from_state, rules in self._rules.items():
             for rule in rules:
                 if rule.after is not None and rule.to_state:
                     adjacency.setdefault(from_state, []).append(rule.to_state)
 
-        cycles: List[List[str]] = []
-        stack: List[str] = []
-        visiting: Set[str] = set()
-        visited: Set[str] = set()
+        cycles: list[list[str]] = []
+        stack: list[str] = []
+        visiting: set[str] = set()
+        visited: set[str] = set()
 
-        def dfs(state: str) -> None:
+        def visit(state: str) -> None:
             if state in visiting:
-                index = stack.index(state)
-                cycles.append(stack[index:] + [state])
+                cycle_start = stack.index(state)
+                cycles.append(stack[cycle_start:] + [state])
                 return
             if state in visited:
                 return
             visiting.add(state)
             stack.append(state)
             for target in adjacency.get(state, []):
-                dfs(target)
+                visit(target)
             stack.pop()
             visiting.remove(state)
             visited.add(state)
 
         for state_name in adjacency:
-            dfs(state_name)
+            visit(state_name)
         return cycles
 
-    def _export_graph_from_config(self, initial_state_name: str) -> None:
-        graph_config = self._graph_config()
-        export_config = graph_config.get("export", {}) or {}
-        if export_config is True:
-            export_config = {
-                "dot": "/tmp/elf3_state_machine.dot",
-                "mermaid": "/tmp/elf3_state_machine.mmd",
-            }
-        if not isinstance(export_config, dict):
-            return
+    def _graph_snapshot(self) -> dict[str, object]:
+        return {
+            "states": [
+                {
+                    "name": state.name,
+                    "id": state.state_id,
+                    "behavior": state.__class__.__name__,
+                    **state.manifest,
+                }
+                for state in self._states.values()
+            ],
+            "transition_profiles": {
+                name: transition.plan.snapshot()
+                for name, transition in self._profiles.items()
+            },
+            "remote_events": dict(
+                self._mapping(self._config.get("remote_events"), "remote_events")
+            ),
+            "transitions": [
+                {
+                    "from": source,
+                    "to": target,
+                    "label": label,
+                    "event": rule.event,
+                    "after": rule.after,
+                    "delay": rule.delay,
+                    "action": rule.action,
+                    "transition": rule.transition.name
+                    if rule.transition
+                    else self._default_transition.name,
+                    "transition_profile": (
+                        rule.transition.plan.snapshot()
+                        if rule.transition
+                        else self._default_transition.plan.snapshot()
+                    ),
+                }
+                for source, target, label, rule in self._graph_edges()
+            ],
+        }
 
-        dot_path = export_config.get("dot")
-        mermaid_path = export_config.get("mermaid")
-        if dot_path:
-            self.export_dot(dot_path, initial_state_name)
-            self._report_graph_diagnostic(GraphDiagnostic("info", f"state graph dot exported: {dot_path}"))
-        if mermaid_path:
-            self.export_mermaid(mermaid_path, initial_state_name)
-            self._report_graph_diagnostic(GraphDiagnostic("info", f"state graph mermaid exported: {mermaid_path}"))
+    def _active_snapshot(self) -> dict[str, object] | None:
+        active = self._active
+        if active is None:
+            return None
+        return {
+            "from": {"name": active.from_state.name, "id": active.from_state.state_id},
+            "to": {"name": active.to_state.name, "id": active.to_state.state_id},
+            "profile": active.transition.name,
+            "type": active.transition.plan.type_name,
+            "trigger": active.trigger,
+            "elapsed": active.session.elapsed,
+            "duration": active.session.duration,
+            "progress": active.session.progress,
+        }
 
-    def export_dot(self, path: str, initial_state_name: Optional[str] = None) -> None:
-        initial = initial_state_name or self.current_state_name
-        lines = [
-            "digraph RobotStateMachine {",
-            "  rankdir=LR;",
-            "  node [shape=box];",
-            f"  __start [shape=point];",
-            f"  __start -> \"{initial}\";",
-        ]
-        for state_name in self._states:
-            lines.append(f"  \"{state_name}\";")
-        for from_state, to_state, label, _rule in self._graph_edges():
-            if to_state:
-                lines.append(f"  \"{from_state}\" -> \"{to_state}\" [label=\"{label}\"];")
-            else:
-                lines.append(f"  \"{from_state}\" -> \"{from_state}\" [style=dashed, label=\"{label}\"];")
+    def _pending_snapshot(self) -> dict[str, object] | None:
+        pending = self._pending
+        if pending is None:
+            return None
+        progress = (
+            1.0
+            if pending.rule.delay <= 0
+            else min(pending.elapsed / pending.rule.delay, 1.0)
+        )
+        return {
+            "to": pending.rule.to_state,
+            "event": pending.rule.event,
+            "trigger": pending.trigger,
+            "elapsed": pending.elapsed,
+            "delay": pending.rule.delay,
+            "progress": progress,
+            "action": pending.rule.action,
+            "transition": pending.rule.transition.name
+            if pending.rule.transition
+            else self._default_transition.name,
+        }
+
+    def _runtime_mode(self) -> str:
+        if self._active is not None:
+            return "transition"
+        if self._pending is not None:
+            return "pending"
+        return "state"
+
+    def _export_graph_from_config(self, initial: str) -> None:
+        graph = self._mapping(self._config.get("graph"), "graph")
+        export = self._mapping(graph.get("export"), "graph.export")
+        dot_path = export.get("dot")
+        mermaid_path = export.get("mermaid")
+        if isinstance(dot_path, str) and dot_path:
+            self._write_graph_file(dot_path, self._to_dot(initial))
+        if isinstance(mermaid_path, str) and mermaid_path:
+            self._write_graph_file(mermaid_path, self._to_mermaid(initial))
+
+    def _to_dot(self, initial: str) -> str:
+        lines = ["digraph robot_state_machine {", "  rankdir=LR;"]
+        for name in self._states:
+            shape = "doublecircle" if name == initial else "ellipse"
+            lines.append(f'  "{name}" [shape={shape}];')
+        for source, target, label, _rule in self._graph_edges():
+            if target:
+                lines.append(f'  "{source}" -> "{target}" [label="{label}"];')
         lines.append("}")
-        self._write_text(path, "\n".join(lines) + "\n")
+        return "\n".join(lines) + "\n"
 
-    def export_mermaid(self, path: str, initial_state_name: Optional[str] = None) -> None:
-        initial = initial_state_name or self.current_state_name
-        lines = [
-            "stateDiagram-v2",
-            f"    [*] --> {initial}",
-        ]
-        for from_state, to_state, label, _rule in self._graph_edges():
-            target = to_state or from_state
-            lines.append(f"    {from_state} --> {target}: {label}")
-        self._write_text(path, "\n".join(lines) + "\n")
+    def _to_mermaid(self, initial: str) -> str:
+        lines = ["stateDiagram-v2", f"  [*] --> {initial}"]
+        for source, target, label, _rule in self._graph_edges():
+            if target:
+                lines.append(f"  {source} --> {target}: {label}")
+        return "\n".join(lines) + "\n"
 
-    def _write_text(self, path: str, text: str) -> None:
+    @staticmethod
+    def _write_graph_file(path: str, content: str) -> None:
         directory = os.path.dirname(path)
         if directory:
             os.makedirs(directory, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as output_file:
-            output_file.write(text)
+        with open(path, "w", encoding="utf-8") as output:
+            output.write(content)
+
+    @staticmethod
+    def _mapping(value: object, context: str) -> Mapping[str, object]:
+        if value is None:
+            return {}
+        if not isinstance(value, Mapping):
+            raise ValueError(f"{context} must be a map")
+        if not all(isinstance(key, str) for key in value):
+            raise ValueError(f"{context} keys must be strings")
+        return cast(Mapping[str, object], value)
+
+    @staticmethod
+    def _number(
+        value: object,
+        context: str,
+        *,
+        minimum: float | None = None,
+    ) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{context} must be a number")
+        result = float(value)
+        if minimum is not None and result < minimum:
+            raise ValueError(f"{context} must be >= {minimum}")
+        return result
+
+    @staticmethod
+    def _optional_string(value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError(f"expected string, got {value!r}")
+        return value

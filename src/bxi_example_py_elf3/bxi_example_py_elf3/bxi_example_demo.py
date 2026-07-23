@@ -32,6 +32,7 @@ from bxi_example_py_elf3.utils.state_machine import (
     load_state_machine_config,
 )
 from bxi_example_py_elf3.utils.robot_state_builder import build_robot_states
+from bxi_example_py_elf3.utils.transition_core import TransitionSpec
 import bxi_example_py_elf3.robot_states  # 加载 State 类，供 build_robot_states() 自动发现
 from bxi_example_py_elf3.utils.tfs import quaternion_to_euler_array
 
@@ -583,8 +584,12 @@ class BxiExample(HotReloadMixin, Node):
         )
 
     def request_state(
-        self, state_name, trigger="code", transition="instant", delay=0.0
-    ):
+        self,
+        state_name: str,
+        trigger: str = "code",
+        transition: TransitionSpec = None,
+        delay: float = 0.0,
+    ) -> None:
         self.state_machine.request_transition(
             state_name, trigger=trigger, transition=transition, delay=delay
         )
