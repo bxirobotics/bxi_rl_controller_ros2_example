@@ -1,7 +1,83 @@
 from setuptools import find_packages, setup
 import os
+from pathlib import Path
+import shutil
+
+try:
+    from setuptools._distutils.command.install_data import install_data
+except ImportError:
+    from distutils.command.install_data import install_data
+
+try:
+    from colcon_core.distutils.commands.symlink_data import symlink_data
+except ImportError:
+    symlink_data = None
 
 package_name = "bxi_example_py_elf3"
+
+
+class SyncInstalledModsMixin:
+    """Remove built-in Mods that no longer exist in the source tree."""
+
+    def run(self):
+        self._remove_stale_mods()
+        super().run()
+
+    def _remove_stale_mods(self):
+        source_root = Path(__file__).resolve().parent / "mods"
+        installed_root = (
+            Path(self.install_dir)
+            / "share"
+            / package_name
+            / "mods"
+        )
+
+        # A symlinked root already follows the source tree and must never be
+        # traversed for deletion: doing so could remove source files.
+        if installed_root.is_symlink() or not installed_root.is_dir():
+            return
+
+        source_mods = {
+            child.name
+            for child in source_root.iterdir()
+            if child.is_dir() and (child / "mod.yaml").is_file()
+        } if source_root.is_dir() else set()
+
+        for installed_mod in installed_root.iterdir():
+            if installed_mod.name in source_mods:
+                continue
+
+            # Only direct children that contain a Mod manifest are eligible.
+            # A broken manifest link is expected after deleting a Mod built
+            # with --symlink-install.
+            manifest = installed_mod / "mod.yaml"
+            if installed_mod.is_symlink() and manifest.is_file():
+                installed_mod.unlink()
+            elif installed_mod.is_dir() and (
+                manifest.is_file() or manifest.is_symlink()
+            ):
+                shutil.rmtree(installed_mod)
+            else:
+                continue
+
+            self.announce(
+                f"removing stale built-in Mod: {installed_mod}",
+                level=2,
+            )
+
+
+class SyncModInstallData(SyncInstalledModsMixin, install_data):
+    pass
+
+
+if symlink_data is not None:
+    class SyncModSymlinkData(SyncInstalledModsMixin, symlink_data):
+        pass
+
+
+command_classes = {"install_data": SyncModInstallData}
+if symlink_data is not None:
+    command_classes["symlink_data"] = SyncModSymlinkData
 
 
 def get_data_files():
@@ -116,6 +192,7 @@ setup(
     description="TODO: Package description",
     license="TODO: License declaration",
     tests_require=["pytest"],
+    cmdclass=command_classes,
     entry_points={
         "console_scripts": [
             "bxi_example_py_elf3_mjlab = bxi_example_py_elf3.bxi_example_mjlab:main",
