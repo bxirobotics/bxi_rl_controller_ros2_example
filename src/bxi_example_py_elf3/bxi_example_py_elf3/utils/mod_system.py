@@ -288,6 +288,7 @@ class _Requirement:
 class _DiscoveredMod:
     id: str
     version: str
+    enabled: bool
     root: Path
     manifest_path: Path
     manifest: Mapping[str, object]
@@ -351,6 +352,7 @@ class ModRuntime:
     state_factories: dict[str, StateFactory]
     resources: ResourceManager
     mods: tuple[LoadedMod, ...]
+    disabled_mods: tuple[LoadedMod, ...]
     watched_paths: tuple[Path, ...]
     _modules: tuple[ModuleType, ...] = field(repr=False)
     _module_prefixes: tuple[str, ...] = field(repr=False)
@@ -376,7 +378,17 @@ def load_mod_runtime(
     extra_roots: Sequence[Path] = (),
 ) -> ModRuntime:
     discovered = _discover_mods((built_in_root, *extra_roots))
-    ordered = _dependency_order(discovered)
+    enabled = {mod_id: mod for mod_id, mod in discovered.items() if mod.enabled}
+    disabled_ids = set(discovered) - set(enabled)
+    if not enabled:
+        raise ValueError("no enabled Mods found")
+    for mod in enabled.values():
+        for requirement in mod.requires:
+            if requirement.id in disabled_ids:
+                raise ValueError(
+                    f"Mod '{mod.id}' requires disabled Mod '{requirement.id}'"
+                )
+    ordered = _dependency_order(enabled)
     transition_plugins = snapshot_transition_plugins()
     python_exports = _prepare_python_exports(ordered)
     resources = ResourceManager()
@@ -399,7 +411,7 @@ def load_mod_runtime(
         raise
 
     watched: set[Path] = set()
-    for mod in ordered:
+    for mod in discovered.values():
         watched.update(path for path in mod.root.rglob("*") if path.is_file())
     loaded = tuple(
         LoadedMod(
@@ -411,12 +423,24 @@ def load_mod_runtime(
         )
         for mod in ordered
     )
+    disabled = tuple(
+        LoadedMod(
+            mod.id,
+            mod.version,
+            mod.root,
+            mod.manifest_path,
+            tuple(requirement.id for requirement in mod.requires),
+        )
+        for mod in discovered.values()
+        if not mod.enabled
+    )
     python_exports.commit()
     return ModRuntime(
         config=config,
         state_factories=factories,
         resources=resources,
         mods=loaded,
+        disabled_mods=disabled,
         watched_paths=tuple(sorted(watched)),
         _modules=tuple(loaded_modules),
         _module_prefixes=tuple(
@@ -450,6 +474,9 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
             api = manifest.get("api", 1)
             if api != 1:
                 raise ValueError(f"{manifest_path}: unsupported Mod API {api!r}")
+            enabled = manifest.get("enable", True)
+            if not isinstance(enabled, bool):
+                raise ValueError(f"{manifest_path}: 'enable' must be a boolean")
             requires = _read_requirements(manifest.get("requires"), manifest_path)
             previous = result.get(mod_id)
             if previous is not None:
@@ -459,6 +486,7 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
             result[mod_id] = _DiscoveredMod(
                 id=mod_id,
                 version=version,
+                enabled=enabled,
                 root=manifest_path.parent,
                 manifest_path=manifest_path,
                 manifest=manifest,

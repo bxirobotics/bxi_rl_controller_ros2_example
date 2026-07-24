@@ -23,6 +23,7 @@ class HotReloadMixin:
         )
         logger.info(
             f"{action} {len(runtime.mods)} Mods, "
+            f"{len(runtime.disabled_mods)} disabled, "
             f"{len(runtime.state_factories)} states, "
             f"{remote_event_count} remote events; input conflicts validated"
         )
@@ -31,6 +32,8 @@ class HotReloadMixin:
                 f"; requires={','.join(mod.requires)}" if mod.requires else ""
             )
             logger.info(f"Mod {mod.id}@{mod.version}: {mod.root}{dependencies}")
+        for mod in runtime.disabled_mods:
+            logger.info(f"Mod {mod.id}@{mod.version}: disabled; {mod.root}")
 
     def init_hot_reload(self) -> None:
         self.hot_reload_interval = 1.0

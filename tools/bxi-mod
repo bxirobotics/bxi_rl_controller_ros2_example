@@ -97,6 +97,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 print(
                     f"OK: {len(runtime.mods)} Mods, "
+                    f"{len(runtime.disabled_mods)} disabled, "
                     f"{len(runtime.state_factories)} states, "
                     f"{len(events)} events"
                 )
@@ -240,6 +241,10 @@ def _print_runtime(runtime: ModRuntime) -> None:
     for index, mod in enumerate(runtime.mods, 1):
         dependencies = ", ".join(mod.requires) if mod.requires else "-"
         print(f"  {index}. {mod.id} {mod.version} requires={dependencies}")
+    if runtime.disabled_mods:
+        print("Disabled Mods:")
+        for mod in runtime.disabled_mods:
+            print(f"  - {mod.id} {mod.version}")
     print("States (resolved UI indexes):")
     states = cast(Mapping[str, object], runtime.config["states"])
     for name, raw_state in states.items():
