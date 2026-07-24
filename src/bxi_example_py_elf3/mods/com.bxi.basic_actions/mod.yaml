@@ -16,7 +16,7 @@ events:
   toggle_pause: {slot: btn_9, value: 1}
   applause: {slot: btn_10, value: 5}
   hello: {slot: btn_10, value: 6}
-  lie_down: {slot: btn_10, value: 7}
+  lie_down: {slot: btn_10, value: 8}
 
 speed_profiles:
   normal:

@@ -89,6 +89,7 @@ sources:
       keyboard.forward_flip: {from: keyboard.key, key: "7"}
       keyboard.applause: {from: keyboard.key, key: "8"}
       keyboard.hello: {from: keyboard.key, key: "9"}
+      keyboard.normal_depth: {from: keyboard.key, key: "0"}
 
 #预设的一些，输入曲线
 curves:
@@ -298,6 +299,7 @@ controls:
   keyboard.forward_flip_event: {type: bool, inputs: [{source: keyboard.forward_flip}]}
   keyboard.applause_event: {type: bool, inputs: [{source: keyboard.applause}]}
   keyboard.hello_event: {type: bool, inputs: [{source: keyboard.hello}]}
+  keyboard.normal_depth_event: {type: bool, inputs: [{source: keyboard.normal_depth}]}
 
 #将统一的controls映射到输出
 outputs:
@@ -412,6 +414,12 @@ outputs:
       when:
         any:
           - [trigger.right_event, button.x_event]
+
+    - output: btn_10=8
+      when:
+        any:
+          - [trigger.right_event, button.y_event]
+          - [keyboard.normal_depth_event]
 
 #自定义命令
 system:
