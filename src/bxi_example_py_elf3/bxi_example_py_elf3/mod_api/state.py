@@ -1,22 +1,67 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
+from typing import Generic, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
 
-from bxi_example_py_elf3.utils.state_machine import StateBehavior
-from bxi_example_py_elf3.utils.transition_core import MotorFrame
-
-if TYPE_CHECKING:
-    from bxi_example_py_elf3.bxi_example_demo import BxiExample
-else:
-    BxiExample = Any
+from .context import RobotControlContext
+from .frame import MotorFrame
 
 
-class RobotControlState(StateBehavior[BxiExample], ABC):
-    """Base for robot states; transition-specific capabilities live in Protocols."""
+CtxT = TypeVar("CtxT")
+
+
+class StateBehavior(Generic[CtxT]):
+    """Transition-agnostic lifecycle shared by all user-defined states."""
+
+    def __init__(self, name: str, state_id: int):
+        self.name = name
+        self.state_id = state_id
+        self.manifest: dict[str, object] = {
+            "label": "Unknown",
+            "index": None,
+            "group": "Base",
+            "icon": "warning",
+            "confirm": False,
+            "confirm_message": "",
+        }
+
+    def on_bind(self, ctx: CtxT) -> None:
+        pass
+
+    def on_unbind(self, ctx: CtxT) -> None:
+        """Release subscriptions, timers, or other state-owned handles."""
+        pass
+
+    def on_prepare(self, ctx: CtxT, from_state: "StateBehavior[CtxT]") -> None:
+        pass
+
+    def on_prepare_cancel(
+        self,
+        ctx: CtxT,
+        from_state: "StateBehavior[CtxT]",
+    ) -> None:
+        """Release resources when a prepared transition is cancelled."""
+        pass
+
+    def on_enter(self, ctx: CtxT) -> None:
+        pass
+
+    def on_update(self, ctx: CtxT, dt: float) -> None:
+        pass
+
+    def on_exit(self, ctx: CtxT) -> None:
+        pass
+
+    def on_action(self, ctx: CtxT, action_name: str) -> bool:
+        return False
+
+
+class RobotControlState(StateBehavior[RobotControlContext], ABC):
+    """Main extensibility point for states that control the robot."""
 
     def __init__(self, name: str, state_id: int):
         super().__init__(name, state_id)
@@ -24,33 +69,33 @@ class RobotControlState(StateBehavior[BxiExample], ABC):
         self._missing_speed_profile_warned = False
         self._cmd_vel_buffer = np.zeros(3, dtype=np.float32)
 
-    def on_bind(self, ctx: BxiExample) -> None:
+    def on_bind(self, ctx: RobotControlContext) -> None:
         """Called once after construction and before the state machine starts."""
 
     @abstractmethod
-    def on_update(self, ctx: BxiExample, dt: float) -> None:
-        """Produce the state's normal runtime behavior and motor output."""
+    def on_update(self, ctx: RobotControlContext, dt: float) -> None:
+        """Produce normal runtime behavior and motor output."""
 
     def on_prepare(
         self,
-        ctx: BxiExample,
-        from_state: StateBehavior[BxiExample],
+        ctx: RobotControlContext,
+        from_state: StateBehavior[RobotControlContext],
     ) -> None:
-        """Prepare resources before a transition starts; do not emit motor output."""
+        """Prepare resources before a transition; do not emit motor output."""
 
     def on_prepare_cancel(
         self,
-        ctx: BxiExample,
-        from_state: StateBehavior[BxiExample],
+        ctx: RobotControlContext,
+        from_state: StateBehavior[RobotControlContext],
     ) -> None:
-        """Called if a transition is interrupted after this state was prepared."""
+        """Undo preparation if the transition is interrupted."""
 
-    def on_exit(self, ctx: BxiExample) -> None:
-        ctx.pos_last_state = ctx.qpos.copy()
+    def on_exit(self, ctx: RobotControlContext) -> None:
+        ctx.pos_last_state = ctx.qpos.copy()  # type: ignore[attr-defined]
         ctx.kp_last_state = ctx.kp_last.copy()
         ctx.kd_last_state = ctx.kd_last.copy()
 
-    def get_cmd_vel(self, ctx: BxiExample) -> NDArray[np.float32]:
+    def get_cmd_vel(self, ctx: RobotControlContext) -> NDArray[np.float32]:
         cmd_vel = self._profile_cmd_vel(ctx)
         processed_cmd_vel = self.process_cmd_vel(ctx, cmd_vel)
         if processed_cmd_vel is None:
@@ -59,20 +104,21 @@ class RobotControlState(StateBehavior[BxiExample], ABC):
 
     def process_cmd_vel(
         self,
-        ctx: BxiExample,
+        ctx: RobotControlContext,
         cmd_vel: NDArray[np.float32],
     ) -> NDArray[np.float32] | None:
         """Override to filter or otherwise transform the configured command."""
         return cmd_vel
 
-    def _profile_cmd_vel(self, ctx: BxiExample) -> NDArray[np.float32]:
+    def _profile_cmd_vel(self, ctx: RobotControlContext) -> NDArray[np.float32]:
         self._cmd_vel_buffer.fill(0.0)
         raw_cmd_vel = getattr(ctx, "current_raw_cmd_vel", None)
         if raw_cmd_vel is None or not self.speed_profile_name:
             return self._cmd_vel_buffer
 
-        profile = getattr(ctx, "speed_profiles", {}).get(self.speed_profile_name)
-        if profile is None:
+        profiles = getattr(ctx, "speed_profiles", {})
+        profile = profiles.get(self.speed_profile_name)
+        if not isinstance(profile, Mapping):
             if not self._missing_speed_profile_warned:
                 logger = getattr(ctx, "get_logger", None)
                 message = (
@@ -105,7 +151,7 @@ class RobotControlState(StateBehavior[BxiExample], ABC):
 
     def _publish_cmd_vel(
         self,
-        ctx: BxiExample,
+        ctx: RobotControlContext,
         cmd_vel: NDArray[np.float32],
     ) -> NDArray[np.float32]:
         self._cmd_vel_buffer[:] = np.asarray(cmd_vel, dtype=np.float32).reshape(3)
@@ -119,9 +165,9 @@ class RobotControlState(StateBehavior[BxiExample], ABC):
         return MotorFrame.create(qpos, kp, kd)
 
     @staticmethod
-    def _apply_frame(ctx: BxiExample, frame: MotorFrame | None) -> None:
+    def _apply_frame(ctx: RobotControlContext, frame: MotorFrame | None) -> None:
         if frame is not None:
             ctx.set_motor_target(frame.qpos, frame.kp, frame.kd)
 
 
-__all__ = ["RobotControlState"]
+__all__ = ["RobotControlState", "StateBehavior"]

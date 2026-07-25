@@ -1,256 +1,36 @@
+"""Internal Mod discovery, loading, configuration composition and resources."""
+
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import MISSING, dataclass, field, fields, is_dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 import importlib.util
 from pathlib import Path
 import re
 import sys
-from types import ModuleType, UnionType
-from typing import Generic, TypeVar, Union, cast, get_args, get_origin, get_type_hints
+from types import ModuleType
+from typing import cast
 
 import yaml
 
-from bxi_example_py_elf3.utils.robot_state_base import RobotControlState
-from bxi_example_py_elf3.utils.transition_core import (
+from bxi_example_py_elf3.mod_api.mod import (
+    ModDefinition,
+    ModLoadContext,
+    StateBuildContext,
+    StateFactory,
+)
+from bxi_example_py_elf3._runtime.resource_manager import ResourceManager
+from bxi_example_py_elf3.mod_api.state import RobotControlState
+from bxi_example_py_elf3._runtime.transition import (
+    register_transition_plugin,
     release_transition_plugins,
     restore_transition_plugins,
     snapshot_transition_plugins,
 )
 
 
-ResourceT = TypeVar("ResourceT")
-ParamT = TypeVar("ParamT")
-ParamsT = TypeVar("ParamsT")
-ResourceFactory = Callable[["ResourceLoadContext"], ResourceT]
-StateFactory = Callable[["StateBuildContext"], RobotControlState]
 ConfigMap = dict[str, object]
 _python_export_owners: dict[str, str] = {}
-
-
-@dataclass(frozen=True)
-class ResourceKey(Generic[ResourceT]):
-    """A statically typed, globally unique resource identity."""
-
-    id: str
-
-    def __post_init__(self) -> None:
-        if not self.id or "/" not in self.id:
-            raise ValueError(f"resource id must be namespaced: {self.id!r}")
-
-
-@dataclass(frozen=True)
-class ResourceLoadContext:
-    mod_id: str
-    mod_root: Path
-
-    def asset(self, relative_path: str) -> Path:
-        path = (self.mod_root / relative_path).resolve()
-        assets_root = (self.mod_root / "assets").resolve()
-        if assets_root not in path.parents:
-            raise ValueError(
-                f"resource in '{self.mod_id}' must come from its assets folder: "
-                f"{relative_path}"
-            )
-        if not path.is_file():
-            raise FileNotFoundError(
-                f"resource asset does not exist in '{self.mod_id}': {relative_path}"
-            )
-        return path
-
-
-@dataclass
-class _ResourceProvider(Generic[ResourceT]):
-    key: ResourceKey[ResourceT]
-    owner: str
-    root: Path
-    factory: ResourceFactory[ResourceT]
-    instance: ResourceT | None = None
-
-
-class ResourceHandle(Generic[ResourceT]):
-    def __init__(self, manager: "ResourceManager", key: ResourceKey[ResourceT]):
-        self._manager = manager
-        self._key = key
-
-    @property
-    def key(self) -> ResourceKey[ResourceT]:
-        return self._key
-
-    def get(self) -> ResourceT:
-        return self._manager.get(self._key)
-
-
-class ResourceManager:
-    """Lazily creates and caches resources without adding dynamic ctx attributes."""
-
-    def __init__(self) -> None:
-        self._providers: dict[str, _ResourceProvider[object]] = {}
-
-    def register(
-        self,
-        key: ResourceKey[ResourceT],
-        *,
-        owner: str,
-        root: Path,
-        factory: ResourceFactory[ResourceT],
-    ) -> None:
-        previous = self._providers.get(key.id)
-        if previous is not None:
-            raise ValueError(
-                f"duplicate resource '{key.id}' from '{previous.owner}' and '{owner}'"
-            )
-        provider = _ResourceProvider(key, owner, root, factory)
-        self._providers[key.id] = cast(_ResourceProvider[object], provider)
-
-    def handle(self, key: ResourceKey[ResourceT]) -> ResourceHandle[ResourceT]:
-        if key.id not in self._providers:
-            raise ValueError(f"no loaded Mod provides resource '{key.id}'")
-        return ResourceHandle(self, key)
-
-    def get(self, key: ResourceKey[ResourceT]) -> ResourceT:
-        provider = self._providers.get(key.id)
-        if provider is None:
-            raise ValueError(f"no loaded Mod provides resource '{key.id}'")
-        if provider.instance is None:
-            context = ResourceLoadContext(
-                mod_id=provider.owner,
-                mod_root=provider.root,
-            )
-            provider.instance = provider.factory(context)
-        return cast(ResourceT, provider.instance)
-
-    def close(self) -> None:
-        first_error: Exception | None = None
-        for provider in reversed(tuple(self._providers.values())):
-            instance = provider.instance
-            if instance is None:
-                continue
-            close = getattr(instance, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception as exc:
-                    if first_error is None:
-                        first_error = exc
-                finally:
-                    provider.instance = None
-            else:
-                provider.instance = None
-        if first_error is not None:
-            raise first_error
-
-
-@dataclass(frozen=True)
-class StateBuildContext:
-    name: str
-    state_id: int
-    params: Mapping[str, object]
-    _consumed: set[str] = field(default_factory=set, compare=False, repr=False)
-
-    def int_param(self, name: str, default: int) -> int:
-        self._consumed.add(name)
-        value = self.params.get(name, default)
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"state '{self.name}' param '{name}' must be an integer")
-        return value
-
-    def float_param(self, name: str, default: float) -> float:
-        self._consumed.add(name)
-        value = self.params.get(name, default)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"state '{self.name}' param '{name}' must be a number")
-        return float(value)
-
-    def string_param(self, name: str, default: str) -> str:
-        self._consumed.add(name)
-        value = self.params.get(name, default)
-        if not isinstance(value, str):
-            raise ValueError(f"state '{self.name}' param '{name}' must be a string")
-        return value
-
-    def bool_param(self, name: str, default: bool) -> bool:
-        self._consumed.add(name)
-        value = self.params.get(name, default)
-        if not isinstance(value, bool):
-            raise ValueError(f"state '{self.name}' param '{name}' must be a boolean")
-        return value
-
-    def param(self, name: str, expected: type[ParamT], default: ParamT) -> ParamT:
-        self._consumed.add(name)
-        value = self.params.get(name, default)
-        if not isinstance(value, expected):
-            raise ValueError(
-                f"state '{self.name}' param '{name}' must be " f"{expected.__name__}"
-            )
-        return value
-
-    def dataclass_params(self, params_type: type[ParamsT]) -> ParamsT:
-        """Build a typed parameter object while retaining strict YAML validation."""
-        if not isinstance(params_type, type) or not is_dataclass(params_type):
-            raise TypeError("dataclass_params() expects a dataclass type")
-        try:
-            annotations = get_type_hints(params_type)
-        except (NameError, TypeError) as exc:
-            raise TypeError(
-                f"state '{self.name}' cannot resolve annotations for "
-                f"{params_type.__name__}: {exc}"
-            ) from exc
-
-        values: dict[str, object] = {}
-        for parameter in fields(params_type):
-            name = parameter.name
-            self._consumed.add(name)
-            if name not in self.params:
-                if (
-                    parameter.default is MISSING
-                    and parameter.default_factory is MISSING
-                ):
-                    raise ValueError(
-                        f"state '{self.name}' is missing required param '{name}'"
-                    )
-                continue
-            values[name] = _typed_dataclass_value(
-                self.name,
-                name,
-                self.params[name],
-                annotations.get(name, parameter.type),
-            )
-        return params_type(**values)
-
-    def finish(self) -> None:
-        unknown = set(self.params) - self._consumed
-        if unknown:
-            raise ValueError(
-                f"state '{self.name}' has unknown params: {sorted(unknown)}"
-            )
-
-
-@dataclass(frozen=True)
-class ModDefinition:
-    state_factories: Mapping[str, StateFactory] = field(default_factory=dict)
-
-
-class ModLoadContext:
-    def __init__(self, mod_id: str, mod_root: Path, resources: ResourceManager):
-        self.mod_id = mod_id
-        self.mod_root = mod_root
-        self.resources = resources
-
-    def register_resource(
-        self,
-        key: ResourceKey[ResourceT],
-        factory: ResourceFactory[ResourceT],
-    ) -> None:
-        self.resources.register(
-            key,
-            owner=self.mod_id,
-            root=self.mod_root,
-            factory=factory,
-        )
-
-    def resource(self, key: ResourceKey[ResourceT]) -> ResourceHandle[ResourceT]:
-        return self.resources.handle(key)
 
 
 @dataclass(frozen=True)
@@ -349,6 +129,13 @@ def load_mod_runtime(
             definition, module = _load_definition(mod, resources)
             definitions[mod.id] = definition
             loaded_modules.append(module)
+            for type_name, plugin in definition.transition_plugins.items():
+                if type_name != plugin.type_name:
+                    raise ValueError(
+                        f"Mod '{mod.id}' transition key '{type_name}' does not "
+                        f"match plugin type_name '{plugin.type_name}'"
+                    )
+                register_transition_plugin(plugin)
         config, factories = _compose_config(base_config, ordered, definitions)
     except Exception:
         resources.close()
@@ -1091,63 +878,6 @@ def _version_tuple(version: str) -> tuple[int, ...]:
     if not re.fullmatch(r"\d+(?:\.\d+)*", version):
         raise ValueError(f"Mod versions must be numeric dot versions: {version!r}")
     return tuple(int(part) for part in version.split("."))
-
-
-def _typed_dataclass_value(
-    state_name: str,
-    parameter_name: str,
-    value: object,
-    annotation: object,
-) -> object:
-    origin = get_origin(annotation)
-    arguments = get_args(annotation)
-    if origin in (Union, UnionType):
-        allows_none = type(None) in arguments
-        candidates = tuple(item for item in arguments if item is not type(None))
-        if value is None and allows_none:
-            return None
-        if len(candidates) == 1:
-            return _typed_dataclass_value(
-                state_name,
-                parameter_name,
-                value,
-                candidates[0],
-            )
-        raise TypeError(
-            f"state '{state_name}' param '{parameter_name}' uses unsupported "
-            f"union annotation {annotation!r}"
-        )
-
-    expected = annotation
-    valid = False
-    converted = value
-    expected_name = getattr(expected, "__name__", repr(expected))
-    if expected is float:
-        valid = not isinstance(value, bool) and isinstance(value, (int, float))
-        if valid:
-            converted = float(cast(float, value))
-        expected_name = "a number"
-    elif expected is int:
-        valid = not isinstance(value, bool) and isinstance(value, int)
-        expected_name = "an integer"
-    elif expected is bool:
-        valid = isinstance(value, bool)
-        expected_name = "a boolean"
-    elif expected is str:
-        valid = isinstance(value, str)
-        expected_name = "a string"
-    elif isinstance(expected, type):
-        valid = isinstance(value, expected)
-    else:
-        raise TypeError(
-            f"state '{state_name}' param '{parameter_name}' uses unsupported "
-            f"annotation {annotation!r}"
-        )
-    if not valid:
-        raise ValueError(
-            f"state '{state_name}' param '{parameter_name}' must be {expected_name}"
-        )
-    return converted
 
 
 def _yaml_mapping(path: Path) -> Mapping[str, object]:

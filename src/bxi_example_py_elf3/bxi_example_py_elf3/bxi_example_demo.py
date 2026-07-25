@@ -25,16 +25,15 @@ from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
 
 from bxi_example_py_elf3.inference.normal import NormalMotionPolicyMjlab
-from bxi_example_py_elf3.utils.state_machine import (
+from bxi_example_py_elf3._runtime.mod_loader import ModRuntime, load_mod_runtime
+from bxi_example_py_elf3._runtime.state_builder import build_robot_states
+from bxi_example_py_elf3._runtime.state_machine import (
     RobotStateMachine,
     RemoteEventAdapter,
     load_state_machine_config,
 )
-from bxi_example_py_elf3.utils.robot_state_builder import build_robot_states
-from bxi_example_py_elf3.utils.mod_system import ModRuntime, load_mod_runtime
-from bxi_example_py_elf3.utils.robot_state_base import RobotControlState
-from bxi_example_py_elf3.utils.transition_core import TransitionSpec
-from bxi_example_py_elf3.utils.tfs import quaternion_to_euler_array
+from bxi_example_py_elf3.mod_api import RobotControlState, TransitionSpec
+from bxi_example_py_elf3.mod_api.geometry import quaternion_to_euler_array
 
 robot_name = "elf3"
 
@@ -114,6 +113,11 @@ kd_recover = np.array([  # 跌到起身腰部手部pd加大(add pd for hands and
 
 
 class BxiExample(Node):
+    @property
+    def ros_node(self) -> Node:
+        """Advanced Mod escape hatch for custom ROS entities."""
+        return self
+
     def __init__(self):
         super().__init__("bxi_example_py")
 

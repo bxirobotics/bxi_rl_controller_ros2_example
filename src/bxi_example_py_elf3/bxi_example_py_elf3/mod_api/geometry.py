@@ -1,3 +1,5 @@
+"""Quaternion and gravity helpers shared by controller extensions."""
+
 import numpy as np
 
 # 定义函数：提取四元数的偏航角分量
@@ -160,3 +162,15 @@ def quaternion_to_euler_array(quat):
     
     # Returns roll, pitch, yaw in a NumPy array in radians
     return np.array([roll_x, pitch_y, yaw_z])
+
+
+__all__ = [
+    "get_gravity_orientation",
+    "matrix_to_quaternion_simple",
+    "quat_rotate_inverse",
+    "quaternion_conjugate",
+    "quaternion_multiply",
+    "quaternion_to_euler_array",
+    "quaternion_to_rotation_matrix",
+    "yaw_quat",
+]

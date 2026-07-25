@@ -5,18 +5,18 @@ import numpy as np
 from numpy.typing import NDArray
 
 from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicyLiteIsaaclab
-from bxi_example_py_elf3.utils.mod_system import ResourceHandle
-from bxi_example_py_elf3.utils.robot_state_base import RobotControlState
-from bxi_example_py_elf3.utils.state_library import ZERO_TORQUE_STATE
-from bxi_example_py_elf3.utils.state_machine import StateBehavior
-from bxi_example_py_elf3.utils.transition_core import (
+from bxi_example_py_elf3.mod_api import ResourceHandle
+from bxi_example_py_elf3.mod_api import RobotControlState
+from bxi_example_py_elf3.mod_api import ZERO_TORQUE_STATE
+from bxi_example_py_elf3.mod_api import StateBehavior
+from bxi_example_py_elf3.mod_api.transition import (
     EntryFrameProvider,
     MotorFrame,
     RunningFrameProvider,
 )
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.bxi_example_demo import BxiExample
+    from bxi_example_py_elf3.mod_api import RobotControlContext
 
 
 class AmpRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
@@ -37,22 +37,22 @@ class AmpRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         return self._policy.get()
 
     def on_prepare(
-        self, ctx: BxiExample, from_state: StateBehavior[BxiExample]
+        self, ctx: RobotControlContext, from_state: StateBehavior[RobotControlContext]
     ) -> None:
         ctx.preheat_model(self.policy, with_cmd_vel=True, cmd_vel=self.get_cmd_vel(ctx))
 
-    def on_enter(self, ctx: BxiExample) -> None:
+    def on_enter(self, ctx: RobotControlContext) -> None:
         self.max_vel = 0.0
         self.pre_cmd_vel_run.fill(0.0)
         self.cmd_vel_run.fill(0.0)
 
-    def get_entry_frame(self, ctx: BxiExample) -> MotorFrame:
+    def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         return self._motor_frame(
             self.policy.target_dof_pos, self.policy.kps, self.policy.kds
         )
 
     def process_cmd_vel(
-        self, ctx: BxiExample, cmd_vel: NDArray[np.float32]
+        self, ctx: RobotControlContext, cmd_vel: NDArray[np.float32]
     ) -> NDArray[np.float32]:
         self.cmd_vel_run[:2] = 0.98 * self.pre_cmd_vel_run[:2] + 0.02 * cmd_vel[:2]
         self.cmd_vel_run[2] = cmd_vel[2]
@@ -60,7 +60,7 @@ class AmpRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         return self.cmd_vel_run
 
     def sample_running_frame(
-        self, ctx: BxiExample, dt: float, *, advance: bool
+        self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame:
         qpos, velocity = self.policy.inference_step(
             ctx.current_q,
@@ -76,7 +76,7 @@ class AmpRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
             self.max_vel = 0.0
         return self._motor_frame(qpos, self.policy.kps, self.policy.kds)
 
-    def on_update(self, ctx: BxiExample, dt: float) -> None:
+    def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
             ctx.request_state(ZERO_TORQUE_STATE, trigger="safety")
             return

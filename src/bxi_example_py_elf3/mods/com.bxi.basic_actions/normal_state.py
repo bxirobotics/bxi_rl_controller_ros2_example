@@ -3,18 +3,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicyLiteIsaaclab
-from bxi_example_py_elf3.utils.mod_system import ResourceHandle
-from bxi_example_py_elf3.utils.robot_state_base import RobotControlState
-from bxi_example_py_elf3.utils.state_library import ZERO_TORQUE_STATE
-from bxi_example_py_elf3.utils.state_machine import StateBehavior
-from bxi_example_py_elf3.utils.transition_core import (
+from bxi_example_py_elf3.mod_api import ResourceHandle
+from bxi_example_py_elf3.mod_api import RobotControlState
+from bxi_example_py_elf3.mod_api import ZERO_TORQUE_STATE
+from bxi_example_py_elf3.mod_api import StateBehavior
+from bxi_example_py_elf3.mod_api.transition import (
     EntryFrameProvider,
     MotorFrame,
     RunningFrameProvider,
 )
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.bxi_example_demo import BxiExample
+    from bxi_example_py_elf3.mod_api import RobotControlContext
 
 
 class NormalState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
@@ -29,19 +29,19 @@ class NormalState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
 
     def on_prepare(
         self,
-        ctx: BxiExample,
-        from_state: StateBehavior[BxiExample],
+        ctx: RobotControlContext,
+        from_state: StateBehavior[RobotControlContext],
     ) -> None:
         ctx.preheat_model(
             self._policy.get(), with_cmd_vel=True, cmd_vel=self.get_cmd_vel(ctx)
         )
 
-    def get_entry_frame(self, ctx: BxiExample) -> MotorFrame:
+    def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         policy = self._policy.get()
         return self._motor_frame(policy.target_dof_pos, policy.kps, policy.kds)
 
     def sample_running_frame(
-        self, ctx: BxiExample, dt: float, *, advance: bool
+        self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame:
         policy = self._policy.get()
         qpos, _ = policy.inference_step(
@@ -53,7 +53,7 @@ class NormalState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         )
         return self._motor_frame(qpos, policy.kps, policy.kds)
 
-    def on_update(self, ctx: BxiExample, dt: float) -> None:
+    def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
             ctx.request_state(ZERO_TORQUE_STATE, trigger="safety")
             return

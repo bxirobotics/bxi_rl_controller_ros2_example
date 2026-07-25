@@ -3,18 +3,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicyGravityIsaaclabV3
-from bxi_example_py_elf3.utils.mod_system import ResourceHandle
-from bxi_example_py_elf3.utils.robot_state_base import RobotControlState
-from bxi_example_py_elf3.utils.state_library import NORMAL_STATE, ZERO_TORQUE_STATE
-from bxi_example_py_elf3.utils.state_machine import StateBehavior
-from bxi_example_py_elf3.utils.transition_core import (
+from bxi_example_py_elf3.mod_api import ResourceHandle
+from bxi_example_py_elf3.mod_api import RobotControlState
+from bxi_example_py_elf3.mod_api import NORMAL_STATE, ZERO_TORQUE_STATE
+from bxi_example_py_elf3.mod_api import StateBehavior
+from bxi_example_py_elf3.mod_api.transition import (
     EntryFrameProvider,
     MotorFrame,
     RunningFrameProvider,
 )
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.bxi_example_demo import BxiExample
+    from bxi_example_py_elf3.mod_api import RobotControlContext
 
 
 class DanceState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
@@ -36,23 +36,23 @@ class DanceState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         return self._policy.get()
 
     def on_prepare(
-        self, ctx: BxiExample, from_state: StateBehavior[BxiExample]
+        self, ctx: RobotControlContext, from_state: StateBehavior[RobotControlContext]
     ) -> None:
         self.policy.timestep = self.start_frame
         self.policy.timeinit = 0.0
         ctx.preheat_model(self.policy)
 
-    def on_enter(self, ctx: BxiExample) -> None:
+    def on_enter(self, ctx: RobotControlContext) -> None:
         self.playing = True
         self.policy.timestep = self.start_frame
 
-    def get_entry_frame(self, ctx: BxiExample) -> MotorFrame:
+    def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         return self._motor_frame(
             self.policy.target_dof_pos, self.policy.kps, self.policy.kds
         )
 
     def sample_running_frame(
-        self, ctx: BxiExample, dt: float, *, advance: bool
+        self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame | None:
         policy = self.policy
         if policy.timestep >= policy.motionpos.shape[0]:
@@ -64,7 +64,7 @@ class DanceState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
             policy.timestep += 50 * dt
         return self._motor_frame(qpos, policy.kps, policy.kds)
 
-    def on_update(self, ctx: BxiExample, dt: float) -> None:
+    def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if self.policy.timestep >= self.policy.motionpos.shape[0]:
             self.policy.timestep = self.start_frame
             ctx.request_state(
@@ -82,7 +82,7 @@ class DanceState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
             return
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
 
-    def on_action(self, ctx: BxiExample, action_name: str) -> bool:
+    def on_action(self, ctx: RobotControlContext, action_name: str) -> bool:
         if action_name != "toggle_pause":
             return False
         self.playing = not self.playing

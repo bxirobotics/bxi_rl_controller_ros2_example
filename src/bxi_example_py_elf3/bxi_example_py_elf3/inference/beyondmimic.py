@@ -2,7 +2,14 @@
 import onnx
 import numpy as np
 import onnxruntime as ort
-from bxi_example_py_elf3.utils.tfs import quaternion_to_rotation_matrix, quaternion_conjugate, quaternion_multiply, matrix_to_quaternion_simple, yaw_quat, get_gravity_orientation
+from bxi_example_py_elf3.mod_api.geometry import (
+    get_gravity_orientation,
+    matrix_to_quaternion_simple,
+    quaternion_conjugate,
+    quaternion_multiply,
+    quaternion_to_rotation_matrix,
+    yaw_quat,
+)
 
 class DanceMotionPolicyMjlab:
     """舞蹈动作策略管理类"""

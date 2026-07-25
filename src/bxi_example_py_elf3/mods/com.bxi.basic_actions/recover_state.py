@@ -4,19 +4,19 @@ import math
 from typing import TYPE_CHECKING
 
 from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicyMjlab
-from bxi_example_py_elf3.utils.mod_system import ResourceHandle
-from bxi_example_py_elf3.utils.robot_state_base import RobotControlState
-from bxi_example_py_elf3.utils.state_library import NORMAL_STATE, ZERO_TORQUE_STATE
-from bxi_example_py_elf3.utils.state_machine import StateBehavior
-from bxi_example_py_elf3.utils.tfs import quaternion_to_euler_array
-from bxi_example_py_elf3.utils.transition_core import (
+from bxi_example_py_elf3.mod_api import ResourceHandle
+from bxi_example_py_elf3.mod_api import RobotControlState
+from bxi_example_py_elf3.mod_api import NORMAL_STATE, ZERO_TORQUE_STATE
+from bxi_example_py_elf3.mod_api import StateBehavior
+from bxi_example_py_elf3.mod_api.geometry import quaternion_to_euler_array
+from bxi_example_py_elf3.mod_api.transition import (
     EntryFrameProvider,
     MotorFrame,
     RunningFrameProvider,
 )
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.bxi_example_demo import BxiExample
+    from bxi_example_py_elf3.mod_api import RobotControlContext
 
 
 class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
@@ -34,18 +34,18 @@ class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         return self._policy.get()
 
     def on_prepare(
-        self, ctx: BxiExample, from_state: StateBehavior[BxiExample]
+        self, ctx: RobotControlContext, from_state: StateBehavior[RobotControlContext]
     ) -> None:
         self.playing = True
         if self._configure_motion(ctx):
             ctx.preheat_model(self.policy)
 
-    def on_enter(self, ctx: BxiExample) -> None:
+    def on_enter(self, ctx: RobotControlContext) -> None:
         self.playing = True
         if not self.motion_selected:
             ctx.request_state(ZERO_TORQUE_STATE, trigger="recover_pose_rejected")
 
-    def _configure_motion(self, ctx: BxiExample) -> bool:
+    def _configure_motion(self, ctx: RobotControlContext) -> bool:
         angles = quaternion_to_euler_array(ctx.quat_xyzw)
         angles[angles > math.pi] -= 2 * math.pi
         if angles[1] < -(math.pi / 4.0):
@@ -64,7 +64,7 @@ class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         self.motion_selected = True
         return True
 
-    def get_entry_frame(self, ctx: BxiExample) -> MotorFrame:
+    def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         if not self.motion_selected:
             return self._motor_frame(ctx.pos_last, ctx.kp_last, ctx.kd_last)
         return self._motor_frame(
@@ -72,7 +72,7 @@ class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         )
 
     def sample_running_frame(
-        self, ctx: BxiExample, dt: float, *, advance: bool
+        self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame | None:
         if self.policy.timestep > self.policy.end_frame:
             return None
@@ -83,7 +83,7 @@ class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
             self.policy.timestep += 50 * dt
         return self._motor_frame(qpos, self.policy.kps, self.policy.kds)
 
-    def on_update(self, ctx: BxiExample, dt: float) -> None:
+    def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if self.policy.timestep > self.policy.end_frame - self.end_frame_trim:
             ctx.request_state(
                 NORMAL_STATE,

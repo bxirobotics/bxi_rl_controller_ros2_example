@@ -9,18 +9,18 @@ import numpy as np
 from numpy.typing import NDArray
 
 from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicyLiteIsaaclab
-from bxi_example_py_elf3.utils.mod_system import ResourceHandle
-from bxi_example_py_elf3.utils.robot_state_base import RobotControlState
-from bxi_example_py_elf3.utils.state_library import NORMAL_STATE, ZERO_TORQUE_STATE
-from bxi_example_py_elf3.utils.state_machine import StateBehavior
-from bxi_example_py_elf3.utils.transition_core import (
+from bxi_example_py_elf3.mod_api import ResourceHandle
+from bxi_example_py_elf3.mod_api import RobotControlState
+from bxi_example_py_elf3.mod_api import NORMAL_STATE, ZERO_TORQUE_STATE
+from bxi_example_py_elf3.mod_api import StateBehavior
+from bxi_example_py_elf3.mod_api.transition import (
     EntryFrameProvider,
     MotorFrame,
     RunningFrameProvider,
 )
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.bxi_example_demo import BxiExample
+    from bxi_example_py_elf3.mod_api import RobotControlContext
 
 
 @dataclass(frozen=True)
@@ -66,23 +66,23 @@ class ApplauseState(RobotControlState, EntryFrameProvider, RunningFrameProvider)
         return self._clip.get()
 
     def on_prepare(
-        self, ctx: BxiExample, from_state: StateBehavior[BxiExample]
+        self, ctx: RobotControlContext, from_state: StateBehavior[RobotControlContext]
     ) -> None:
         self.frame = 0.0
         self.playing = True
         ctx.preheat_model(self.policy, with_cmd_vel=True, cmd_vel=self.get_cmd_vel(ctx))
 
-    def on_enter(self, ctx: BxiExample) -> None:
+    def on_enter(self, ctx: RobotControlContext) -> None:
         self.frame = 0.0
         self.playing = True
 
-    def get_entry_frame(self, ctx: BxiExample) -> MotorFrame:
+    def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         qpos = self.policy.target_dof_pos.copy()
         qpos[-14:] = self.clip.positions[0]
         return self._motor_frame(qpos, self.policy.kps, self.policy.kds)
 
     def sample_running_frame(
-        self, ctx: BxiExample, dt: float, *, advance: bool
+        self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame:
         qpos, _ = self.policy.inference_step(
             ctx.current_q,
@@ -97,7 +97,7 @@ class ApplauseState(RobotControlState, EntryFrameProvider, RunningFrameProvider)
             self.frame += self.clip.fps * dt
         return self._motor_frame(qpos, self.policy.kps, self.policy.kds)
 
-    def on_update(self, ctx: BxiExample, dt: float) -> None:
+    def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
             ctx.request_state(ZERO_TORQUE_STATE, trigger="safety")
             return
@@ -110,7 +110,7 @@ class ApplauseState(RobotControlState, EntryFrameProvider, RunningFrameProvider)
             return
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
 
-    def on_action(self, ctx: BxiExample, action_name: str) -> bool:
+    def on_action(self, ctx: RobotControlContext, action_name: str) -> bool:
         if action_name != "toggle_pause":
             return False
         self.playing = not self.playing

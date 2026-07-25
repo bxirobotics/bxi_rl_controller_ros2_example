@@ -1,5 +1,5 @@
 from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicyGravityIsaaclab
-from bxi_example_py_elf3.utils.mod_system import (
+from bxi_example_py_elf3.mod_api import (
     ModDefinition,
     ModLoadContext,
     ResourceKey,

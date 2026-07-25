@@ -1,24 +1,26 @@
+"""Internal state-machine execution engine."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 import os
-from typing import TYPE_CHECKING, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, cast
 
 import yaml
 
-from bxi_example_py_elf3.utils.transition_core import (
+from bxi_example_py_elf3._runtime.transition import compile_transition
+from bxi_example_py_elf3.mod_api.state import StateBehavior
+from bxi_example_py_elf3.mod_api.transition import (
     TransitionPlan,
     TransitionSession,
     TransitionSpec,
-    compile_transition,
 )
 
 if TYPE_CHECKING:
     from bxi_example_py_elf3.bxi_example_demo import BxiExample
 
 
-CtxT = TypeVar("CtxT")
 ConfigMap = dict[str, object]
 
 
@@ -76,52 +78,6 @@ class RemoteEventAdapter:
             ):
                 events.append(event_name)
         return events
-
-
-class StateBehavior(Generic[CtxT]):
-    """Small, transition-agnostic base class for user-defined states."""
-
-    def __init__(self, name: str, state_id: int):
-        self.name = name
-        self.state_id = state_id
-        self.manifest: dict[str, object] = {
-            "label": "Unknown",
-            "index": None,
-            "group": "Base",
-            "icon": "warning",
-            "confirm": False,
-            "confirm_message": "",
-        }
-
-    def on_bind(self, ctx: CtxT) -> None:
-        pass
-
-    def on_unbind(self, ctx: CtxT) -> None:
-        """Release subscriptions, timers, or other state-owned handles."""
-        pass
-
-    def on_prepare(self, ctx: CtxT, from_state: StateBehavior[CtxT]) -> None:
-        pass
-
-    def on_prepare_cancel(
-        self,
-        ctx: CtxT,
-        from_state: StateBehavior[CtxT],
-    ) -> None:
-        """Release resources when a prepared transition is cancelled."""
-        pass
-
-    def on_enter(self, ctx: CtxT) -> None:
-        pass
-
-    def on_update(self, ctx: CtxT, dt: float) -> None:
-        pass
-
-    def on_exit(self, ctx: CtxT) -> None:
-        pass
-
-    def on_action(self, ctx: CtxT, action_name: str) -> bool:
-        return False
 
 
 @dataclass(frozen=True)

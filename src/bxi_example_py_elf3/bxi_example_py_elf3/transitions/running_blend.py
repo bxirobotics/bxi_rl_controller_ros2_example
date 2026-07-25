@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Literal
 
-from bxi_example_py_elf3.utils.transition_core import (
+from bxi_example_py_elf3.mod_api.transition import (
     ConfigReader,
     MotorFrame,
     RunningFrameProvider,
@@ -13,8 +13,8 @@ from bxi_example_py_elf3.utils.transition_core import (
 )
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.bxi_example_demo import BxiExample
-    from bxi_example_py_elf3.utils.state_machine import StateBehavior
+    from bxi_example_py_elf3.mod_api import RobotControlContext
+    from bxi_example_py_elf3.mod_api import StateBehavior
 
 
 BlendCurve = Literal["linear", "smoothstep", "smootherstep"]
@@ -74,8 +74,8 @@ class RunningBlendTransition(SingleClassTransition):
 
     def validate_states(
         self,
-        from_state: "StateBehavior[BxiExample]",
-        to_state: "StateBehavior[BxiExample]",
+        from_state: "StateBehavior[RobotControlContext]",
+        to_state: "StateBehavior[RobotControlContext]",
     ) -> None:
         if self._sample_from:
             require_running_frame_provider(from_state)
@@ -85,9 +85,9 @@ class RunningBlendTransition(SingleClassTransition):
 
     def on_start(
         self,
-        ctx: "BxiExample",
-        from_state: "StateBehavior[BxiExample]",
-        to_state: "StateBehavior[BxiExample]",
+        ctx: "RobotControlContext",
+        from_state: "StateBehavior[RobotControlContext]",
+        to_state: "StateBehavior[RobotControlContext]",
     ) -> None:
         self._from_provider = (
             require_running_frame_provider(from_state) if self._sample_from else None
@@ -102,7 +102,7 @@ class RunningBlendTransition(SingleClassTransition):
             ctx.kd_last,
         )
 
-    def apply(self, ctx: "BxiExample", dt: float, progress: float) -> None:
+    def apply(self, ctx: "RobotControlContext", dt: float, progress: float) -> None:
         to_entry = self._to_entry
         last_frame = self._last_frame
         if to_entry is None or last_frame is None:

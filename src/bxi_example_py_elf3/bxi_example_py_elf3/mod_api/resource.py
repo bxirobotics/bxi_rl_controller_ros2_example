@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Generic, Protocol, TypeVar
+
+
+ResourceT = TypeVar("ResourceT")
+ResourceFactory = Callable[["ResourceLoadContext"], ResourceT]
+
+
+@dataclass(frozen=True)
+class ResourceKey(Generic[ResourceT]):
+    """A statically typed, globally unique resource identity."""
+
+    id: str
+
+    def __post_init__(self) -> None:
+        if not self.id or "/" not in self.id:
+            raise ValueError(f"resource id must be namespaced: {self.id!r}")
+
+
+@dataclass(frozen=True)
+class ResourceLoadContext:
+    mod_id: str
+    mod_root: Path
+
+    def asset(self, relative_path: str) -> Path:
+        path = (self.mod_root / relative_path).resolve()
+        assets_root = (self.mod_root / "assets").resolve()
+        if assets_root not in path.parents:
+            raise ValueError(
+                f"resource in '{self.mod_id}' must come from its assets folder: "
+                f"{relative_path}"
+            )
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"resource asset does not exist in '{self.mod_id}': {relative_path}"
+            )
+        return path
+
+
+class _ResourceResolver(Protocol):
+    def get(self, key: ResourceKey[ResourceT]) -> ResourceT:
+        ...
+
+
+class ResourceHandle(Generic[ResourceT]):
+    """Lazy typed reference to a resource owned by the runtime."""
+
+    def __init__(self, manager: _ResourceResolver, key: ResourceKey[ResourceT]):
+        self._manager = manager
+        self._key = key
+
+    @property
+    def key(self) -> ResourceKey[ResourceT]:
+        return self._key
+
+    def get(self) -> ResourceT:
+        return self._manager.get(self._key)
+
+
+__all__ = [
+    "ResourceFactory",
+    "ResourceHandle",
+    "ResourceKey",
+    "ResourceLoadContext",
+]

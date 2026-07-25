@@ -3,17 +3,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from bxi_example_py_elf3.utils.transition_core import (
+from bxi_example_py_elf3._runtime.transition import compile_transition
+from bxi_example_py_elf3.mod_api.transition import (
     ConfigReader,
     SingleClassTransition,
     TransitionPlan,
     TransitionSession,
-    compile_transition,
 )
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.bxi_example_demo import BxiExample
-    from bxi_example_py_elf3.utils.state_machine import StateBehavior
+    from bxi_example_py_elf3.mod_api import RobotControlContext
+    from bxi_example_py_elf3.mod_api import StateBehavior
 
 
 class SequenceTransition(SingleClassTransition):
@@ -22,8 +22,8 @@ class SequenceTransition(SingleClassTransition):
     def __init__(self, name: str, plans: tuple[TransitionPlan, ...]):
         super().__init__(name, sum(plan.duration for plan in plans))
         self._plans = plans
-        self._from_state: StateBehavior[BxiExample] | None = None
-        self._to_state: StateBehavior[BxiExample] | None = None
+        self._from_state: StateBehavior[RobotControlContext] | None = None
+        self._to_state: StateBehavior[RobotControlContext] | None = None
         self._index = 0
         self._current: TransitionSession | None = None
 
@@ -46,24 +46,24 @@ class SequenceTransition(SingleClassTransition):
 
     def validate_states(
         self,
-        from_state: "StateBehavior[BxiExample]",
-        to_state: "StateBehavior[BxiExample]",
+        from_state: "StateBehavior[RobotControlContext]",
+        to_state: "StateBehavior[RobotControlContext]",
     ) -> None:
         for plan in self._plans:
             plan.validate_states(from_state, to_state)
 
     def on_start(
         self,
-        ctx: "BxiExample",
-        from_state: "StateBehavior[BxiExample]",
-        to_state: "StateBehavior[BxiExample]",
+        ctx: "RobotControlContext",
+        from_state: "StateBehavior[RobotControlContext]",
+        to_state: "StateBehavior[RobotControlContext]",
     ) -> None:
         self._from_state = from_state
         self._to_state = to_state
         self._index = 0
         self._current = None
 
-    def apply(self, ctx: "BxiExample", dt: float, progress: float) -> None:
+    def apply(self, ctx: "RobotControlContext", dt: float, progress: float) -> None:
         from_state = self._from_state
         to_state = self._to_state
         if from_state is None or to_state is None:

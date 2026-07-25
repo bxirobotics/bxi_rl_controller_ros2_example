@@ -1,6 +1,6 @@
 from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicyGravityIsaaclab
-from bxi_example_py_elf3.utils.mod_system import ResourceHandle
-from bxi_example_py_elf3.utils.state_library import MotionReplayState
+from bxi_example_py_elf3.mod_api import ResourceHandle
+from bxi_example_py_elf3.mod_api import MotionReplayState
 
 
 class ForwardFlipState(MotionReplayState[DanceMotionPolicyGravityIsaaclab]):

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from bxi_example_py_elf3.utils.transition_core import (
+from bxi_example_py_elf3.mod_api.transition import (
     ConfigReader,
     FloatArray,
     MotorFrame,
@@ -14,8 +14,8 @@ from bxi_example_py_elf3.utils.transition_core import (
 )
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.bxi_example_demo import BxiExample
-    from bxi_example_py_elf3.utils.state_machine import StateBehavior
+    from bxi_example_py_elf3.mod_api import RobotControlContext
+    from bxi_example_py_elf3.mod_api import StateBehavior
 
 
 GainStart = Literal["current", "zero", "target"]
@@ -61,23 +61,23 @@ class EntryGainRampTransition(SingleClassTransition):
 
     def validate_states(
         self,
-        from_state: "StateBehavior[BxiExample]",
-        to_state: "StateBehavior[BxiExample]",
+        from_state: "StateBehavior[RobotControlContext]",
+        to_state: "StateBehavior[RobotControlContext]",
     ) -> None:
         require_entry_frame_provider(to_state)
 
     def on_start(
         self,
-        ctx: "BxiExample",
-        from_state: "StateBehavior[BxiExample]",
-        to_state: "StateBehavior[BxiExample]",
+        ctx: "RobotControlContext",
+        from_state: "StateBehavior[RobotControlContext]",
+        to_state: "StateBehavior[RobotControlContext]",
     ) -> None:
         target = require_entry_frame_provider(to_state).get_entry_frame(ctx)
         self._target = target
         self._kp_start = self._gain_start(self._kp_from, target.kp, ctx.kp_last)
         self._kd_start = self._gain_start(self._kd_from, target.kd, ctx.kd_last)
 
-    def apply(self, ctx: "BxiExample", dt: float, progress: float) -> None:
+    def apply(self, ctx: "RobotControlContext", dt: float, progress: float) -> None:
         target = self._target
         kp_start = self._kp_start
         kd_start = self._kd_start

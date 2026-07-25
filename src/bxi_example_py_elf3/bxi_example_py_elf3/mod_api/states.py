@@ -6,10 +6,9 @@ from typing import Generic, Protocol, TypeVar
 import numpy as np
 from numpy.typing import NDArray
 
-from bxi_example_py_elf3.utils.mod_system import ResourceHandle
-from bxi_example_py_elf3.utils.robot_state_base import RobotControlState
-from bxi_example_py_elf3.utils.state_machine import StateBehavior
-from bxi_example_py_elf3.utils.transition_core import (
+from .resource import ResourceHandle
+from .state import RobotControlState, StateBehavior
+from .transition import (
     EntryFrameProvider,
     MotorFrame,
     RunningFrameProvider,
@@ -19,7 +18,7 @@ from bxi_example_py_elf3.utils.transition_core import (
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.bxi_example_demo import BxiExample
+    from .context import RobotControlContext
 
 
 NORMAL_STATE = "com.bxi.basic_actions/normal"
@@ -55,7 +54,7 @@ class _FrameState(
     RunningFrameProvider,
     ABC,
 ):
-    def gains(self, ctx: BxiExample) -> tuple[object, object]:
+    def gains(self, ctx: RobotControlContext) -> tuple[object, object]:
         """Return kp/kd. Override this when a state needs custom gains."""
         kp = getattr(ctx, "joint_kp", None)
         kd = getattr(ctx, "joint_kd", None)
@@ -71,7 +70,7 @@ class _FrameState(
 
     def frame(
         self,
-        ctx: BxiExample,
+        ctx: RobotControlContext,
         qpos: object,
         *,
         kp: object | None = None,
@@ -97,22 +96,22 @@ class PoseState(_FrameState, Generic[ParamsT], ABC):
         self.params = params
 
     @abstractmethod
-    def target_position(self, ctx: BxiExample) -> object:
+    def target_position(self, ctx: RobotControlContext) -> object:
         """Return the target joint positions for this update."""
 
-    def get_entry_frame(self, ctx: BxiExample) -> MotorFrame:
+    def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         return self.frame(ctx, self.target_position(ctx))
 
     def sample_running_frame(
         self,
-        ctx: BxiExample,
+        ctx: RobotControlContext,
         dt: float,
         *,
         advance: bool,
     ) -> MotorFrame:
         return self.get_entry_frame(ctx)
 
-    def on_update(self, ctx: BxiExample, dt: float) -> None:
+    def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
 
 
@@ -129,19 +128,19 @@ class ProceduralState(_FrameState, Generic[ParamsT], ABC):
         self.params = params
         self.elapsed = 0.0
 
-    def on_enter(self, ctx: BxiExample) -> None:
+    def on_enter(self, ctx: RobotControlContext) -> None:
         self.elapsed = 0.0
 
     @abstractmethod
-    def compute_frame(self, ctx: BxiExample, elapsed: float) -> MotorFrame:
+    def compute_frame(self, ctx: RobotControlContext, elapsed: float) -> MotorFrame:
         """Compute output at ``elapsed`` without mutating time."""
 
-    def get_entry_frame(self, ctx: BxiExample) -> MotorFrame:
+    def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         return self.compute_frame(ctx, 0.0)
 
     def sample_running_frame(
         self,
-        ctx: BxiExample,
+        ctx: RobotControlContext,
         dt: float,
         *,
         advance: bool,
@@ -151,7 +150,7 @@ class ProceduralState(_FrameState, Generic[ParamsT], ABC):
             self.elapsed += dt
         return frame
 
-    def on_update(self, ctx: BxiExample, dt: float) -> None:
+    def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
 
 
@@ -184,23 +183,23 @@ class PolicyState(_FrameState, Generic[PolicyT], ABC):
             )
         return self._policy
 
-    def create_policy(self, ctx: BxiExample) -> PolicyT:
+    def create_policy(self, ctx: RobotControlContext) -> PolicyT:
         """Override for a state-local policy; shared models should use a Resource."""
         raise NotImplementedError(
             f"state '{self.name}' needs create_policy() or a ResourceHandle"
         )
 
-    def resolve_policy(self, ctx: BxiExample) -> PolicyT:
+    def resolve_policy(self, ctx: RobotControlContext) -> PolicyT:
         if self._policy_handle is not None:
             return self._policy_handle.get()
         if self._policy is None:
             self._policy = self.create_policy(ctx)
         return self._policy
 
-    def reset_policy(self, ctx: BxiExample, policy: PolicyT) -> None:
+    def reset_policy(self, ctx: RobotControlContext, policy: PolicyT) -> None:
         """Override when a model has recurrent state or a playback cursor."""
 
-    def preheat_policy(self, ctx: BxiExample, policy: PolicyT) -> None:
+    def preheat_policy(self, ctx: RobotControlContext, policy: PolicyT) -> None:
         """Use the controller's standard preheater for compatible model APIs."""
         preheat = getattr(ctx, "preheat_model", None)
         has_standard_inference = callable(getattr(policy, "inference_step", None))
@@ -210,24 +209,26 @@ class PolicyState(_FrameState, Generic[PolicyT], ABC):
 
     def on_prepare(
         self,
-        ctx: BxiExample,
-        from_state: StateBehavior[BxiExample],
+        ctx: RobotControlContext,
+        from_state: StateBehavior[RobotControlContext],
     ) -> None:
         policy = self.resolve_policy(ctx)
         self.reset_policy(ctx, policy)
         self.preheat_policy(ctx, policy)
 
-    def on_enter(self, ctx: BxiExample) -> None:
+    def on_enter(self, ctx: RobotControlContext) -> None:
         self.reset_policy(ctx, self.resolve_policy(ctx))
 
     @abstractmethod
-    def policy_entry_position(self, ctx: BxiExample, policy: PolicyT) -> object:
+    def policy_entry_position(
+        self, ctx: RobotControlContext, policy: PolicyT
+    ) -> object:
         """Return the stable position used by entry transitions."""
 
     @abstractmethod
     def infer_position(
         self,
-        ctx: BxiExample,
+        ctx: RobotControlContext,
         policy: PolicyT,
         dt: float,
         *,
@@ -237,14 +238,14 @@ class PolicyState(_FrameState, Generic[PolicyT], ABC):
 
     def policy_gains(
         self,
-        ctx: BxiExample,
+        ctx: RobotControlContext,
         policy: PolicyT,
     ) -> tuple[object, object]:
         kp = getattr(policy, "kps", None)
         kd = getattr(policy, "kds", None)
         return self.gains(ctx) if kp is None or kd is None else (kp, kd)
 
-    def get_entry_frame(self, ctx: BxiExample) -> MotorFrame:
+    def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         policy = self.resolve_policy(ctx)
         kp, kd = self.policy_gains(ctx, policy)
         return self.frame(
@@ -256,7 +257,7 @@ class PolicyState(_FrameState, Generic[PolicyT], ABC):
 
     def sample_running_frame(
         self,
-        ctx: BxiExample,
+        ctx: RobotControlContext,
         dt: float,
         *,
         advance: bool,
@@ -270,7 +271,7 @@ class PolicyState(_FrameState, Generic[PolicyT], ABC):
             kd=kd,
         )
 
-    def on_update(self, ctx: BxiExample, dt: float) -> None:
+    def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
 
 
@@ -303,8 +304,8 @@ class MotionReplayState(
 
     def on_prepare(
         self,
-        ctx: BxiExample,
-        from_state: StateBehavior[BxiExample],
+        ctx: RobotControlContext,
+        from_state: StateBehavior[RobotControlContext],
     ) -> None:
         policy = self.policy
         policy.timestep = policy.start_frame
@@ -312,14 +313,14 @@ class MotionReplayState(
             policy.timeinit = 0.0
         ctx.preheat_model(policy)
 
-    def on_enter(self, ctx: BxiExample) -> None:
+    def on_enter(self, ctx: RobotControlContext) -> None:
         self.playing = True
         policy = self.policy
         policy.timestep = policy.start_frame
         if hasattr(policy, "timeinit"):
             policy.timeinit = 0.0
 
-    def get_entry_frame(self, ctx: BxiExample) -> MotorFrame:
+    def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         policy = self.policy
         qpos = getattr(policy, "target_dof_pos", None)
         if qpos is None:
@@ -329,7 +330,7 @@ class MotionReplayState(
         return self._motor_frame(qpos, policy.kps, policy.kds)
 
     def sample_running_frame(
-        self, ctx: BxiExample, dt: float, *, advance: bool
+        self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame:
         policy = self.policy
         qpos = policy.inference_step(
@@ -342,7 +343,7 @@ class MotionReplayState(
             policy.timestep += 50 * dt
         return self._motor_frame(qpos, policy.kps, policy.kds)
 
-    def on_update(self, ctx: BxiExample, dt: float) -> None:
+    def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         policy = self.policy
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
         if policy.timestep > policy.end_frame - self.end_frame_trim:
@@ -352,7 +353,7 @@ class MotionReplayState(
                 transition=self.end_transition,
             )
 
-    def on_action(self, ctx: BxiExample, action_name: str) -> bool:
+    def on_action(self, ctx: RobotControlContext, action_name: str) -> bool:
         if action_name != "toggle_pause":
             return False
         self.playing = not self.playing

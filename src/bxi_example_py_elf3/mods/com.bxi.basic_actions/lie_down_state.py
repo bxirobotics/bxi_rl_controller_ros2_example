@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicyGravityIsaaclabV2
-from bxi_example_py_elf3.utils.mod_system import ResourceHandle
-from bxi_example_py_elf3.utils.state_library import MotionReplayState
+from bxi_example_py_elf3.mod_api import ResourceHandle
+from bxi_example_py_elf3.mod_api import MotionReplayState
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.bxi_example_demo import BxiExample
+    from bxi_example_py_elf3.mod_api import RobotControlContext
 
 
 PD_BRAKE_STATE = "com.bxi.basic_actions/pd_brake"
@@ -34,7 +34,7 @@ class LieDownState(MotionReplayState[DanceMotionPolicyGravityIsaaclabV2]):
             },
         )
 
-    def on_update(self, ctx: BxiExample, dt: float) -> None:
+    def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         policy = self.policy
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
         if policy.timestep > policy.end_frame - self.end_frame_trim:
@@ -44,7 +44,7 @@ class LieDownState(MotionReplayState[DanceMotionPolicyGravityIsaaclabV2]):
                 transition=self.end_transition,
             )
 
-    # def on_action(self, ctx: BxiExample, action_name: str) -> bool:
+    # def on_action(self, ctx: RobotControlContext, action_name: str) -> bool:
     #     if action_name != "toggle_pause":
     #         return False
     #     self.playing = not self.playing

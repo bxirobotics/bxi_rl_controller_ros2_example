@@ -1,11 +1,16 @@
+"""Internal construction of configured state instances."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import cast
 import zlib
 
-from bxi_example_py_elf3.utils.robot_state_base import RobotControlState
-from bxi_example_py_elf3.utils.mod_system import StateBuildContext, StateFactory
+from bxi_example_py_elf3.mod_api import (
+    RobotControlState,
+    StateBuildContext,
+    StateFactory,
+)
 
 
 def _allocate_state_id(
