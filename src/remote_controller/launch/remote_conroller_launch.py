@@ -14,7 +14,6 @@ def launch_setup(context):
     )
     arguments = [
         "--config", remote_config,
-        "--hot-reload", "true",
         "__log_level:=debug",
     ]
     debug_value = LaunchConfiguration("DEBUG").perform(context).lower()

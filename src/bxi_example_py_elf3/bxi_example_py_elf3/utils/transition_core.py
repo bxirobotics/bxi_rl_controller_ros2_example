@@ -6,8 +6,6 @@ import copy
 from dataclasses import dataclass
 import importlib
 import pkgutil
-import re
-import sys
 from typing import (
     TYPE_CHECKING,
     ClassVar,
@@ -342,19 +340,11 @@ def _register_plugin(plugin: type[TransitionPlugin]) -> None:
         raise TypeError(f"{plugin.__name__} must define type_name")
     existing = _plugins.get(type_name)
     if existing is not None and existing is not plugin:
-        old_owner = _dynamic_mod_owner(existing.__module__)
-        new_owner = _dynamic_mod_owner(plugin.__module__)
-        if old_owner is None or old_owner != new_owner:
-            raise TypeError(
-                f"duplicate transition type '{type_name}': "
-                f"{existing.__name__} and {plugin.__name__}"
-            )
+        raise TypeError(
+            f"duplicate transition type '{type_name}': "
+            f"{existing.__name__} and {plugin.__name__}"
+        )
     _plugins[type_name] = plugin
-
-
-def _dynamic_mod_owner(module_name: str) -> str | None:
-    match = re.match(r"^(_bxi_mod_.+)_([0-9a-f]{12})(?:\.|$)", module_name)
-    return match.group(1) if match else None
 
 
 def discover_plugins() -> None:
@@ -379,7 +369,6 @@ def restore_transition_plugins(snapshot: TransitionPluginSnapshot) -> None:
 
 
 def release_transition_plugins(
-    snapshot: TransitionPluginSnapshot,
     module_prefixes: Sequence[str],
 ) -> None:
     for type_name, plugin in tuple(_plugins.items()):
@@ -388,11 +377,7 @@ def release_transition_plugins(
             for prefix in module_prefixes
         ):
             continue
-        previous = snapshot.get(type_name)
-        if previous is not None and previous.__module__ in sys.modules:
-            _plugins[type_name] = previous
-        else:
-            _plugins.pop(type_name, None)
+        _plugins.pop(type_name, None)
 
 
 def compile_transition(name: str, raw: Mapping[str, object]) -> TransitionPlan:

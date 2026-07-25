@@ -97,13 +97,6 @@ void InputDeviceManager::configure_locked(const RemoteConfig &config)
     }
 }
 
-void InputDeviceManager::reconfigure(const RemoteConfig &config)
-{
-    stop();
-    std::lock_guard<std::mutex> guard(state_lock_);
-    configure_locked(config);
-}
-
 void InputDeviceManager::stop()
 {
     std::vector<InputDriver *> drivers;

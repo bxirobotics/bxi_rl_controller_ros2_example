@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass
-import hashlib
 import importlib.util
-from itertools import count
 from pathlib import Path
 import re
 import sys
@@ -16,7 +14,6 @@ import yaml
 
 from bxi_example_py_elf3.utils.robot_state_base import RobotControlState
 from bxi_example_py_elf3.utils.transition_core import (
-    TransitionPluginSnapshot,
     release_transition_plugins,
     restore_transition_plugins,
     snapshot_transition_plugins,
@@ -30,10 +27,6 @@ ResourceFactory = Callable[["ResourceLoadContext"], ResourceT]
 StateFactory = Callable[["StateBuildContext"], RobotControlState]
 ConfigMap = dict[str, object]
 _python_export_owners: dict[str, str] = {}
-_python_export_tokens: dict[str, object] = {}
-_python_path_refcounts: dict[str, int] = {}
-_python_paths_added_by_mods: set[str] = set()
-_module_generations = count()
 
 
 @dataclass(frozen=True)
@@ -51,7 +44,6 @@ class ResourceKey(Generic[ResourceT]):
 class ResourceLoadContext:
     mod_id: str
     mod_root: Path
-    _record_path: Callable[[Path], None] = field(repr=False, compare=False)
 
     def asset(self, relative_path: str) -> Path:
         path = (self.mod_root / relative_path).resolve()
@@ -65,7 +57,6 @@ class ResourceLoadContext:
             raise FileNotFoundError(
                 f"resource asset does not exist in '{self.mod_id}': {relative_path}"
             )
-        self._record_path(path)
         return path
 
 
@@ -96,7 +87,6 @@ class ResourceManager:
 
     def __init__(self) -> None:
         self._providers: dict[str, _ResourceProvider[object]] = {}
-        self._loaded_paths: set[Path] = set()
 
     def register(
         self,
@@ -127,14 +117,9 @@ class ResourceManager:
             context = ResourceLoadContext(
                 mod_id=provider.owner,
                 mod_root=provider.root,
-                _record_path=self._loaded_paths.add,
             )
             provider.instance = provider.factory(context)
         return cast(ResourceT, provider.instance)
-
-    @property
-    def loaded_paths(self) -> tuple[Path, ...]:
-        return tuple(sorted(self._loaded_paths))
 
     def close(self) -> None:
         first_error: Exception | None = None
@@ -298,52 +283,23 @@ class _DiscoveredMod:
 @dataclass
 class _PythonExportSession:
     names: tuple[str, ...]
-    roots: tuple[str, ...]
-    token: object
-    _previous_modules: dict[str, ModuleType]
-    _previous_exports: dict[str, tuple[str, object] | None]
+    added_roots: tuple[str, ...]
+    owners: Mapping[str, str]
     _active: bool = True
-
-    def commit(self) -> None:
-        self._previous_modules.clear()
-        self._previous_exports.clear()
-
-    def rollback(self) -> None:
-        if not self._active:
-            return
-        _remove_owned_python_exports(self.names, self.token)
-        sys.modules.update(self._previous_modules)
-        for name, previous in self._previous_exports.items():
-            if previous is None:
-                _python_export_owners.pop(name, None)
-                _python_export_tokens.pop(name, None)
-            else:
-                owner, token = previous
-                _python_export_owners[name] = owner
-                _python_export_tokens[name] = token
-        self._release_paths()
-        self._active = False
 
     def close(self) -> None:
         if not self._active:
             return
-        _remove_owned_python_exports(self.names, self.token)
-        self._release_paths()
+        _remove_module_prefixes(self.names)
+        for name, owner in self.owners.items():
+            if _python_export_owners.get(name) == owner:
+                _python_export_owners.pop(name, None)
+        for root in self.added_roots:
+            try:
+                sys.path.remove(root)
+            except ValueError:
+                pass
         self._active = False
-
-    def _release_paths(self) -> None:
-        for root in self.roots:
-            remaining = _python_path_refcounts[root] - 1
-            if remaining > 0:
-                _python_path_refcounts[root] = remaining
-                continue
-            _python_path_refcounts.pop(root, None)
-            if root in _python_paths_added_by_mods:
-                _python_paths_added_by_mods.remove(root)
-                try:
-                    sys.path.remove(root)
-                except ValueError:
-                    pass
 
 
 @dataclass
@@ -353,21 +309,15 @@ class ModRuntime:
     resources: ResourceManager
     mods: tuple[LoadedMod, ...]
     disabled_mods: tuple[LoadedMod, ...]
-    watched_paths: tuple[Path, ...]
-    _modules: tuple[ModuleType, ...] = field(repr=False)
     _module_prefixes: tuple[str, ...] = field(repr=False)
     _python_exports: _PythonExportSession = field(repr=False)
-    _transition_plugins: TransitionPluginSnapshot = field(repr=False)
 
     def close(self) -> None:
         try:
             self.resources.close()
         finally:
             _remove_module_prefixes(self._module_prefixes)
-            release_transition_plugins(
-                self._transition_plugins,
-                self._module_prefixes,
-            )
+            release_transition_plugins(self._module_prefixes)
             self._python_exports.close()
 
 
@@ -407,12 +357,9 @@ def load_mod_runtime(
             tuple(module.__name__.split(".", 1)[0] for module in loaded_modules)
         )
         restore_transition_plugins(transition_plugins)
-        python_exports.rollback()
+        python_exports.close()
         raise
 
-    watched: set[Path] = set()
-    for mod in discovered.values():
-        watched.update(path for path in mod.root.rglob("*") if path.is_file())
     loaded = tuple(
         LoadedMod(
             mod.id,
@@ -434,20 +381,16 @@ def load_mod_runtime(
         for mod in discovered.values()
         if not mod.enabled
     )
-    python_exports.commit()
     return ModRuntime(
         config=config,
         state_factories=factories,
         resources=resources,
         mods=loaded,
         disabled_mods=disabled,
-        watched_paths=tuple(sorted(watched)),
-        _modules=tuple(loaded_modules),
         _module_prefixes=tuple(
             module.__name__.split(".", 1)[0] for module in loaded_modules
         ),
         _python_exports=python_exports,
-        _transition_plugins=transition_plugins,
     )
 
 
@@ -566,7 +509,7 @@ def _prepare_python_exports(
                 )
             exports[item] = (mod.id, str(mod.root))
             loaded_owner = _python_export_owners.get(item)
-            if loaded_owner is not None and loaded_owner != mod.id:
+            if loaded_owner is not None:
                 raise ValueError(
                     f"Python package '{item}' was already loaded from Mod "
                     f"'{loaded_owner}'"
@@ -576,40 +519,19 @@ def _prepare_python_exports(
                     f"Mod '{mod.id}' cannot replace already imported package '{item}'"
                 )
 
-    token = object()
     names = tuple(exports)
     roots = tuple(dict.fromkeys(root for _, root in exports.values()))
-    previous_modules = {
-        module_name: module
-        for module_name, module in tuple(sys.modules.items())
-        if any(
-            module_name == name or module_name.startswith(f"{name}.") for name in names
-        )
-    }
-    previous_exports = {
-        name: (
-            (_python_export_owners[name], _python_export_tokens[name])
-            if name in _python_export_owners
-            else None
-        )
-        for name in names
-    }
+    added_roots: list[str] = []
     for root in roots:
-        count = _python_path_refcounts.get(root, 0)
-        if count == 0 and root not in sys.path:
+        if root not in sys.path:
             sys.path.insert(0, root)
-            _python_paths_added_by_mods.add(root)
-        _python_path_refcounts[root] = count + 1
-    _remove_module_prefixes(names)
+            added_roots.append(root)
     for name, (owner, _) in exports.items():
         _python_export_owners[name] = owner
-        _python_export_tokens[name] = token
     return _PythonExportSession(
         names,
-        roots,
-        token,
-        previous_modules,
-        previous_exports,
+        tuple(added_roots),
+        {name: owner for name, (owner, _) in exports.items()},
     )
 
 
@@ -664,15 +586,12 @@ def _load_definition(
 
 
 def _create_dynamic_package(mod: _DiscoveredMod) -> ModuleType:
-    generation = max(
-        (path.stat().st_mtime_ns for path in mod.root.rglob("*") if path.is_file()),
-        default=0,
-    )
-    nonce = next(_module_generations)
-    digest = hashlib.sha256(
-        f"{mod.root}:{generation}:{nonce}".encode("utf-8")
-    ).hexdigest()[:12]
-    package_name = f"_bxi_mod_{re.sub('[^a-zA-Z0-9_]', '_', mod.id)}_{digest}"
+    package_name = f"_bxi_mod_{mod.id.encode('utf-8').hex()}"
+    if package_name in sys.modules:
+        raise RuntimeError(
+            f"Mod '{mod.id}' is already loaded in this process; "
+            "restart the process to load it again"
+        )
     package = ModuleType(package_name)
     package.__path__ = [str(mod.root)]  # type: ignore[attr-defined]
     package.__package__ = package_name
@@ -713,15 +632,11 @@ def _load_mod_module(
         raise RuntimeError(f"cannot load Mod module: {module_file}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[full_name] = module
-    previous_bytecode_setting = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True
     try:
         spec.loader.exec_module(module)
     except Exception:
         sys.modules.pop(full_name, None)
         raise
-    finally:
-        sys.dont_write_bytecode = previous_bytecode_setting
     return module
 
 
@@ -783,14 +698,6 @@ def _remove_module_prefixes(prefixes: Sequence[str]) -> None:
             for prefix in prefixes
         ):
             sys.modules.pop(module_name, None)
-
-
-def _remove_owned_python_exports(names: Sequence[str], token: object) -> None:
-    owned = [name for name in names if _python_export_tokens.get(name) is token]
-    _remove_module_prefixes(owned)
-    for name in owned:
-        _python_export_tokens.pop(name, None)
-        _python_export_owners.pop(name, None)
 
 
 def _compose_config(

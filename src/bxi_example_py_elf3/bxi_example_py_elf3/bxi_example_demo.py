@@ -25,7 +25,6 @@ from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
 
 from bxi_example_py_elf3.inference.normal import NormalMotionPolicyMjlab
-from bxi_example_py_elf3.utils.hot_reload import HotReloadMixin
 from bxi_example_py_elf3.utils.state_machine import (
     RobotStateMachine,
     RemoteEventAdapter,
@@ -113,9 +112,8 @@ kd_recover = np.array([  # 跌到起身腰部手部pd加大(add pd for hands and
     2,2,2,2, 1,2,2],
     dtype=np.float32)
 
-class BxiExample(HotReloadMixin, Node):
-    hot_reload_module_path = __file__
 
+class BxiExample(Node):
     def __init__(self):
         super().__init__("bxi_example_py")
 
@@ -123,7 +121,7 @@ class BxiExample(HotReloadMixin, Node):
         self.load_files()
 
         # 发现 Mods，并将它们的状态图片段组合为运行配置。
-        self.mod_runtime = self.load_mod_runtime(self.base_state_machine_config)
+        self.mod_runtime = self.load_mod_runtime(self.state_machine_config)
         self.resources = self.mod_runtime.resources
         self.state_machine_config = self.mod_runtime.config
 
@@ -184,8 +182,7 @@ class BxiExample(HotReloadMixin, Node):
         self.remote_event_adapter = RemoteEventAdapter(
             self.state_machine_config.get("remote_events", {})
         )
-        self.log_mod_runtime(self.mod_runtime, action="loaded")
-        self.init_hot_reload()
+        self.log_mod_runtime(self.mod_runtime)
 
         self.state = self.state_machine.current_state_id
 
@@ -212,13 +209,12 @@ class BxiExample(HotReloadMixin, Node):
             "/state_machine_config",
             os.path.join(package_share, "config", "elf3_state_machine.yaml"),
         )
-        self.state_machine_config_path = self.get_parameter(
+        state_machine_config_path = self.get_parameter(
             "/state_machine_config"
         ).value
-        self.base_state_machine_config = load_state_machine_config(
-            self.state_machine_config_path
+        self.state_machine_config = load_state_machine_config(
+            state_machine_config_path
         )
-        self.state_machine_config = self.base_state_machine_config
 
         self.declare_parameter("/state_machine_info_topic", "")
         self.state_machine_info_topic = (
@@ -231,9 +227,6 @@ class BxiExample(HotReloadMixin, Node):
         self.state_machine_info_hz = float(
             self.get_parameter("/state_machine_info_hz").value
         )
-
-        self.declare_parameter("/hot_reload", False)
-        self.hot_reload_enabled = bool(self.get_parameter("/hot_reload").value)
 
     def mod_search_roots(
         self, base_config: Mapping[str, object]
@@ -253,6 +246,29 @@ class BxiExample(HotReloadMixin, Node):
             built_in_root=built_in_root,
             extra_roots=extra_roots,
         )
+
+    def log_mod_runtime(self, runtime: ModRuntime) -> None:
+        remote_events = runtime.config.get("remote_events")
+        remote_event_count = (
+            len(remote_events) if isinstance(remote_events, dict) else 0
+        )
+        self.get_logger().info(
+            f"loaded {len(runtime.mods)} Mods, "
+            f"{len(runtime.disabled_mods)} disabled, "
+            f"{len(runtime.state_factories)} states, "
+            f"{remote_event_count} remote events; input conflicts validated"
+        )
+        for mod in runtime.mods:
+            dependencies = (
+                f"; requires={','.join(mod.requires)}" if mod.requires else ""
+            )
+            self.get_logger().info(
+                f"Mod {mod.id}@{mod.version}: {mod.root}{dependencies}"
+            )
+        for mod in runtime.disabled_mods:
+            self.get_logger().info(
+                f"Mod {mod.id}@{mod.version}: disabled; {mod.root}"
+            )
 
     def bind_robot_states(
         self, robot_states: Mapping[str, RobotControlState]
@@ -349,8 +365,6 @@ class BxiExample(HotReloadMixin, Node):
             return
 
         if self.step == 2:
-            self.check_hot_reload(self.dt)
-
             with self.lock_in:
                 self.current_q = self.qpos.copy()
                 self.current_dq = self.qvel.copy()
