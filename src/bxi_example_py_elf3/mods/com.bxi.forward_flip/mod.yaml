@@ -12,7 +12,7 @@ states:
   forward_flip:
     manifest:
       label: 前空翻
-      index: 10
+      priority: 900
       group: Advanced
       icon: rotate_right
       confirm: true

@@ -6,7 +6,6 @@ import importlib.util
 from pathlib import Path
 import re
 import sys
-import warnings
 from types import ModuleType, UnionType
 from typing import Generic, TypeVar, Union, cast, get_args, get_origin, get_type_hints
 
@@ -934,53 +933,55 @@ def _validate_remote_inputs(
 
 
 def _resolve_state_manifest_indexes(states: Mapping[str, object]) -> None:
-    declared_indexes: set[int] = set()
-    indexed_states: list[tuple[str, dict[str, object], Mapping[str, object], int]] = []
+    explicit_owners: dict[int, str] = {}
+    automatic_states: list[
+        tuple[int, str, dict[str, object], Mapping[str, object]]
+    ] = []
 
-    # Validate and reserve every explicitly declared index before assigning new
-    # ones. This prevents an earlier conflict from taking an index that a later
-    # state legitimately declares.
     for state_name, raw_state in states.items():
         state = _mapping(raw_state, f"states.{state_name}")
         manifest = _mapping(state.get("manifest"), f"states.{state_name}.manifest")
+        priority = manifest.get("priority", 0)
+        if isinstance(priority, bool) or not isinstance(priority, int):
+            raise ValueError(
+                f"state '{state_name}' manifest priority must be an integer"
+            )
         index = manifest.get("index")
         if index is None:
+            automatic_states.append(
+                (priority, state_name, cast(dict[str, object], state), manifest)
+            )
             continue
         if isinstance(index, bool) or not isinstance(index, int) or index < 0:
             raise ValueError(
                 f"state '{state_name}' manifest index must be a non-negative integer"
             )
-        indexed_states.append(
-            (state_name, cast(dict[str, object], state), manifest, index)
-        )
-        declared_indexes.add(index)
+        previous = explicit_owners.get(index)
+        if previous is not None:
+            raise ValueError(
+                f"duplicate explicit state manifest index {index}: "
+                f"'{previous}' and '{state_name}'"
+            )
+        explicit_owners[index] = state_name
 
-    owners: dict[int, str] = {}
-    allocated_indexes = set(declared_indexes)
-    for state_name, state, manifest, index in indexed_states:
-        previous = owners.get(index)
-        if previous is None:
-            owners[index] = state_name
-            continue
-
-        new_index = index + 1
-        while new_index in allocated_indexes:
-            new_index += 1
-        allocated_indexes.add(new_index)
-        owners[new_index] = state_name
+    allocated_indexes = set(explicit_owners)
+    next_index = 0
+    for _, _, state, manifest in sorted(
+        automatic_states,
+        key=lambda item: (-item[0], item[1]),
+    ):
+        while next_index in allocated_indexes:
+            next_index += 1
+        allocated_indexes.add(next_index)
         updated_manifest = dict(manifest)
-        updated_manifest["index"] = new_index
+        updated_manifest["index"] = next_index
         state["manifest"] = updated_manifest
-        warnings.warn(
-            f"state manifest index conflict: '{previous}' keeps index {index}; "
-            f"'{state_name}' was reassigned to index {new_index}",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+        next_index += 1
 
 
 _STATE_MANIFEST_FIELDS = (
     "label",
+    "priority",
     "index",
     "group",
     "icon",
