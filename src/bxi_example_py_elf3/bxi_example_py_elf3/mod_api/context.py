@@ -35,9 +35,10 @@ class RobotControlContext(Protocol):
     """Stable controller surface available to states and transitions.
 
     ``current_*`` values are the observation snapshot for the current control
-    cycle.  The remaining arrays describe controller defaults or the most
-    recently published motor frame.  Advanced ROS integrations should use
-    :attr:`ros_node` instead of depending on the concrete controller class.
+    cycle.  ``*_last`` arrays describe the most recently published motor
+    frame.  Target poses and gains belong to states, not this context.
+    Advanced ROS integrations should use :attr:`ros_node` instead of depending
+    on the concrete controller class.
     """
 
     dt: float
@@ -50,12 +51,8 @@ class RobotControlContext(Protocol):
     current_omega: FloatArray
     current_raw_cmd_vel: FloatArray
     current_cmd_vel: FloatArray
-    initial_pos: FloatArray
     qpos: FloatArray
     quat_xyzw: FloatArray
-    joint_kp: FloatArray
-    joint_kd: FloatArray
-    joint_nominal_pos: FloatArray
     pos_last: FloatArray
     kp_last: FloatArray
     kd_last: FloatArray

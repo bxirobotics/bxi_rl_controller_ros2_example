@@ -55,18 +55,10 @@ class _FrameState(
     ABC,
 ):
     def gains(self, ctx: RobotControlContext) -> tuple[object, object]:
-        """Return kp/kd. Override this when a state needs custom gains."""
-        kp = getattr(ctx, "joint_kp", None)
-        kd = getattr(ctx, "joint_kd", None)
-        if kp is None or kd is None:
-            kp = getattr(ctx, "kp_last", None)
-            kd = getattr(ctx, "kd_last", None)
-        if kp is None or kd is None:
-            raise ValueError(
-                f"state '{self.name}' needs ctx.joint_kp/joint_kd or "
-                "ctx.kp_last/kd_last"
-            )
-        return kp, kd
+        """Return state-owned kp/kd when ``frame()`` omits explicit gains."""
+        raise NotImplementedError(
+            f"state '{self.name}' must override gains(ctx) or pass kp/kd to frame()"
+        )
 
     def frame(
         self,

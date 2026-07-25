@@ -71,47 +71,6 @@ joint_name = (
     "r_wrist_z_joint",
 )
 
-joint_nominal_pos = np.array([   # 指定的固定关节角度
-    0.0, 0.0, 0.0,
-    -0.4,0.0,0.0,0.8,-0.4,0.0,
-    -0.4,0.0,0.0,0.8,-0.4,0.0,
-    0.5, 0.3,-0.1,-0.2, 0.0,0.0,0.0,     # 左臂放在大腿旁边 (Y=0 肩平, X=0 前后居中, Z=0 不旋转, 肘关节微弯)
-    0.5,-0.3, 0.1,-0.2, 0.0,0.0,0.0],    # 右臂放在大腿旁边 (Y=0 肩平, X=0 前后居中, Z=0 不旋转, 肘关节微弯)
-    dtype=np.float32)
-
-joint_kp = np.array([     # 指定关节的kp，和joint_name顺序一一对应
-    500,500,300,
-    300,100,100,300,50,50,
-    300,100,100,300,50,50,
-    100,80,80,100, 20,20,20,
-    100,80,80,100, 20,20,20],
-    dtype=np.float32)
-
-joint_kd = np.array([  # 指定关节的kd，和joint_name顺序一一对应
-    3,3,3,
-    2.5,2,2,2.5,2,2,
-    2.5,2,2,2.5,2,2,
-    2.5,2,2,2.5, 1,1,1,
-    2.5,2,2,2.5, 1,1,1],
-    dtype=np.float32)
-
-kp_recover = np.array([     # 跌到起身腰部手部pd加大(add pd for hands and waist)
-    500,500,300,
-    150, 150, 150, 200, 50, 50,
-    150, 150, 150, 200, 50, 50,
-    80, 80, 80, 60, 20, 50, 50,
-    80, 80, 80, 60, 20, 50, 50,],
-    dtype=np.float32)
-
-kd_recover = np.array([  # 跌到起身腰部手部pd加大(add pd for hands and waist)
-    5,3,3,
-    2,2,2,2,1,1,
-    2,2,2,2,1,1,
-    2,2,2,2, 1,2,2,
-    2,2,2,2, 1,2,2],
-    dtype=np.float32)
-
-
 class BxiExample(Node):
     @property
     def ros_node(self) -> Node:
@@ -128,8 +87,6 @@ class BxiExample(Node):
         self.mod_runtime = self.load_mod_runtime(self.state_machine_config)
         self.resources = self.mod_runtime.resources
         self.state_machine_config = self.mod_runtime.config
-
-        self.initial_pos = np.zeros(dof_num, dtype=np.double)
 
         # 订阅发布ros主题
         self.init_pub_sub()
@@ -150,9 +107,6 @@ class BxiExample(Node):
 
         # 状态切换参数
         self.dof_num = dof_num
-        self.joint_nominal_pos = joint_nominal_pos
-        self.joint_kp = joint_kp
-        self.joint_kd = joint_kd
         self.loop_count = 0
         self.motor_target = None
         self.speed_profiles = self.state_machine_config.get("speed_profiles", {})
@@ -399,7 +353,7 @@ class BxiExample(Node):
         self.loop_count += 1
         self.publish_state_machine_info_if_due(events)
 
-    def send_to_motor(self, dof_pos_target, joint_kp, joint_kd):
+    def send_to_motor(self, dof_pos_target, kp, kd):
         msg = bxiMsg.ActuatorCmds()
         msg.header.frame_id = robot_name
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -407,8 +361,8 @@ class BxiExample(Node):
         msg.pos = dof_pos_target.tolist()
         msg.vel = np.zeros(dof_num, dtype=np.float32).tolist()
         msg.torque = np.zeros(dof_num, dtype=np.float32).tolist()
-        msg.kp = joint_kp.tolist()
-        msg.kd = joint_kd.tolist()
+        msg.kp = kp.tolist()
+        msg.kd = kd.tolist()
         self.act_pub.publish(msg)
 
     def publish_state_machine_info_if_due(self, events):

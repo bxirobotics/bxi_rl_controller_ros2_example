@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+import numpy as np
 
 from bxi_example_py_elf3.mod_api import RobotControlState
 from bxi_example_py_elf3.mod_api.transition import (
@@ -14,8 +15,30 @@ if TYPE_CHECKING:
 
 
 class InitialPosState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
+    _TARGET_POSITION = np.zeros(29, dtype=np.float32)
+    _KP = np.array(
+        [
+            500, 500, 300,
+            300, 100, 100, 300, 50, 50,
+            300, 100, 100, 300, 50, 50,
+            100, 80, 80, 100, 20, 20, 20,
+            100, 80, 80, 100, 20, 20, 20,
+        ],
+        dtype=np.float32,
+    )
+    _KD = np.array(
+        [
+            3, 3, 3,
+            2.5, 2, 2, 2.5, 2, 2,
+            2.5, 2, 2, 2.5, 2, 2,
+            2.5, 2, 2, 2.5, 1, 1, 1,
+            2.5, 2, 2, 2.5, 1, 1, 1,
+        ],
+        dtype=np.float32,
+    )
+
     def _frame(self, ctx: RobotControlContext) -> MotorFrame:
-        return self._motor_frame(ctx.initial_pos, ctx.joint_kp, ctx.joint_kd)
+        return self._motor_frame(self._TARGET_POSITION, self._KP, self._KD)
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         return self._frame(ctx)
