@@ -3,7 +3,6 @@ from rclpy.node import Node
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, qos_profile_sensor_data
-from rclpy.time import Time
 import communication.msg as bxiMsg
 import communication.srv as bxiSrv
 import nav_msgs.msg
@@ -11,29 +10,22 @@ import sensor_msgs.msg
 from threading import Lock
 import numpy as np
 
-# import torch
 import time
 import os
-import math
 import json
 from collections import deque
-from collections.abc import Mapping
 from pathlib import Path
-from std_msgs.msg import Header, String
+from std_msgs.msg import String
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
 
-from bxi_example_py_elf3.inference.normal import NormalMotionPolicyMjlab
-from bxi_example_py_elf3._runtime.mod_loader import ModRuntime, load_mod_runtime
-from bxi_example_py_elf3._runtime.state_builder import build_robot_states
-from bxi_example_py_elf3._runtime.state_machine import (
-    RobotStateMachine,
-    RemoteEventAdapter,
-    load_state_machine_config,
+from bxi_example_py_elf3._runtime.controller import (
+    RobotControlFramework,
+    RobotObservation,
 )
-from bxi_example_py_elf3.mod_api import RobotControlState, TransitionSpec
-from bxi_example_py_elf3.mod_api.geometry import quaternion_to_euler_array
+from bxi_example_py_elf3._runtime.state_machine import load_state_machine_config
+from bxi_example_py_elf3.mod_api import MotorFrame
 
 robot_name = "elf3"
 
@@ -71,22 +63,13 @@ joint_name = (
     "r_wrist_z_joint",
 )
 
-class BxiExample(Node):
-    @property
-    def ros_node(self) -> Node:
-        """Advanced Mod escape hatch for custom ROS entities."""
-        return self
 
+class BxiExample(Node):
     def __init__(self):
         super().__init__("bxi_example_py")
 
         # 加载运行参数
         self.load_files()
-
-        # 发现 Mods，并将它们的状态图片段组合为运行配置。
-        self.mod_runtime = self.load_mod_runtime(self.state_machine_config)
-        self.resources = self.mod_runtime.resources
-        self.state_machine_config = self.mod_runtime.config
 
         # 订阅发布ros主题
         self.init_pub_sub()
@@ -97,61 +80,25 @@ class BxiExample(Node):
         self.omega = np.zeros(3, dtype=np.double)
         self.quat_xyzw = np.zeros(4, dtype=np.double)
         self.quat_wxyz = np.zeros(4, dtype=np.double)
-
-        self.pos_last = np.zeros(dof_num, dtype=np.float32)
-        self.kp_last = np.zeros(dof_num, dtype=np.float32)
-        self.kd_last = np.zeros(dof_num, dtype=np.float32)
-        self.pos_last_state = np.zeros(dof_num, dtype=np.float32)
-        self.kp_last_state = np.zeros(dof_num, dtype=np.float32)
-        self.kd_last_state = np.zeros(dof_num, dtype=np.float32)
-
-        # 状态切换参数
-        self.dof_num = dof_num
-        self.loop_count = 0
-        self.motor_target = None
-        self.speed_profiles = self.state_machine_config.get("speed_profiles", {})
-        self.pending_remote_events = deque()
-        self.current_q = np.zeros(dof_num, dtype=np.double)
-        self.current_dq = np.zeros(dof_num, dtype=np.double)
-        self.current_omega = np.zeros(3, dtype=np.double)
-        self.current_quat_xyzw = np.zeros(4, dtype=np.double)
-        self.current_quat_wxyz = np.zeros(4, dtype=np.double)
         self.raw_cmd_vel = np.zeros(3, dtype=np.float32)
-        self.current_raw_cmd_vel = np.zeros(3, dtype=np.float32)
-        self.current_cmd_vel = np.zeros(3, dtype=np.float32)
-
-        robot_states = build_robot_states(
-            self.state_machine_config,
-            self.mod_runtime.state_factories,
-        )
-        self.robot_states = robot_states
-        self.state_id_by_name = {
-            name: state.state_id for name, state in robot_states.items()
-        }
-        self.state_name_by_id = {
-            value: key for key, value in self.state_id_by_name.items()
-        }
-        self.bind_robot_states(robot_states)
-        self.state_machine = RobotStateMachine(
-            self,
-            self.state_machine_config,
-            robot_states,
-        )
-        self.remote_event_adapter = RemoteEventAdapter(
-            self.state_machine_config.get("remote_events", {})
-        )
-        self.log_mod_runtime(self.mod_runtime)
-
-        self.state = self.state_machine.current_state_id
+        self.pending_remote_events = deque()
 
         # 定时器初始化
         self.step = 0
+        self.startup_loop_count = 0
         self.dt = 0.02  # loop @50Hz
-        self.inference_period = self.dt
-        self.inference_timeout_tolerance = 0.005
-        self.last_inference_frame_time = None
-        self.inference_timeout_count = 0
         self.state_machine_info_elapsed = 0.0
+
+        self.framework = RobotControlFramework(
+            self.state_machine_config,
+            built_in_mod_root=self.package_share / "mods",
+            dof_num=dof_num,
+            ros_node=self,
+            inference_period=self.dt,
+        )
+        for message in self.framework.startup_messages():
+            self.get_logger().info(message)
+
         self.timer = self.create_timer(
             self.dt, self.timer_callback, callback_group=self.timer_callback_group_1
         )
@@ -162,10 +109,16 @@ class BxiExample(Node):
             self.get_parameter("/topic_prefix").get_parameter_value().string_value
         )
 
-        package_share = get_package_share_directory("bxi_example_py_elf3")
+        self.package_share = Path(
+            get_package_share_directory("bxi_example_py_elf3")
+        )
         self.declare_parameter(
             "/state_machine_config",
-            os.path.join(package_share, "config", "elf3_state_machine.yaml"),
+            os.path.join(
+                self.package_share,
+                "config",
+                "elf3_state_machine.yaml",
+            ),
         )
         state_machine_config_path = self.get_parameter(
             "/state_machine_config"
@@ -186,67 +139,13 @@ class BxiExample(Node):
             self.get_parameter("/state_machine_info_hz").value
         )
 
-    def mod_search_roots(
-        self, base_config: Mapping[str, object]
-    ) -> tuple[Path, tuple[Path, ...]]:
-        package_share = Path(get_package_share_directory("bxi_example_py_elf3"))
-        raw_paths = base_config.get("mod_paths", ())
-        if not isinstance(raw_paths, list) or not all(
-            isinstance(path, str) for path in raw_paths
-        ):
-            raise ValueError("mod_paths must be a list of directory strings")
-        return package_share / "mods", tuple(Path(path) for path in raw_paths)
-
-    def load_mod_runtime(self, base_config: Mapping[str, object]) -> ModRuntime:
-        built_in_root, extra_roots = self.mod_search_roots(base_config)
-        return load_mod_runtime(
-            base_config,
-            built_in_root=built_in_root,
-            extra_roots=extra_roots,
-        )
-
-    def log_mod_runtime(self, runtime: ModRuntime) -> None:
-        remote_events = runtime.config.get("remote_events")
-        remote_event_count = (
-            len(remote_events) if isinstance(remote_events, dict) else 0
-        )
-        self.get_logger().info(
-            f"loaded {len(runtime.mods)} Mods, "
-            f"{len(runtime.disabled_mods)} disabled, "
-            f"{len(runtime.state_factories)} states, "
-            f"{remote_event_count} remote events; input conflicts validated"
-        )
-        for mod in runtime.mods:
-            dependencies = (
-                f"; requires={','.join(mod.requires)}" if mod.requires else ""
-            )
-            self.get_logger().info(
-                f"Mod {mod.id}@{mod.version}: {mod.root}{dependencies}"
-            )
-        for mod in runtime.disabled_mods:
-            self.get_logger().info(
-                f"Mod {mod.id}@{mod.version}: disabled; {mod.root}"
-            )
-
-    def bind_robot_states(
-        self, robot_states: Mapping[str, RobotControlState]
-    ) -> None:
-        for state in robot_states.values():
-            state.on_bind(self)
-
     def destroy_node(self):
-        runtime = getattr(self, "mod_runtime", None)
-        if runtime is not None and not getattr(self, "_mod_runtime_closed", False):
-            for state in getattr(self, "robot_states", {}).values():
-                try:
-                    state.on_unbind(self)
-                except Exception as exc:
-                    self.get_logger().warning(f"Mod state cleanup failed: {exc}")
+        framework = getattr(self, "framework", None)
+        if framework is not None:
             try:
-                runtime.close()
+                framework.close()
             except Exception as exc:
-                self.get_logger().warning(f"Mod runtime cleanup failed: {exc}")
-            self._mod_runtime_closed = True
+                self.get_logger().warning(f"control framework cleanup failed: {exc}")
         return super().destroy_node()
 
     # ---------------------------------------------------------------------------- #
@@ -314,55 +213,44 @@ class BxiExample(Node):
             print("robot reset 1!")
             self.step = 1
             return
-        elif self.step == 1 and self.loop_count >= (1.0 / self.dt):  # 延迟2s
+        elif self.step == 1 and self.startup_loop_count >= (1.0 / self.dt):
             self.robot_reset(2, True)  # first reset
             print("robot reset 2!")
-            self.loop_count = 0
             self.step = 2
-            self.reset_inference_timeout_monitor()
+            self.framework.reset_inference_timeout_monitor()
             return
 
         if self.step == 2:
             with self.lock_in:
-                self.current_q = self.qpos.copy()
-                self.current_dq = self.qvel.copy()
-                self.current_quat_xyzw = self.quat_xyzw.copy()
-                self.current_quat_wxyz = self.quat_wxyz.copy()
-                self.current_omega = self.omega.copy()
-                self.current_raw_cmd_vel[:] = self.raw_cmd_vel
-                self.current_cmd_vel.fill(0.0)
+                observation = RobotObservation(
+                    q=self.qpos.copy(),
+                    dq=self.qvel.copy(),
+                    quat_xyzw=self.quat_xyzw.copy(),
+                    quat_wxyz=self.quat_wxyz.copy(),
+                    omega=self.omega.copy(),
+                    raw_cmd_vel=self.raw_cmd_vel.copy(),
+                )
                 events = list(self.pending_remote_events)
                 self.pending_remote_events.clear()
 
-            self.motor_target = None
-            transition_active = self.state_machine.update(self.dt, events)
-            self.state = self.state_machine.current_state_id
+            frame = self.framework.update(observation, events, self.dt)
+            if frame is not None:
+                self.send_to_motor(frame)
+        else:
+            self.startup_loop_count += 1
 
-            if not transition_active:
-                self.state_machine.update_current_state(self.dt)
-                self.state = self.state_machine.current_state_id
-
-            if self.motor_target is not None:
-                qpos, kp, kd = self.motor_target
-                self.pos_last = qpos
-                self.kp_last = kp
-                self.kd_last = kd
-                self.check_inference_frame_timeout()
-                self.send_to_motor(qpos, kp, kd)
-
-        self.loop_count += 1
         self.publish_state_machine_info_if_due(events)
 
-    def send_to_motor(self, dof_pos_target, kp, kd):
+    def send_to_motor(self, frame: MotorFrame):
         msg = bxiMsg.ActuatorCmds()
         msg.header.frame_id = robot_name
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.actuators_name = joint_name
-        msg.pos = dof_pos_target.tolist()
+        msg.pos = frame.qpos.tolist()
         msg.vel = np.zeros(dof_num, dtype=np.float32).tolist()
         msg.torque = np.zeros(dof_num, dtype=np.float32).tolist()
-        msg.kp = kp.tolist()
-        msg.kd = kd.tolist()
+        msg.kp = frame.kp.tolist()
+        msg.kd = frame.kd.tolist()
         self.act_pub.publish(msg)
 
     def publish_state_machine_info_if_due(self, events):
@@ -379,8 +267,7 @@ class BxiExample(Node):
 
     def publish_state_machine_info(self, events):
         now = self.get_clock().now()
-        current_cmd_vel = self.current_cmd_vel.tolist()
-        info = self.state_machine.snapshot(include_graph=True)
+        info = self.framework.snapshot(include_graph=True)
         info.update(
             {
                 "stamp": {
@@ -388,13 +275,7 @@ class BxiExample(Node):
                     "nanosec": int(now.nanoseconds % 1000000000),
                 },
                 "step": int(self.step),
-                "loop_count": int(self.loop_count),
                 "events": list(events),
-                "cmd_vel": {
-                    "x": float(current_cmd_vel[0]),
-                    "y": float(current_cmd_vel[1]),
-                    "yaw": float(current_cmd_vel[2]),
-                },
             }
         )
 
@@ -467,7 +348,7 @@ class BxiExample(Node):
                 msg.vel_des.y,
                 msg.yawdot_des,
             )
-            events = self.remote_event_adapter.extract_events(
+            events = self.framework.extract_remote_events(
                 msg, sync_only=self.step < 2
             )
             self.pending_remote_events.extend(events)
@@ -496,90 +377,6 @@ class BxiExample(Node):
         base_twist = msg.twist
 
     # ---------------------------------- ROS话题部分 --------------------------------- #
-    # ---------------------------------------------------------------------------- #
-    #                                     工具类函数                                    #
-    # ---------------------------------------------------------------------------- #
-    def set_motor_target(self, qpos, kp, kd):
-        frame = (
-            np.asarray(qpos, dtype=np.float32).copy(),
-            np.asarray(kp, dtype=np.float32).copy(),
-            np.asarray(kd, dtype=np.float32).copy(),
-        )
-        self.motor_target = frame
-
-    def hold_last_motor_target(self):
-        self.set_motor_target(self.pos_last, self.kp_last, self.kd_last)
-
-    def reset_inference_timeout_monitor(self):
-        self.last_inference_frame_time = None
-        self.inference_timeout_count = 0
-
-    def check_inference_frame_timeout(self):
-        now = time.perf_counter()
-        last = self.last_inference_frame_time
-        self.last_inference_frame_time = now
-        if last is None or self.inference_period <= 0.0:
-            return
-
-        frame_delay = now - last
-        timeout_threshold = self.inference_period + self.inference_timeout_tolerance
-        if frame_delay <= timeout_threshold:
-            return
-
-        self.inference_timeout_count += 1
-        state_name = self.state_name_by_id.get(self.state, str(self.state))
-        print(
-            "[INFERENCE TIMEOUT] "
-            f"state={state_name}, "
-            f"delay={frame_delay * 1000.0:.2f}ms, "
-            f"limit={self.inference_period * 1000.0:.2f}ms "
-            f"({1.0 / self.inference_period:.1f}Hz), "
-            f"tolerance={self.inference_timeout_tolerance * 1000.0:.2f}ms, "
-            f"over={(frame_delay - self.inference_period) * 1000.0:.2f}ms, "
-            f"count={self.inference_timeout_count}"
-        )
-
-    def request_state(
-        self,
-        state_name: str,
-        trigger: str = "code",
-        transition: TransitionSpec = None,
-        delay: float = 0.0,
-    ) -> None:
-        self.state_machine.request_transition(
-            state_name, trigger=trigger, transition=transition, delay=delay
-        )
-
-    def is_orientation_unsafe(self, quat_xyzw):
-        eu_ang = quaternion_to_euler_array(quat_xyzw)
-        eu_ang[eu_ang > math.pi] -= 2 * math.pi
-        return (np.abs(eu_ang[0]) > (math.pi / 3.0)) or (
-            np.abs(eu_ang[1]) > (math.pi / 3.0)
-        )
-
-    # --- 模型切换过渡逻辑 ---
-    def preheat_model(self, model, with_cmd_vel=False, cmd_vel=None):
-        # 用当前观测预推理一次，不输出到电机；有历史观测的模型随后用当前观测填满历史。
-        q = self.qpos.copy()
-        dq = self.qvel.copy()
-        omega = self.omega.copy()
-        quat_xyzw = self.quat_xyzw.copy()
-        quat_wxyz = self.quat_wxyz.copy()
-        if cmd_vel is None:
-            cmd_vel = self.current_cmd_vel.copy()
-        else:
-            cmd_vel = np.asarray(cmd_vel, dtype=np.float32)
-        history_len = getattr(model, "obs_history_len", 1)
-        for _ in range(history_len*2):
-            if type(model) is NormalMotionPolicyMjlab:
-                model.infer_step(q, dq, quat_xyzw, omega, cmd_vel)
-            else:
-                if with_cmd_vel:
-                    model.inference_step(q, dq, quat_wxyz, omega, cmd_vel)
-                else:
-                    model.inference_step(q, dq, quat_wxyz, omega)
-
-# ----------------------------------- 工具类函数 ---------------------------------- #
 
 
 def main(args=None):
