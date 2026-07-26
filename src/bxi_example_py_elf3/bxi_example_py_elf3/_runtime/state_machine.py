@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 import os
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import yaml
 
@@ -118,6 +118,17 @@ class GraphDiagnostic:
     message: str
 
 
+class StateNodeLifecycle(Protocol):
+    def prepare_state(self, state_name: str) -> None:
+        ...
+
+    def cancel_prepared_state(self, state_name: str) -> None:
+        ...
+
+    def finish_transition(self, from_state: str, to_state: str) -> None:
+        ...
+
+
 class RobotStateMachine:
     def __init__(
         self,
@@ -125,6 +136,7 @@ class RobotStateMachine:
         config: Mapping[str, object],
         states: Mapping[str, StateBehavior[BxiExample]],
         action_handlers: Mapping[str, Callable[[], None]] | None = None,
+        node_lifecycle: StateNodeLifecycle | None = None,
         *,
         enter_initial: bool = True,
     ) -> None:
@@ -132,6 +144,7 @@ class RobotStateMachine:
         self._config = dict(config)
         self._states = dict(states)
         self._actions = dict(action_handlers or {})
+        self._node_lifecycle = node_lifecycle
         self._profile_configs = self._parse_profile_configs(
             self._mapping(config.get("transition_profiles"), "transition_profiles")
         )
@@ -284,15 +297,30 @@ class RobotStateMachine:
         transition = rule.transition or self._default_transition
         to_state = self._states[rule.to_state]
         transition.plan.validate_states(self.current, to_state)
+        if self._node_lifecycle is not None:
+            try:
+                self._node_lifecycle.prepare_state(to_state.name)
+            except Exception as exc:
+                self._report_node_start_failure(to_state.name, exc)
+                return
         print(
             f"switch {self.current.name} -> {to_state.name} "
             f"via {transition.name} ({trigger})"
         )
-        to_state.on_prepare(self._ctx, self.current)
+        try:
+            to_state.on_prepare(self._ctx, self.current)
+        except Exception:
+            if self._node_lifecycle is not None:
+                self._node_lifecycle.cancel_prepared_state(to_state.name)
+            raise
         try:
             session = transition.plan.create_session(self._ctx, self.current, to_state)
         except Exception:
-            to_state.on_prepare_cancel(self._ctx, self.current)
+            try:
+                to_state.on_prepare_cancel(self._ctx, self.current)
+            finally:
+                if self._node_lifecycle is not None:
+                    self._node_lifecycle.cancel_prepared_state(to_state.name)
             raise
         self._active = ActiveTransition(
             from_state=self.current,
@@ -326,19 +354,37 @@ class RobotStateMachine:
         if active is None:
             return
         self._active = None
-        active.to_state.on_prepare_cancel(self._ctx, active.from_state)
+        try:
+            active.to_state.on_prepare_cancel(self._ctx, active.from_state)
+        finally:
+            if self._node_lifecycle is not None:
+                self._node_lifecycle.cancel_prepared_state(active.to_state.name)
 
     def _finish_active_transition(self) -> None:
         active = self._active
         if active is None:
             return
         active.from_state.on_exit(self._ctx)
+        if self._node_lifecycle is not None:
+            self._node_lifecycle.finish_transition(
+                active.from_state.name,
+                active.to_state.name,
+            )
         self.current = active.to_state
         self.state_elapsed = 0.0
         self._pending = None
         self._active = None
         self._fired_after_rules.clear()
         self.current.on_enter(self._ctx)
+
+    def _report_node_start_failure(self, state_name: str, exc: Exception) -> None:
+        message = f"cannot enter state '{state_name}': Mod node startup failed: {exc}"
+        logger_factory = getattr(self._ctx, "get_logger", None)
+        if callable(logger_factory):
+            logger = logger_factory()
+            logger.error(message)
+        else:
+            print(f"error: {message}")
 
     def _run_action(self, action_name: str) -> None:
         handler = self._actions.get(action_name)
@@ -674,6 +720,7 @@ class RobotStateMachine:
             "remote_events": dict(
                 self._mapping(self._config.get("remote_events"), "remote_events")
             ),
+            "actions": self._action_snapshots(),
             "transitions": [
                 {
                     "from": source,
@@ -695,6 +742,28 @@ class RobotStateMachine:
                 for source, target, label, rule in self._graph_edges()
             ],
         }
+
+    def _action_snapshots(self) -> list[dict[str, object]]:
+        raw_actions = self._config.get("actions", ())
+        if not isinstance(raw_actions, Sequence) or isinstance(
+            raw_actions, (str, bytes)
+        ):
+            raise ValueError("actions must be a list")
+        snapshots: list[dict[str, object]] = []
+        for index, raw_action in enumerate(raw_actions):
+            action = self._mapping(raw_action, f"actions[{index}]")
+            manifest = self._mapping(
+                action.get("manifest"), f"actions[{index}].manifest"
+            )
+            snapshots.append(
+                {
+                    "from": action.get("from"),
+                    "event": action.get("event"),
+                    "action": action.get("action"),
+                    **manifest,
+                }
+            )
+        return snapshots
 
     def _active_snapshot(self) -> dict[str, object] | None:
         active = self._active

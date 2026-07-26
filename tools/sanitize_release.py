@@ -5,6 +5,7 @@ import argparse
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import shutil
 from typing import cast
 
@@ -16,6 +17,28 @@ PUBLIC_DEV_ONLY_PATHS = {
     Path("tools/sanitize_release.py"),
     Path("tools/README.md"),
     Path(".github/workflows/sync_public_main.yml"),
+}
+REQUIRED_MOD_FIELDS = {
+    "schema",
+    "id",
+    "name",
+    "version",
+    "api",
+    "enable",
+    "entrypoint",
+    "visibility",
+    "requires",
+    "conflicts",
+    "python_exports",
+}
+ALLOWED_MOD_FIELDS = REQUIRED_MOD_FIELDS | {
+    "events",
+    "speed_profiles",
+    "transition_profiles",
+    "states",
+    "routes",
+    "actions",
+    "nodes",
 }
 
 
@@ -43,12 +66,59 @@ def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, Mod
             continue
         for manifest_path in sorted(root.rglob("mod.yaml")):
             manifest = load_yaml(manifest_path)
+            missing_fields = REQUIRED_MOD_FIELDS - set(manifest)
+            if missing_fields:
+                raise ValueError(
+                    f"missing explicit Mod fields in {manifest_path}: "
+                    f"{sorted(missing_fields)}"
+                )
+            unknown_fields = set(manifest) - ALLOWED_MOD_FIELDS
+            if unknown_fields:
+                raise ValueError(
+                    f"unknown Mod fields in {manifest_path}: "
+                    f"{sorted(unknown_fields)}"
+                )
+            if manifest["schema"] != 1 or manifest["api"] != 1:
+                raise ValueError(f"unsupported Mod schema/api: {manifest_path}")
             mod_id = manifest.get("id")
-            if not isinstance(mod_id, str) or not mod_id:
+            if not isinstance(mod_id, str) or not re.fullmatch(
+                r"[a-z0-9]+(?:[._-][a-z0-9]+)+", mod_id
+            ):
                 raise ValueError(f"invalid Mod id: {manifest_path}")
             if mod_id in mods:
                 raise ValueError(f"duplicate Mod id in release tree: {mod_id}")
-            raw_requires = manifest.get("requires", ())
+            if not isinstance(manifest["name"], str) or not manifest["name"].strip():
+                raise ValueError(f"invalid Mod name: {manifest_path}")
+            version = manifest["version"]
+            if not isinstance(version, str) or not re.fullmatch(
+                r"\d+(?:\.\d+)*", version
+            ):
+                raise ValueError(f"invalid Mod version: {manifest_path}")
+            if not isinstance(manifest["enable"], bool):
+                raise ValueError(f"enable must be a boolean: {manifest_path}")
+            entrypoint = manifest["entrypoint"]
+            if entrypoint is not None and (
+                not isinstance(entrypoint, str) or not entrypoint
+            ):
+                raise ValueError(
+                    f"entrypoint must be null or a non-empty string: {manifest_path}"
+                )
+            if manifest["visibility"] not in ("public", "protected"):
+                raise ValueError(
+                    f"visibility must be public or protected: {manifest_path}"
+                )
+            python_exports = manifest["python_exports"]
+            if (
+                not isinstance(python_exports, Sequence)
+                or isinstance(python_exports, (str, bytes))
+                or not all(
+                    isinstance(item, str)
+                    and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", item)
+                    for item in python_exports
+                )
+            ):
+                raise ValueError(f"invalid python_exports: {manifest_path}")
+            raw_requires = manifest["requires"]
             if not isinstance(raw_requires, Sequence) or isinstance(
                 raw_requires, (str, bytes)
             ):
@@ -63,16 +133,67 @@ def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, Mod
                     raise ValueError(
                         f"invalid requirement in {manifest_path}: {item!r}"
                     )
-            raw_routes = manifest.get("routes", ())
-            if not isinstance(raw_routes, Sequence) or isinstance(
-                raw_routes, (str, bytes)
+            raw_conflicts = manifest["conflicts"]
+            if not isinstance(raw_conflicts, Sequence) or isinstance(
+                raw_conflicts, (str, bytes)
             ):
-                raise ValueError(f"routes must be a list: {manifest_path}")
-            for route in raw_routes:
-                if not isinstance(route, Mapping):
-                    raise ValueError(f"invalid route in {manifest_path}: {route!r}")
-                for field in ("from", "to", "event"):
-                    reference = route.get(field)
+                raise ValueError(f"conflicts must be a list: {manifest_path}")
+            conflicts: list[str] = []
+            for conflict in raw_conflicts:
+                if not isinstance(conflict, str) or not re.fullmatch(
+                    r"[a-z0-9]+(?:[._-][a-z0-9]+)+", conflict
+                ):
+                    raise ValueError(
+                        f"invalid conflict in {manifest_path}: {conflict!r}"
+                    )
+                if conflict == mod_id:
+                    raise ValueError(f"Mod conflicts with itself: {manifest_path}")
+                if conflict in conflicts:
+                    raise ValueError(
+                        f"duplicate conflict in {manifest_path}: {conflict}"
+                    )
+                conflicts.append(conflict)
+            for collection_name, reference_fields in (
+                ("routes", ("from", "to", "event")),
+                ("actions", ("from", "event")),
+            ):
+                raw_rules = manifest.get(collection_name, ())
+                if not isinstance(raw_rules, Sequence) or isinstance(
+                    raw_rules, (str, bytes)
+                ):
+                    raise ValueError(
+                        f"{collection_name} must be a list: {manifest_path}"
+                    )
+                for rule in raw_rules:
+                    if not isinstance(rule, Mapping):
+                        raise ValueError(
+                            f"invalid {collection_name} entry in "
+                            f"{manifest_path}: {rule!r}"
+                        )
+                    for field in reference_fields:
+                        reference = rule.get(field)
+                        if not isinstance(reference, str) or "/" not in reference:
+                            continue
+                        owner = reference.split("/", 1)[0]
+                        if owner != mod_id:
+                            requires.append(owner)
+            raw_nodes = manifest.get("nodes", {})
+            if not isinstance(raw_nodes, Mapping):
+                raise ValueError(f"nodes must be a map: {manifest_path}")
+            for node_name, raw_node in raw_nodes.items():
+                if not isinstance(node_name, str) or not isinstance(raw_node, Mapping):
+                    raise ValueError(
+                        f"invalid node declaration in {manifest_path}: "
+                        f"{node_name!r}={raw_node!r}"
+                    )
+                raw_states = raw_node.get("states", ())
+                if not isinstance(raw_states, Sequence) or isinstance(
+                    raw_states, (str, bytes)
+                ):
+                    raise ValueError(
+                        f"nodes.{node_name}.states must be a list: {manifest_path}"
+                    )
+                for reference in raw_states:
                     if not isinstance(reference, str) or "/" not in reference:
                         continue
                     owner = reference.split("/", 1)[0]
@@ -82,7 +203,7 @@ def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, Mod
                 id=mod_id,
                 root=manifest_path.parent.relative_to(source_root),
                 requires=tuple(dict.fromkeys(requires)),
-                protected=manifest.get("visibility", "public") == "protected",
+                protected=manifest["visibility"] == "protected",
             )
     if not mods:
         raise ValueError("no Mods found for release")

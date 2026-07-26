@@ -19,6 +19,8 @@ from bxi_example_py_elf3.mod_api.mod import (
     StateBuildContext,
     StateFactory,
 )
+from bxi_example_py_elf3.mod_api.node import NodeFactory
+from bxi_example_py_elf3._runtime.mod_nodes import ModNodeSpec
 from bxi_example_py_elf3._runtime.resource_manager import ResourceManager
 from bxi_example_py_elf3.mod_api.state import RobotControlState
 from bxi_example_py_elf3._runtime.transition import (
@@ -57,6 +59,7 @@ class _DiscoveredMod:
     manifest_path: Path
     manifest: Mapping[str, object]
     requires: tuple[_Requirement, ...]
+    conflicts: tuple[str, ...]
 
 
 @dataclass
@@ -88,6 +91,7 @@ class ModRuntime:
     resources: ResourceManager
     mods: tuple[LoadedMod, ...]
     disabled_mods: tuple[LoadedMod, ...]
+    node_specs: tuple[ModNodeSpec, ...]
     _module_prefixes: tuple[str, ...] = field(repr=False)
     _python_exports: _PythonExportSession = field(repr=False)
 
@@ -117,18 +121,22 @@ def load_mod_runtime(
                 raise ValueError(
                     f"Mod '{mod.id}' requires disabled Mod '{requirement.id}'"
                 )
+    _validate_mod_conflicts(enabled)
     ordered = _dependency_order(enabled)
     transition_plugins = snapshot_transition_plugins()
     python_exports = _prepare_python_exports(ordered)
     resources = ResourceManager()
     definitions: dict[str, ModDefinition] = {}
     loaded_modules: list[ModuleType] = []
+    node_specs: list[ModNodeSpec] = []
 
     try:
         for mod in ordered:
             definition, module = _load_definition(mod, resources)
             definitions[mod.id] = definition
             loaded_modules.append(module)
+            package = sys.modules[module.__name__.split(".", 1)[0]]
+            node_specs.extend(_load_mod_node_specs(mod, package))
             for type_name, plugin in definition.transition_plugins.items():
                 if type_name != plugin.type_name:
                     raise ValueError(
@@ -137,6 +145,7 @@ def load_mod_runtime(
                     )
                 register_transition_plugin(plugin)
         config, factories = _compose_config(base_config, ordered, definitions)
+        _validate_mod_node_states(node_specs, config)
     except Exception:
         resources.close()
         _remove_module_prefixes(
@@ -173,6 +182,7 @@ def load_mod_runtime(
         resources=resources,
         mods=loaded,
         disabled_mods=disabled,
+        node_specs=tuple(node_specs),
         _module_prefixes=tuple(
             module.__name__.split(".", 1)[0] for module in loaded_modules
         ),
@@ -190,7 +200,41 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
         manifests.extend(root.rglob("mod.yaml"))
         for manifest_path in sorted(set(manifests)):
             manifest = _yaml_mapping(manifest_path)
-            schema = manifest.get("schema", 1)
+            required_header = {
+                "schema",
+                "id",
+                "name",
+                "version",
+                "api",
+                "enable",
+                "entrypoint",
+                "visibility",
+                "requires",
+                "conflicts",
+                "python_exports",
+            }
+            missing_header = required_header - set(manifest)
+            if missing_header:
+                raise ValueError(
+                    f"{manifest_path}: missing explicit Mod fields: "
+                    f"{sorted(missing_header)}"
+                )
+            allowed_fields = required_header | {
+                "events",
+                "speed_profiles",
+                "transition_profiles",
+                "states",
+                "routes",
+                "actions",
+                "nodes",
+            }
+            unknown_fields = set(manifest) - allowed_fields
+            if unknown_fields:
+                raise ValueError(
+                    f"{manifest_path}: unknown Mod fields: {sorted(unknown_fields)}"
+                )
+
+            schema = manifest["schema"]
             if schema != 1:
                 raise ValueError(f"{manifest_path}: unsupported Mod schema {schema!r}")
             mod_id = _required_string(manifest, "id", manifest_path)
@@ -198,15 +242,41 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
                 raise ValueError(
                     f"{manifest_path}: invalid namespaced Mod id '{mod_id}'"
                 )
+            name = _required_string(manifest, "name", manifest_path)
+            if not name.strip():
+                raise ValueError(f"{manifest_path}: 'name' must not be blank")
             version = _required_string(manifest, "version", manifest_path)
             _version_tuple(version)
-            api = manifest.get("api", 1)
+            api = manifest["api"]
             if api != 1:
                 raise ValueError(f"{manifest_path}: unsupported Mod API {api!r}")
-            enabled = manifest.get("enable", True)
+            enabled = manifest["enable"]
             if not isinstance(enabled, bool):
                 raise ValueError(f"{manifest_path}: 'enable' must be a boolean")
-            requires = _read_requirements(manifest.get("requires"), manifest_path)
+            entrypoint = manifest["entrypoint"]
+            if entrypoint is not None and (
+                not isinstance(entrypoint, str) or not entrypoint
+            ):
+                raise ValueError(
+                    f"{manifest_path}: 'entrypoint' must be null or a non-empty string"
+                )
+            visibility = manifest["visibility"]
+            if visibility not in ("public", "protected"):
+                raise ValueError(
+                    f"{manifest_path}: 'visibility' must be 'public' or 'protected'"
+                )
+            requires = _read_requirements(manifest["requires"], manifest_path)
+            conflicts = _read_mod_id_list(
+                manifest["conflicts"], "conflicts", manifest_path
+            )
+            if mod_id in conflicts:
+                raise ValueError(f"{manifest_path}: Mod cannot conflict with itself")
+            _read_mod_id_list(
+                manifest["python_exports"],
+                "python_exports",
+                manifest_path,
+                python_names=True,
+            )
             previous = result.get(mod_id)
             if previous is not None:
                 raise ValueError(
@@ -220,10 +290,22 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
                 manifest_path=manifest_path,
                 manifest=manifest,
                 requires=requires,
+                conflicts=conflicts,
             )
     if not result:
         raise ValueError(f"no Mods found in: {', '.join(map(str, roots))}")
     return result
+
+
+def _validate_mod_conflicts(mods: Mapping[str, _DiscoveredMod]) -> None:
+    for mod in mods.values():
+        for conflict_id in mod.conflicts:
+            if conflict_id not in mods:
+                continue
+            raise ValueError(
+                f"enabled Mods conflict: '{mod.id}' declares conflict with "
+                f"'{conflict_id}'"
+            )
 
 
 def _dependency_order(mods: Mapping[str, _DiscoveredMod]) -> list[_DiscoveredMod]:
@@ -270,7 +352,7 @@ def _prepare_python_exports(
 ) -> _PythonExportSession:
     exports: dict[str, tuple[str, str]] = {}
     for mod in mods:
-        raw_exports = mod.manifest.get("python_exports", ())
+        raw_exports = mod.manifest["python_exports"]
         if not isinstance(raw_exports, Sequence) or isinstance(
             raw_exports, (str, bytes)
         ):
@@ -325,9 +407,7 @@ def _load_definition(
     mod: _DiscoveredMod,
     resources: ResourceManager,
 ) -> tuple[ModDefinition, ModuleType]:
-    entrypoint_value = mod.manifest.get("entrypoint")
-    if entrypoint_value is None and (mod.root / "plugin.py").is_file():
-        entrypoint_value = "plugin:create_mod"
+    entrypoint_value = mod.manifest["entrypoint"]
     if entrypoint_value is None:
         package = _create_dynamic_package(mod)
         try:
@@ -426,6 +506,191 @@ def _load_mod_module(
     return module
 
 
+def _load_mod_node_specs(
+    mod: _DiscoveredMod,
+    package: ModuleType,
+) -> list[ModNodeSpec]:
+    raw_nodes = _mapping(mod.manifest.get("nodes"), f"{mod.id}.nodes")
+    specs: list[ModNodeSpec] = []
+    for local_name, raw_node in raw_nodes.items():
+        _validate_local_name(mod.id, local_name, "node")
+        context = f"{mod.id}.nodes.{local_name}"
+        node = _mapping(raw_node, context)
+        allowed_fields = {
+            "entrypoint",
+            "execution",
+            "lifecycle",
+            "states",
+            "params",
+            "manifest",
+            "restart",
+        }
+        unknown_fields = set(node) - allowed_fields
+        if unknown_fields:
+            raise ValueError(f"{context} has unknown fields: {sorted(unknown_fields)}")
+
+        entrypoint = node.get("entrypoint")
+        if not isinstance(entrypoint, str) or not entrypoint:
+            raise ValueError(f"{context}.entrypoint must be a non-empty string")
+        module_name, function_name = _parse_entrypoint(
+            entrypoint,
+            f"{context}.entrypoint",
+        )
+        module = _load_mod_module(mod, package, module_name)
+        factory = getattr(module, function_name, None)
+        if not callable(factory):
+            raise TypeError(f"{context}.entrypoint is not callable: {entrypoint}")
+
+        execution = node.get("execution", "in_process")
+        if execution not in ("in_process", "process"):
+            raise ValueError(f"{context}.execution must be 'in_process' or 'process'")
+        lifecycle = node.get("lifecycle", "mod")
+        if lifecycle not in ("mod", "state"):
+            raise ValueError(f"{context}.lifecycle must be 'mod' or 'state'")
+
+        raw_states = node.get("states", ())
+        if not isinstance(raw_states, Sequence) or isinstance(raw_states, (str, bytes)):
+            raise ValueError(f"{context}.states must be a list")
+        states: list[str] = []
+        for state in raw_states:
+            if not isinstance(state, str) or not state:
+                raise ValueError(f"{context}.states entries must be non-empty strings")
+            states.append(_qualify(mod.id, state))
+        if lifecycle == "state" and not states:
+            raise ValueError(f"{context}.states is required for state lifecycle")
+        if lifecycle == "mod" and states:
+            raise ValueError(f"{context}.states is only valid for state lifecycle")
+
+        params = dict(_mapping(node.get("params"), f"{context}.params"))
+        manifest = dict(_mapping(node.get("manifest"), f"{context}.manifest"))
+        label = manifest.get("label")
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError(f"{context}.manifest.label must be a non-empty string")
+        reserved_manifest_fields = {
+            "id",
+            "entrypoint",
+            "execution",
+            "lifecycle",
+            "states",
+            "status",
+            "restart_attempts",
+            "error",
+        }
+        conflicts = set(manifest) & reserved_manifest_fields
+        if conflicts:
+            raise ValueError(
+                f"{context}.manifest uses reserved fields: {sorted(conflicts)}"
+            )
+
+        restart = _mapping(node.get("restart"), f"{context}.restart")
+        if execution != "process" and restart:
+            raise ValueError(f"{context}.restart is only valid for process execution")
+        restart_unknown = set(restart) - {"max_attempts", "delay"}
+        if restart_unknown:
+            raise ValueError(
+                f"{context}.restart has unknown fields: {sorted(restart_unknown)}"
+            )
+        max_attempts = restart.get("max_attempts", 3)
+        if (
+            isinstance(max_attempts, bool)
+            or not isinstance(max_attempts, int)
+            or max_attempts < 0
+        ):
+            raise ValueError(
+                f"{context}.restart.max_attempts must be a non-negative integer"
+            )
+        restart_delay = restart.get("delay", 1.0)
+        if (
+            isinstance(restart_delay, bool)
+            or not isinstance(restart_delay, (int, float))
+            or restart_delay < 0.0
+        ):
+            raise ValueError(f"{context}.restart.delay must be a non-negative number")
+
+        node_id = _qualify(mod.id, local_name)
+        node_name = re.sub(r"[^A-Za-z0-9_]", "_", node_id)
+        if not re.match(r"[A-Za-z_]", node_name):
+            node_name = f"node_{node_name}"
+        specs.append(
+            ModNodeSpec(
+                id=node_id,
+                mod_id=mod.id,
+                local_name=local_name,
+                node_name=node_name,
+                mod_root=mod.root,
+                manifest_path=mod.manifest_path,
+                entrypoint=entrypoint,
+                execution=execution,
+                lifecycle=lifecycle,
+                states=tuple(dict.fromkeys(states)),
+                params=params,
+                manifest=manifest,
+                restart_max_attempts=max_attempts,
+                restart_delay=float(restart_delay),
+                factory=cast(NodeFactory, factory),
+            )
+        )
+    return specs
+
+
+def _parse_entrypoint(reference: str, context: str) -> tuple[str, str]:
+    module_name, separator, function_name = reference.partition(":")
+    if not separator or not module_name or not function_name:
+        raise ValueError(f"{context} must look like 'module:function'")
+    if (
+        not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*",
+            module_name,
+        )
+        or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", function_name)
+    ):
+        raise ValueError(f"{context} is invalid: {reference!r}")
+    return module_name, function_name
+
+
+def _validate_mod_node_states(
+    specs: Sequence[ModNodeSpec],
+    config: Mapping[str, object],
+) -> None:
+    states = _mapping(config.get("states"), "states")
+    for spec in specs:
+        unknown = sorted(set(spec.states) - set(states))
+        if unknown:
+            raise ValueError(
+                f"Mod node '{spec.id}' references unknown states: {unknown}"
+            )
+
+
+def load_process_node_spec(
+    manifest_path: Path,
+    local_name: str,
+) -> tuple[ModNodeSpec, str]:
+    """Load one node spec inside the dedicated child-process runner."""
+
+    manifest_path = manifest_path.resolve()
+    discovered = _discover_mods((manifest_path.parent,))
+    mod = next(
+        (
+            item
+            for item in discovered.values()
+            if item.manifest_path.resolve() == manifest_path
+        ),
+        None,
+    )
+    if mod is None:
+        raise ValueError(f"Mod manifest was not discovered: {manifest_path}")
+    package = _create_dynamic_package(mod)
+    try:
+        specs = _load_mod_node_specs(mod, package)
+        spec = next((item for item in specs if item.local_name == local_name), None)
+        if spec is None:
+            raise ValueError(f"Mod '{mod.id}' has no node '{local_name}'")
+    except Exception:
+        _remove_module_prefixes((package.__name__,))
+        raise
+    return spec, package.__name__
+
+
 def _load_convention_definition(
     mod: _DiscoveredMod,
     package: ModuleType,
@@ -501,7 +766,8 @@ def _compose_config(
         _mapping(config.get("transition_profiles"), "transition_profiles")
     )
     factories: dict[str, StateFactory] = {}
-    routes: list[tuple[_DiscoveredMod, Mapping[str, object]]] = []
+    event_rules: list[tuple[_DiscoveredMod, str, Mapping[str, object]]] = []
+    actions: list[dict[str, object]] = []
 
     for mod in mods:
         definition = definitions[mod.id]
@@ -560,71 +826,121 @@ def _compose_config(
         if not isinstance(raw_routes, Sequence) or isinstance(raw_routes, (str, bytes)):
             raise ValueError(f"{mod.id}.routes must be a list")
         for index, raw_route in enumerate(raw_routes):
-            routes.append((mod, _mapping(raw_route, f"{mod.id}.routes[{index}]")))
+            event_rules.append(
+                (
+                    mod,
+                    "route",
+                    _mapping(raw_route, f"{mod.id}.routes[{index}]"),
+                )
+            )
+        raw_actions = mod.manifest.get("actions", ())
+        if not isinstance(raw_actions, Sequence) or isinstance(
+            raw_actions, (str, bytes)
+        ):
+            raise ValueError(f"{mod.id}.actions must be a list")
+        for index, raw_action in enumerate(raw_actions):
+            event_rules.append(
+                (
+                    mod,
+                    "action",
+                    _mapping(raw_action, f"{mod.id}.actions[{index}]"),
+                )
+            )
 
-    for mod, route in routes:
-        from_name = _qualify(mod.id, _required_string(route, "from", mod.manifest_path))
+    for mod, rule_kind, event_rule in event_rules:
+        allowed_fields = (
+            {"from", "event", "to", "transition", "delay"}
+            if rule_kind == "route"
+            else {"from", "event", "action", "manifest"}
+        )
+        unknown_fields = set(event_rule) - allowed_fields
+        if unknown_fields:
+            raise ValueError(
+                f"Mod '{mod.id}' {rule_kind} has unknown fields: "
+                f"{sorted(unknown_fields)}"
+            )
+        from_name = _qualify(
+            mod.id,
+            _required_string(event_rule, "from", mod.manifest_path),
+        )
         source = states.get(from_name)
         if source is None:
             raise ValueError(
-                f"Mod '{mod.id}' route references unknown source '{from_name}'"
+                f"Mod '{mod.id}' {rule_kind} references unknown source '{from_name}'"
             )
         source_map = cast(dict[str, object], source)
         transitions = source_map.setdefault("transitions", {})
         if not isinstance(transitions, dict):
             raise ValueError(f"state '{from_name}'.transitions must be a map")
         event_name = _qualify(
-            mod.id, _required_string(route, "event", mod.manifest_path)
+            mod.id,
+            _required_string(event_rule, "event", mod.manifest_path),
         )
         if event_name not in remote_events:
             raise ValueError(
-                f"Mod '{mod.id}' route references unknown event '{event_name}'"
+                f"Mod '{mod.id}' {rule_kind} references unknown event '{event_name}'"
             )
         on_event = transitions.setdefault("on_event", {})
         if not isinstance(on_event, dict):
             raise ValueError(f"state '{from_name}'.transitions.on_event must be a map")
         if event_name in on_event:
             raise ValueError(
-                f"duplicate route for state '{from_name}', event '{event_name}'"
-            )
-        target = route.get("to")
-        action = route.get("action")
-        if target is None and action is None:
-            raise ValueError(
-                f"route '{from_name}'/'{event_name}' needs 'to' or 'action'"
+                f"duplicate route/action for state '{from_name}', event '{event_name}'"
             )
         rule: dict[str, object] = {}
-        if target is not None:
-            if not isinstance(target, str):
-                raise ValueError(
-                    f"route '{from_name}'/'{event_name}'.to must be a string"
-                )
+        if rule_kind == "route":
+            target = _required_string(event_rule, "to", mod.manifest_path)
             target_name = _qualify(mod.id, target)
             if target_name not in states:
                 raise ValueError(
                     f"Mod '{mod.id}' route targets unknown state '{target_name}'"
                 )
             rule["to"] = target_name
-        if action is not None:
-            if not isinstance(action, str):
-                raise ValueError(
-                    f"route '{from_name}'/'{event_name}'.action must be a string"
-                )
+        else:
+            action = _required_string(event_rule, "action", mod.manifest_path)
             rule["action"] = action
-        if "transition" in route:
+            manifest = dict(
+                _mapping(
+                    event_rule.get("manifest"),
+                    f"{mod.id}.actions manifest",
+                )
+            )
+            label = manifest.get("label")
+            if not isinstance(label, str) or not label.strip():
+                raise ValueError(
+                    f"Mod '{mod.id}' action '{from_name}'/'{event_name}' "
+                    "manifest.label must be a non-empty string"
+                )
+            reserved_manifest_fields = {"from", "event", "action", "manifest"}
+            conflicting_fields = set(manifest) & reserved_manifest_fields
+            if conflicting_fields:
+                raise ValueError(
+                    f"Mod '{mod.id}' action manifest uses reserved fields: "
+                    f"{sorted(conflicting_fields)}"
+                )
+            actions.append(
+                {
+                    "from": from_name,
+                    "event": event_name,
+                    "action": action,
+                    "manifest": manifest,
+                }
+            )
+        if "transition" in event_rule:
             rule["transition"] = _normalize_transition_reference(
                 mod.id,
-                route["transition"],
+                event_rule["transition"],
                 transition_profiles,
             )
-        if "delay" in route:
-            rule["delay"] = route["delay"]
+        if "delay" in event_rule:
+            rule["delay"] = event_rule["delay"]
         on_event[event_name] = rule
 
     config["states"] = states
     config["remote_events"] = remote_events
     config["speed_profiles"] = speed_profiles
     config["transition_profiles"] = transition_profiles
+    config["actions"] = actions
     _validate_remote_inputs(states, remote_events)
     _resolve_state_manifest_indexes(states)
     for state_name, raw_state in states.items():
@@ -716,7 +1032,7 @@ def _validate_remote_inputs(
 
     unused = sorted(set(bindings) - used_events)
     if unused:
-        raise ValueError(f"remote events have no routes: {unused}")
+        raise ValueError(f"remote events have no routes or actions: {unused}")
 
 
 def _resolve_state_manifest_indexes(states: Mapping[str, object]) -> None:
@@ -828,8 +1144,6 @@ def _normalize_transition_reference(
 
 
 def _read_requirements(value: object, path: Path) -> tuple[_Requirement, ...]:
-    if value is None:
-        return ()
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         raise ValueError(f"{path}: requires must be a list")
     requirements: list[_Requirement] = []
@@ -847,6 +1161,29 @@ def _read_requirements(value: object, path: Path) -> tuple[_Requirement, ...]:
         else:
             raise ValueError(f"{path}: requires[{index}] must be a string or map")
     return tuple(requirements)
+
+
+def _read_mod_id_list(
+    value: object,
+    field: str,
+    path: Path,
+    *,
+    python_names: bool = False,
+) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"{path}: {field} must be a list")
+    pattern = (
+        r"[A-Za-z_][A-Za-z0-9_]*" if python_names else r"[a-z0-9]+(?:[._-][a-z0-9]+)+"
+    )
+    result: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not re.fullmatch(pattern, item):
+            kind = "Python package name" if python_names else "namespaced Mod id"
+            raise ValueError(f"{path}: {field}[{index}] must be a valid {kind}")
+        if item in result:
+            raise ValueError(f"{path}: duplicate {field} entry '{item}'")
+        result.append(item)
+    return tuple(result)
 
 
 def _version_matches(version: str, specifier: str) -> bool:

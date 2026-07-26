@@ -15,6 +15,7 @@ from bxi_example_py_elf3.mod_api import MotorFrame, RobotControlState, Transitio
 from bxi_example_py_elf3.mod_api.geometry import quaternion_to_euler_array
 
 from .mod_loader import ModRuntime, load_mod_runtime
+from .mod_nodes import ExecutorLike, ModNodeManager
 from .state_builder import build_robot_states
 from .state_machine import RemoteEventAdapter, RobotStateMachine
 
@@ -83,6 +84,7 @@ class RobotControlFramework:
         self.inference_timeout_count = 0
 
         runtime: ModRuntime | None = None
+        node_manager: ModNodeManager | None = None
         states_bound = False
         try:
             if extra_mod_roots is None:
@@ -101,6 +103,12 @@ class RobotControlFramework:
             self.resources = runtime.resources
             self.config = runtime.config
             self.speed_profiles = self.config.get("speed_profiles", {})
+            node_manager = ModNodeManager(
+                runtime.node_specs,
+                logger=self._ros_node.get_logger(),
+            )
+            self.node_manager = node_manager
+            node_manager.start()
 
             states = build_robot_states(self.config, runtime.state_factories)
             self.robot_states = states
@@ -112,7 +120,17 @@ class RobotControlFramework:
             }
             self._bind_states(states)
             states_bound = True
-            self.state_machine = RobotStateMachine(self, self.config, states)
+            raw_initial = self.config.get("initial_state")
+            initial_state = (
+                str(raw_initial) if raw_initial is not None else next(iter(states))
+            )
+            node_manager.activate_initial_state(initial_state)
+            self.state_machine = RobotStateMachine(
+                self,
+                self.config,
+                states,
+                node_lifecycle=node_manager,
+            )
             self.remote_event_adapter = RemoteEventAdapter(
                 self.config.get("remote_events", {})
             )
@@ -122,6 +140,11 @@ class RobotControlFramework:
                     self._unbind_states(self.robot_states)
                 except Exception as cleanup_exc:
                     self._warn_cleanup_failure("state", cleanup_exc)
+            if node_manager is not None:
+                try:
+                    node_manager.close()
+                except Exception as cleanup_exc:
+                    self._warn_cleanup_failure("Mod node", cleanup_exc)
             if runtime is not None:
                 try:
                     runtime.close()
@@ -149,6 +172,7 @@ class RobotControlFramework:
             raise RuntimeError("RobotControlFramework is closed")
 
         self.dt = float(dt)
+        self.node_manager.poll()
         self._set_observation(observation)
         self.current_cmd_vel.fill(0.0)
         self._motor_target = None
@@ -203,6 +227,7 @@ class RobotControlFramework:
                     "yaw": float(self.current_cmd_vel[2]),
                 },
                 "inference_timeout_count": self.inference_timeout_count,
+                "nodes": self.node_manager.snapshot(),
             }
         )
         return info
@@ -210,10 +235,12 @@ class RobotControlFramework:
     def startup_messages(self) -> tuple[str, ...]:
         events = self.config.get("remote_events")
         event_count = len(events) if isinstance(events, Mapping) else 0
+        node_count = len(self.mod_runtime.node_specs)
         messages = [
             f"loaded {len(self.mod_runtime.mods)} Mods, "
             f"{len(self.mod_runtime.disabled_mods)} disabled, "
             f"{len(self.mod_runtime.state_factories)} states, "
+            f"{node_count} nodes, "
             f"{event_count} remote events; input conflicts validated"
         ]
         for mod in self.mod_runtime.mods:
@@ -278,6 +305,13 @@ class RobotControlFramework:
         except Exception as exc:
             first_error = exc
         try:
+            self.node_manager.close()
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+            else:
+                self._warn_cleanup_failure("Mod node", exc)
+        try:
             self.mod_runtime.close()
         except Exception as exc:
             if first_error is None:
@@ -286,6 +320,12 @@ class RobotControlFramework:
                 self._warn_cleanup_failure("Mod runtime", exc)
         if first_error is not None:
             raise first_error
+
+    def attach_executor(self, executor: ExecutorLike) -> None:
+        self.node_manager.attach_executor(executor)
+
+    def detach_executor(self) -> None:
+        self.node_manager.detach_executor()
 
     def _warn_cleanup_failure(self, component: str, exc: Exception) -> None:
         try:

@@ -7,6 +7,7 @@ implementation lives outside this package and may change independently.
 from .context import LoggerLike, RobotControlContext
 from .frame import FloatArray, MotorFrame
 from .mod import ModDefinition, ModLoadContext, StateBuildContext, StateFactory
+from .node import ModNode, NodeBuildContext, NodeFactory
 from .resource import ResourceHandle, ResourceKey, ResourceLoadContext
 from .state import RobotControlState, StateBehavior
 from .states import (
@@ -34,9 +35,12 @@ __all__ = [
     "LoggerLike",
     "ModDefinition",
     "ModLoadContext",
+    "ModNode",
     "MotionReplayState",
     "MotorFrame",
     "NORMAL_STATE",
+    "NodeBuildContext",
+    "NodeFactory",
     "PolicyState",
     "PoseState",
     "ProceduralState",
