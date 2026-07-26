@@ -43,7 +43,10 @@ def main() -> None:
             )
         if executor.add_node(node) is False:
             raise RuntimeError(f"executor rejected Mod node '{spec.id}'")
-        executor.spin()
+        try:
+            executor.spin()
+        except KeyboardInterrupt:
+            pass
     finally:
         try:
             executor.shutdown()

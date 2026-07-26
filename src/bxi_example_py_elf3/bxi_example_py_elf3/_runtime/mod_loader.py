@@ -286,7 +286,7 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
                 id=mod_id,
                 version=version,
                 enabled=enabled,
-                root=manifest_path.parent,
+                root=manifest_path.resolve().parent,
                 manifest_path=manifest_path,
                 manifest=manifest,
                 requires=requires,

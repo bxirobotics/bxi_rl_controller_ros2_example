@@ -72,7 +72,34 @@ class SyncModInstallData(SyncInstalledModsMixin, install_data):
 
 if symlink_data is not None:
     class SyncModSymlinkData(SyncInstalledModsMixin, symlink_data):
-        pass
+        def copy_file(self, src, dst, **kwargs):
+            if kwargs.get("link"):
+                return super().copy_file(src, dst, **kwargs)
+
+            if os.path.islink(dst) and os.path.isdir(dst):
+                # The install directory already follows the source tree.
+                # Never unlink a child through it, since that would delete
+                # the source file rather than an installation artifact.
+                return os.path.join(dst, os.path.basename(src)), False
+
+            target = (
+                os.path.join(dst, os.path.basename(src))
+                if os.path.isdir(dst)
+                else dst
+            )
+            if os.path.lexists(target):
+                os.remove(target)
+
+            # colcon-core's symlink_data checks whether the destination
+            # directory exists, then unconditionally removes the new target.
+            # Temporarily disabling its force branch avoids ENOENT for files
+            # newly added to an existing data directory.
+            original_force = self.force
+            self.force = False
+            try:
+                return super().copy_file(src, dst, **kwargs)
+            finally:
+                self.force = original_force
 
 
 command_classes = {"install_data": SyncModInstallData}
