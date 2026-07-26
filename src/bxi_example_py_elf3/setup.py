@@ -67,7 +67,22 @@ class SyncInstalledModsMixin:
 
 
 class SyncModInstallData(SyncInstalledModsMixin, install_data):
-    pass
+    """Install Mod-local relative symlinks without expanding large binaries."""
+
+    def copy_file(self, src, dst, *args, **kwargs):
+        if not os.path.islink(src):
+            return super().copy_file(src, dst, *args, **kwargs)
+
+        target = (
+            os.path.join(dst, os.path.basename(src))
+            if os.path.isdir(dst)
+            else dst
+        )
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        if os.path.lexists(target):
+            os.remove(target)
+        os.symlink(os.readlink(src), target)
+        return target, True
 
 
 if symlink_data is not None:

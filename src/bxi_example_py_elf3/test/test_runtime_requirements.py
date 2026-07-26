@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -6,7 +7,7 @@ import unittest
 import yaml
 
 from bxi_example_py_elf3._runtime import mod_loader
-from bxi_example_py_elf3._runtime.mod_nodes import ModNodeManager
+from bxi_example_py_elf3._runtime.mod_nodes import ModNodeManager, ModNodeSpec
 from bxi_example_py_elf3._runtime.runtime_requirements import (
     RuntimeRequirements,
     check_runtime_requirements,
@@ -201,6 +202,53 @@ class RuntimeRequirementsTest(unittest.TestCase):
                 mod_loader._remove_module_prefixes((package.__name__,))
                 vendor_session.close()
                 sys.modules.pop("bxi_test_inprocess_vendor", None)
+
+    def test_process_node_receives_vendor_paths_first(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            mod_root = Path(temporary_directory)
+            vendor_python = mod_root / "vendor" / "python"
+            vendor_library = mod_root / "vendor" / "lib"
+            vendor_python.mkdir(parents=True)
+            vendor_library.mkdir(parents=True)
+            captured: dict[str, object] = {}
+
+            def process_factory(*args, **kwargs):
+                captured["args"] = args
+                captured["env"] = kwargs["env"]
+                return object()
+
+            spec = ModNodeSpec(
+                id="com.example.vendor/process",
+                mod_id="com.example.vendor",
+                local_name="process",
+                node_name="com_example_vendor_process",
+                mod_root=mod_root,
+                manifest_path=mod_root / "mod.yaml",
+                entrypoint="node:create_node",
+                execution="process",
+                lifecycle="mod",
+                states=(),
+                params={},
+                manifest={"label": "Vendor process"},
+                restart_max_attempts=0,
+                restart_delay=0.0,
+                factory=None,
+            )
+            manager = ModNodeManager(
+                [spec],
+                process_factory=process_factory,
+            )
+            manager._spawn_process(spec)
+
+            environment = captured["env"]
+            self.assertEqual(
+                environment["PYTHONPATH"].split(os.pathsep)[0],
+                str(vendor_python),
+            )
+            self.assertEqual(
+                environment["LD_LIBRARY_PATH"].split(os.pathsep)[0],
+                str(vendor_library),
+            )
 
     def test_empty_runtime_requirements_are_available(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
