@@ -36,7 +36,10 @@ def main() -> None:
     node = None
     executor = SingleThreadedExecutor()
     try:
-        node = spec.factory(context)
+        factory = spec.factory
+        if factory is None:
+            raise RuntimeError(f"Mod node '{spec.id}' has no process factory")
+        node = factory(context)
         if not callable(getattr(node, "destroy_node", None)):
             raise TypeError(
                 f"Mod node entrypoint '{spec.entrypoint}' must return an rclpy Node"

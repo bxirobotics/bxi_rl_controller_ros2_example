@@ -109,6 +109,13 @@ class RobotControlFramework:
             )
             self.node_manager = node_manager
             node_manager.start()
+            for mod in (*runtime.mods, *runtime.unavailable_mods):
+                for warning in mod.warnings:
+                    self._ros_node.get_logger().warning(warning)
+            for mod in runtime.unavailable_mods:
+                self._ros_node.get_logger().warning(
+                    f"Mod '{mod.id}' is unavailable: {mod.error}"
+                )
 
             states = build_robot_states(self.config, runtime.state_factories)
             self.robot_states = states
@@ -227,6 +234,20 @@ class RobotControlFramework:
                     "yaw": float(self.current_cmd_vel[2]),
                 },
                 "inference_timeout_count": self.inference_timeout_count,
+                "mods": [
+                    {
+                        "id": mod.id,
+                        "version": mod.version,
+                        "status": mod.status,
+                        "error": mod.error,
+                        "warnings": list(mod.warnings),
+                    }
+                    for mod in (
+                        *self.mod_runtime.mods,
+                        *self.mod_runtime.unavailable_mods,
+                        *self.mod_runtime.disabled_mods,
+                    )
+                ],
                 "nodes": self.node_manager.snapshot(),
             }
         )
@@ -238,6 +259,7 @@ class RobotControlFramework:
         node_count = len(self.mod_runtime.node_specs)
         messages = [
             f"loaded {len(self.mod_runtime.mods)} Mods, "
+            f"{len(self.mod_runtime.unavailable_mods)} unavailable, "
             f"{len(self.mod_runtime.disabled_mods)} disabled, "
             f"{len(self.mod_runtime.state_factories)} states, "
             f"{node_count} nodes, "
@@ -250,6 +272,10 @@ class RobotControlFramework:
             messages.append(f"Mod {mod.id}@{mod.version}: {mod.root}{dependencies}")
         for mod in self.mod_runtime.disabled_mods:
             messages.append(f"Mod {mod.id}@{mod.version}: disabled; {mod.root}")
+        for mod in self.mod_runtime.unavailable_mods:
+            messages.append(
+                f"Mod {mod.id}@{mod.version}: unavailable; {mod.error}; {mod.root}"
+            )
         return tuple(messages)
 
     def reset_inference_timeout_monitor(self) -> None:

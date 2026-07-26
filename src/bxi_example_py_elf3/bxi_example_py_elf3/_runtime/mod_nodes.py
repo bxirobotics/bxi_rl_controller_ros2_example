@@ -12,6 +12,10 @@ import time
 from typing import Protocol
 
 from bxi_example_py_elf3.mod_api.node import ModNode, NodeBuildContext, NodeFactory
+from bxi_example_py_elf3._runtime.runtime_requirements import (
+    vendor_library_path,
+    vendor_python_path,
+)
 
 
 class ExecutorLike(Protocol):
@@ -38,7 +42,9 @@ class ModNodeSpec:
     manifest: Mapping[str, object]
     restart_max_attempts: int
     restart_delay: float
-    factory: NodeFactory
+    factory: NodeFactory | None
+    unavailable_error: str | None = None
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass
@@ -90,6 +96,15 @@ class ModNodeManager:
         self._closed = False
 
     def start(self) -> None:
+        for spec in self._specs.values():
+            for warning in spec.warnings:
+                self._log("warning", warning)
+            if spec.unavailable_error is not None:
+                self._log(
+                    "warning",
+                    f"Mod node '{spec.id}' is unavailable: "
+                    f"{spec.unavailable_error}",
+                )
         try:
             self._reconcile()
         except Exception:
@@ -230,7 +245,9 @@ class ModNodeManager:
         desired = self._desired_node_ids()
         for spec in self._specs.values():
             handle = self._running.get(spec.id)
-            if spec.id in self._faults:
+            if spec.unavailable_error is not None:
+                status = "unavailable"
+            elif spec.id in self._faults:
                 status = "faulted"
             elif (
                 handle is not None
@@ -256,7 +273,8 @@ class ModNodeManager:
                         if handle
                         else self._fault_attempts.get(spec.id, 0)
                     ),
-                    "error": self._faults.get(spec.id),
+                    "error": spec.unavailable_error or self._faults.get(spec.id),
+                    "warnings": list(spec.warnings),
                     **spec.manifest,
                 }
             )
@@ -285,7 +303,8 @@ class ModNodeManager:
         return {
             spec.id
             for spec in self._specs.values()
-            if spec.lifecycle == "mod" or bool(set(spec.states) & scoped_states)
+            if spec.unavailable_error is None
+            and (spec.lifecycle == "mod" or bool(set(spec.states) & scoped_states))
         }
 
     def _reconcile(self) -> None:
@@ -310,6 +329,10 @@ class ModNodeManager:
         for spec in self._specs.values():
             if spec.lifecycle != "state" or state_name not in spec.states:
                 continue
+            if spec.unavailable_error is not None:
+                raise RuntimeError(
+                    f"Mod node '{spec.id}' is unavailable: " f"{spec.unavailable_error}"
+                )
             handle = self._running.get(spec.id)
             running = handle is not None and (
                 handle.instance is not None or handle.process is not None
@@ -340,6 +363,9 @@ class ModNodeManager:
             self._log("info", f"started process Mod node '{spec.id}'")
             return
 
+        factory = spec.factory
+        if factory is None:
+            raise RuntimeError(f"Mod node '{spec.id}' has no in-process factory")
         context = NodeBuildContext(
             mod_id=spec.mod_id,
             node_id=spec.id,
@@ -350,7 +376,7 @@ class ModNodeManager:
         instance: ModNode | None = None
         attached = False
         try:
-            instance = spec.factory(context)
+            instance = factory(context)
             if not callable(getattr(instance, "destroy_node", None)):
                 raise TypeError(
                     f"Mod node entrypoint '{spec.entrypoint}' must return "
@@ -380,11 +406,26 @@ class ModNodeManager:
 
     def _spawn_process(self, spec: ModNodeSpec) -> subprocess.Popen[bytes]:
         environment = os.environ.copy()
-        inherited_paths = [str(path) for path in sys.path if path]
+        inherited_paths: list[str] = []
+        bundled_python = vendor_python_path(spec.mod_root)
+        if bundled_python.is_dir():
+            inherited_paths.append(str(bundled_python))
+        inherited_paths.extend(str(path) for path in sys.path if path)
         existing_python_path = environment.get("PYTHONPATH")
         if existing_python_path:
-            inherited_paths.append(existing_python_path)
+            inherited_paths.extend(existing_python_path.split(os.pathsep))
         environment["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(inherited_paths))
+        bundled_libraries = vendor_library_path(spec.mod_root)
+        library_paths: list[str] = []
+        if bundled_libraries.is_dir():
+            library_paths.append(str(bundled_libraries))
+        existing_library_path = environment.get("LD_LIBRARY_PATH")
+        if existing_library_path:
+            library_paths.extend(existing_library_path.split(os.pathsep))
+        if library_paths:
+            environment["LD_LIBRARY_PATH"] = os.pathsep.join(
+                dict.fromkeys(library_paths)
+            )
         return self._process_factory(
             [
                 sys.executable,

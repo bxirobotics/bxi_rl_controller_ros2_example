@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+import ctypes
 import importlib.util
 from pathlib import Path
 import re
@@ -22,6 +23,13 @@ from bxi_example_py_elf3.mod_api.mod import (
 from bxi_example_py_elf3.mod_api.node import NodeFactory
 from bxi_example_py_elf3._runtime.mod_nodes import ModNodeSpec
 from bxi_example_py_elf3._runtime.resource_manager import ResourceManager
+from bxi_example_py_elf3._runtime.runtime_requirements import (
+    RuntimeRequirementReport,
+    RuntimeRequirements,
+    check_runtime_requirements,
+    read_runtime_requirements,
+    vendor_python_path,
+)
 from bxi_example_py_elf3.mod_api.state import RobotControlState
 from bxi_example_py_elf3._runtime.transition import (
     register_transition_plugin,
@@ -33,6 +41,7 @@ from bxi_example_py_elf3._runtime.transition import (
 
 ConfigMap = dict[str, object]
 _python_export_owners: dict[str, str] = {}
+_process_vendor_library_handles: list[ctypes.CDLL] = []
 
 
 @dataclass(frozen=True)
@@ -42,6 +51,9 @@ class LoadedMod:
     root: Path
     manifest_path: Path
     requires: tuple[str, ...]
+    status: str
+    error: str | None = None
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -60,6 +72,7 @@ class _DiscoveredMod:
     manifest: Mapping[str, object]
     requires: tuple[_Requirement, ...]
     conflicts: tuple[str, ...]
+    runtime_requirements: RuntimeRequirements
 
 
 @dataclass
@@ -85,23 +98,86 @@ class _PythonExportSession:
 
 
 @dataclass
+class _VendorSession:
+    added_python_paths: list[str] = field(default_factory=list)
+    loaded_libraries: list[ctypes.CDLL] = field(default_factory=list)
+    _active: bool = True
+
+    def activate(
+        self,
+        mod: _DiscoveredMod,
+        report: RuntimeRequirementReport,
+        owner: str,
+    ) -> tuple[str | None, tuple[str, ...]]:
+        if not report.uses_vendor:
+            return None, ()
+
+        warning = (
+            f"{owner} uses bundled dependencies in-process; Python modules and "
+            "native symbols are process-global, cannot be unloaded, and may "
+            "conflict with other Mods"
+        )
+        for library in report.vendor_libraries:
+            try:
+                handle = ctypes.CDLL(
+                    str(library),
+                    mode=getattr(ctypes, "RTLD_GLOBAL", 0),
+                )
+            except OSError as exc:
+                return (
+                    f"cannot load bundled system library '{library.name}': {exc}",
+                    (warning,),
+                )
+            self.loaded_libraries.append(handle)
+            _process_vendor_library_handles.append(handle)
+
+        if report.vendor_python:
+            path = str(vendor_python_path(mod.root))
+            if path not in sys.path:
+                sys.path.insert(0, path)
+                self.added_python_paths.append(path)
+        return None, (warning,)
+
+    def close(self) -> None:
+        if not self._active:
+            return
+        for path in reversed(self.added_python_paths):
+            try:
+                sys.path.remove(path)
+            except ValueError:
+                pass
+        self.added_python_paths.clear()
+        # The process-global handle list deliberately keeps native libraries
+        # loaded. Removing import paths does not make native symbols isolatable.
+        self.loaded_libraries.clear()
+        self._active = False
+
+
+@dataclass
 class ModRuntime:
     config: ConfigMap
     state_factories: dict[str, StateFactory]
     resources: ResourceManager
     mods: tuple[LoadedMod, ...]
     disabled_mods: tuple[LoadedMod, ...]
+    unavailable_mods: tuple[LoadedMod, ...]
     node_specs: tuple[ModNodeSpec, ...]
     _module_prefixes: tuple[str, ...] = field(repr=False)
     _python_exports: _PythonExportSession = field(repr=False)
+    _vendor_session: _VendorSession = field(repr=False)
 
     def close(self) -> None:
         try:
             self.resources.close()
         finally:
-            _remove_module_prefixes(self._module_prefixes)
-            release_transition_plugins(self._module_prefixes)
-            self._python_exports.close()
+            try:
+                _remove_module_prefixes(self._module_prefixes)
+                release_transition_plugins(self._module_prefixes)
+            finally:
+                try:
+                    self._python_exports.close()
+                finally:
+                    self._vendor_session.close()
 
 
 def load_mod_runtime(
@@ -121,10 +197,62 @@ def load_mod_runtime(
                 raise ValueError(
                     f"Mod '{mod.id}' requires disabled Mod '{requirement.id}'"
                 )
-    _validate_mod_conflicts(enabled)
-    ordered = _dependency_order(enabled)
+
+    runtime_reports = {
+        mod.id: check_runtime_requirements(mod.runtime_requirements, mod.root)
+        for mod in enabled.values()
+    }
+    unavailable_reasons = {
+        mod_id: "; ".join(report.errors)
+        for mod_id, report in runtime_reports.items()
+        if not report.available
+    }
+    for mod in enabled.values():
+        if mod.id in unavailable_reasons:
+            continue
+        for requirement in mod.requires:
+            reason = unavailable_reasons.get(requirement.id)
+            if reason is not None:
+                raise ValueError(
+                    f"Mod '{mod.id}' requires unavailable Mod "
+                    f"'{requirement.id}': {reason}"
+                )
+
+    candidates = {
+        mod_id: mod
+        for mod_id, mod in enabled.items()
+        if mod_id not in unavailable_reasons
+    }
+    ordered_candidates = _dependency_order(candidates)
+    vendor_session = _VendorSession()
+    mod_warnings: dict[str, tuple[str, ...]] = {}
+    ordered: list[_DiscoveredMod] = []
+    try:
+        for mod in ordered_candidates:
+            for requirement in mod.requires:
+                reason = unavailable_reasons.get(requirement.id)
+                if reason is not None:
+                    raise ValueError(
+                        f"Mod '{mod.id}' requires unavailable Mod "
+                        f"'{requirement.id}': {reason}"
+                    )
+            activation_error, activation_warnings = vendor_session.activate(
+                mod,
+                runtime_reports[mod.id],
+                f"Mod '{mod.id}'",
+            )
+            mod_warnings[mod.id] = activation_warnings
+            if activation_error is not None:
+                unavailable_reasons[mod.id] = activation_error
+                continue
+            ordered.append(mod)
+        _validate_mod_conflicts({mod.id: mod for mod in ordered})
+        python_exports = _prepare_python_exports(ordered)
+    except Exception:
+        vendor_session.close()
+        raise
+
     transition_plugins = snapshot_transition_plugins()
-    python_exports = _prepare_python_exports(ordered)
     resources = ResourceManager()
     definitions: dict[str, ModDefinition] = {}
     loaded_modules: list[ModuleType] = []
@@ -136,7 +264,13 @@ def load_mod_runtime(
             definitions[mod.id] = definition
             loaded_modules.append(module)
             package = sys.modules[module.__name__.split(".", 1)[0]]
-            node_specs.extend(_load_mod_node_specs(mod, package))
+            node_specs.extend(
+                _load_mod_node_specs(
+                    mod,
+                    package,
+                    vendor_session=vendor_session,
+                )
+            )
             for type_name, plugin in definition.transition_plugins.items():
                 if type_name != plugin.type_name:
                     raise ValueError(
@@ -153,6 +287,7 @@ def load_mod_runtime(
         )
         restore_transition_plugins(transition_plugins)
         python_exports.close()
+        vendor_session.close()
         raise
 
     loaded = tuple(
@@ -162,6 +297,8 @@ def load_mod_runtime(
             mod.root,
             mod.manifest_path,
             tuple(requirement.id for requirement in mod.requires),
+            "loaded",
+            warnings=mod_warnings.get(mod.id, ()),
         )
         for mod in ordered
     )
@@ -172,9 +309,24 @@ def load_mod_runtime(
             mod.root,
             mod.manifest_path,
             tuple(requirement.id for requirement in mod.requires),
+            "disabled",
         )
         for mod in discovered.values()
         if not mod.enabled
+    )
+    unavailable = tuple(
+        LoadedMod(
+            mod.id,
+            mod.version,
+            mod.root,
+            mod.manifest_path,
+            tuple(requirement.id for requirement in mod.requires),
+            "unavailable",
+            unavailable_reasons[mod.id],
+            mod_warnings.get(mod.id, ()),
+        )
+        for mod in discovered.values()
+        if mod.id in unavailable_reasons
     )
     return ModRuntime(
         config=config,
@@ -182,11 +334,13 @@ def load_mod_runtime(
         resources=resources,
         mods=loaded,
         disabled_mods=disabled,
+        unavailable_mods=unavailable,
         node_specs=tuple(node_specs),
         _module_prefixes=tuple(
             module.__name__.split(".", 1)[0] for module in loaded_modules
         ),
         _python_exports=python_exports,
+        _vendor_session=vendor_session,
     )
 
 
@@ -212,6 +366,7 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
                 "requires",
                 "conflicts",
                 "python_exports",
+                "runtime_requirements",
             }
             missing_header = required_header - set(manifest)
             if missing_header:
@@ -266,6 +421,10 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
                     f"{manifest_path}: 'visibility' must be 'public' or 'protected'"
                 )
             requires = _read_requirements(manifest["requires"], manifest_path)
+            runtime_requirements = read_runtime_requirements(
+                manifest["runtime_requirements"],
+                f"{manifest_path}: runtime_requirements",
+            )
             conflicts = _read_mod_id_list(
                 manifest["conflicts"], "conflicts", manifest_path
             )
@@ -291,6 +450,7 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
                 manifest=manifest,
                 requires=requires,
                 conflicts=conflicts,
+                runtime_requirements=runtime_requirements,
             )
     if not result:
         raise ValueError(f"no Mods found in: {', '.join(map(str, roots))}")
@@ -509,6 +669,9 @@ def _load_mod_module(
 def _load_mod_node_specs(
     mod: _DiscoveredMod,
     package: ModuleType,
+    *,
+    vendor_session: _VendorSession | None = None,
+    load_process_factories: bool = False,
 ) -> list[ModNodeSpec]:
     raw_nodes = _mapping(mod.manifest.get("nodes"), f"{mod.id}.nodes")
     specs: list[ModNodeSpec] = []
@@ -524,6 +687,7 @@ def _load_mod_node_specs(
             "params",
             "manifest",
             "restart",
+            "runtime_requirements",
         }
         unknown_fields = set(node) - allowed_fields
         if unknown_fields:
@@ -536,10 +700,7 @@ def _load_mod_node_specs(
             entrypoint,
             f"{context}.entrypoint",
         )
-        module = _load_mod_module(mod, package, module_name)
-        factory = getattr(module, function_name, None)
-        if not callable(factory):
-            raise TypeError(f"{context}.entrypoint is not callable: {entrypoint}")
+        _validate_mod_module_exists(mod, module_name)
 
         execution = node.get("execution", "in_process")
         if execution not in ("in_process", "process"):
@@ -561,6 +722,50 @@ def _load_mod_node_specs(
         if lifecycle == "mod" and states:
             raise ValueError(f"{context}.states is only valid for state lifecycle")
 
+        runtime_requirements = (
+            read_runtime_requirements(
+                node["runtime_requirements"],
+                f"{context}.runtime_requirements",
+            )
+            if "runtime_requirements" in node
+            else RuntimeRequirements((), (), ())
+        )
+        requirement_report = check_runtime_requirements(
+            runtime_requirements,
+            mod.root,
+        )
+        unavailable_error = (
+            "; ".join(requirement_report.errors)
+            if not requirement_report.available
+            else None
+        )
+        runtime_warnings: tuple[str, ...] = ()
+        factory: NodeFactory | None = None
+        should_load_factory = unavailable_error is None and (
+            execution == "in_process" or load_process_factories
+        )
+        if should_load_factory:
+            if execution == "in_process" and requirement_report.uses_vendor:
+                if vendor_session is None:
+                    raise RuntimeError(
+                        f"{context} needs a vendor session for in-process loading"
+                    )
+                activation_error, runtime_warnings = vendor_session.activate(
+                    mod,
+                    requirement_report,
+                    f"Mod node '{_qualify(mod.id, local_name)}'",
+                )
+                if activation_error is not None:
+                    unavailable_error = activation_error
+            if unavailable_error is None:
+                module = _load_mod_module(mod, package, module_name)
+                raw_factory = getattr(module, function_name, None)
+                if not callable(raw_factory):
+                    raise TypeError(
+                        f"{context}.entrypoint is not callable: {entrypoint}"
+                    )
+                factory = cast(NodeFactory, raw_factory)
+
         params = dict(_mapping(node.get("params"), f"{context}.params"))
         manifest = dict(_mapping(node.get("manifest"), f"{context}.manifest"))
         label = manifest.get("label")
@@ -575,6 +780,7 @@ def _load_mod_node_specs(
             "status",
             "restart_attempts",
             "error",
+            "warnings",
         }
         conflicts = set(manifest) & reserved_manifest_fields
         if conflicts:
@@ -627,10 +833,23 @@ def _load_mod_node_specs(
                 manifest=manifest,
                 restart_max_attempts=max_attempts,
                 restart_delay=float(restart_delay),
-                factory=cast(NodeFactory, factory),
+                factory=factory,
+                unavailable_error=unavailable_error,
+                warnings=runtime_warnings,
             )
         )
     return specs
+
+
+def _validate_mod_module_exists(mod: _DiscoveredMod, module_name: str) -> None:
+    relative_module = Path(*module_name.split("."))
+    if (mod.root / relative_module.with_suffix(".py")).is_file():
+        return
+    if (mod.root / relative_module / "__init__.py").is_file():
+        return
+    raise FileNotFoundError(
+        f"{mod.manifest_path}: module does not exist: {module_name}"
+    )
 
 
 def _parse_entrypoint(reference: str, context: str) -> tuple[str, str]:
@@ -681,10 +900,20 @@ def load_process_node_spec(
         raise ValueError(f"Mod manifest was not discovered: {manifest_path}")
     package = _create_dynamic_package(mod)
     try:
-        specs = _load_mod_node_specs(mod, package)
+        specs = _load_mod_node_specs(
+            mod,
+            package,
+            load_process_factories=True,
+        )
         spec = next((item for item in specs if item.local_name == local_name), None)
         if spec is None:
             raise ValueError(f"Mod '{mod.id}' has no node '{local_name}'")
+        if spec.unavailable_error is not None:
+            raise RuntimeError(
+                f"Mod node '{spec.id}' is unavailable: {spec.unavailable_error}"
+            )
+        if spec.factory is None:
+            raise RuntimeError(f"Mod node '{spec.id}' has no process factory")
     except Exception:
         _remove_module_prefixes((package.__name__,))
         raise

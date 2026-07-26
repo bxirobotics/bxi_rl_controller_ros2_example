@@ -30,6 +30,7 @@ REQUIRED_MOD_FIELDS = {
     "requires",
     "conflicts",
     "python_exports",
+    "runtime_requirements",
 }
 ALLOWED_MOD_FIELDS = REQUIRED_MOD_FIELDS | {
     "events",
@@ -56,6 +57,30 @@ def load_yaml(path: Path) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"Mod manifest must be a map: {path}")
     return cast(Mapping[str, object], value)
+
+
+def validate_runtime_requirements(value: object, context: str) -> None:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{context} must be a map")
+    expected = {
+        "python": ("import", r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"),
+        "ros": ("package", r"[a-z][a-z0-9_]*"),
+        "system": ("library", r"[A-Za-z0-9][A-Za-z0-9_.+-]*"),
+    }
+    if set(value) != set(expected):
+        raise ValueError(f"{context} must contain exactly {sorted(expected)}")
+    for category, (field, pattern) in expected.items():
+        entries = value[category]
+        if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+            raise ValueError(f"{context}.{category} must be a list")
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, Mapping) or set(entry) != {field}:
+                raise ValueError(
+                    f"{context}.{category}[{index}] must contain only '{field}'"
+                )
+            name = entry[field]
+            if not isinstance(name, str) or not re.fullmatch(pattern, name):
+                raise ValueError(f"{context}.{category}[{index}].{field} is invalid")
 
 
 def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, ModInfo]:
@@ -118,6 +143,10 @@ def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, Mod
                 )
             ):
                 raise ValueError(f"invalid python_exports: {manifest_path}")
+            validate_runtime_requirements(
+                manifest["runtime_requirements"],
+                f"{manifest_path}: runtime_requirements",
+            )
             raw_requires = manifest["requires"]
             if not isinstance(raw_requires, Sequence) or isinstance(
                 raw_requires, (str, bytes)
@@ -185,6 +214,11 @@ def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, Mod
                     raise ValueError(
                         f"invalid node declaration in {manifest_path}: "
                         f"{node_name!r}={raw_node!r}"
+                    )
+                if "runtime_requirements" in raw_node:
+                    validate_runtime_requirements(
+                        raw_node["runtime_requirements"],
+                        f"{manifest_path}: nodes.{node_name}.runtime_requirements",
                     )
                 raw_states = raw_node.get("states", ())
                 if not isinstance(raw_states, Sequence) or isinstance(

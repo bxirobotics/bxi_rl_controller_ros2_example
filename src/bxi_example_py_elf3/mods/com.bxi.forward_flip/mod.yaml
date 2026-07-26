@@ -11,6 +11,10 @@ requires:
     version: ">=1,<2"
 conflicts: []
 python_exports: []
+runtime_requirements:
+  python: []
+  ros: []
+  system: []
 
 events:
   activate:
