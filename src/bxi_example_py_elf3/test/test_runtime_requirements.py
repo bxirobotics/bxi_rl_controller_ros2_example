@@ -54,6 +54,29 @@ class _SeverityStickyLogger:
 
 
 class RuntimeRequirementsTest(unittest.TestCase):
+    def test_mod_loading_does_not_write_bytecode_beside_mod_code(self) -> None:
+        previous = sys.dont_write_bytecode
+        runtime = None
+        try:
+            sys.dont_write_bytecode = False
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                root = Path(temporary_directory)
+                self._write_base_mod(root)
+
+                runtime = mod_loader.load_mod_runtime(
+                    {"initial_state": "com.example.base/idle"},
+                    built_in_root=root,
+                )
+
+                self.assertTrue(sys.dont_write_bytecode)
+                self.assertFalse(
+                    (root / "com.example.base" / "__pycache__").exists()
+                )
+        finally:
+            if runtime is not None:
+                runtime.close()
+            sys.dont_write_bytecode = previous
+
     def test_registration_controls_eager_and_lazy_resource_loading(self) -> None:
         for loading in ("eager", "lazy"):
             with self.subTest(loading=loading), tempfile.TemporaryDirectory() as temp:
@@ -274,6 +297,8 @@ class RuntimeRequirementsTest(unittest.TestCase):
                 report.vendor_python_paths,
                 (platform_python.resolve(), common_python.resolve()),
             )
+            self.assertFalse((platform_python / "__pycache__").exists())
+            self.assertFalse((common_python / "__pycache__").exists())
 
     def test_missing_dependencies_have_specific_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -521,6 +546,7 @@ class RuntimeRequirementsTest(unittest.TestCase):
                 environment["LD_LIBRARY_PATH"].split(os.pathsep)[0],
                 str(vendor_library),
             )
+            self.assertEqual(environment["PYTHONDONTWRITEBYTECODE"], "1")
 
     def test_empty_runtime_requirements_are_available(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

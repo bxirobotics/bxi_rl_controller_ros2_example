@@ -406,6 +406,7 @@ class ModNodeManager:
 
     def _spawn_process(self, spec: ModNodeSpec) -> subprocess.Popen[bytes]:
         environment = os.environ.copy()
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
         inherited_paths: list[str] = []
         inherited_paths.extend(str(path) for path in vendor_python_paths(spec.mod_root))
         inherited_paths.extend(str(path) for path in sys.path if path)

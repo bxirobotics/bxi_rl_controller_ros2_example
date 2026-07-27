@@ -191,6 +191,10 @@ def load_mod_runtime(
     built_in_root: Path,
     extra_roots: Sequence[Path] = (),
 ) -> ModRuntime:
+    # Mods can live in a deployment directory owned by a different user than
+    # the runtime process. Never create __pycache__ entries beside Mod code:
+    # root-owned bytecode would make a later unprivileged update impossible.
+    sys.dont_write_bytecode = True
     discovered = _discover_mods((built_in_root, *extra_roots))
     enabled = {mod_id: mod for mod_id, mod in discovered.items() if mod.enabled}
     disabled_ids = set(discovered) - set(enabled)
@@ -911,6 +915,7 @@ def load_process_node_spec(
 ) -> tuple[ModNodeSpec, str]:
     """Load one node spec inside the dedicated child-process runner."""
 
+    sys.dont_write_bytecode = True
     manifest_path = manifest_path.resolve()
     discovered = _discover_mods((manifest_path.parent,))
     mod = next(

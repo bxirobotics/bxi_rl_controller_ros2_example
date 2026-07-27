@@ -289,6 +289,7 @@ def _probe_python_import(
         "importlib.import_module(sys.argv[1])\n"
     )
     environment = os.environ.copy()
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
     if library_paths:
         inherited = environment.get("LD_LIBRARY_PATH")
         values = [*(str(path) for path in library_paths)]
