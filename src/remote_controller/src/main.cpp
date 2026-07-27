@@ -1,4 +1,5 @@
 #include <iostream>
+#include <atomic>
 #include <communication/msg/motion_commands.hpp>
 #include <linux/joystick.h>
 #include <unistd.h>
@@ -9,23 +10,7 @@
 using namespace std::chrono_literals;
 using namespace std;
 
-#if 0  //PS4 JS
-#define JS_VELX_AXIS 4  // index of joystick data, used for axis contro, vel x
-#define JS_VELX_AXIS_DIR -1  // if it's reverse
-#define JS_VELY_AXIS 0
-#define JS_VELY_AXIS_DIR -1
-#define JS_VELR_AXIS 6    // index of joystick data, used for rotation contro, vel of rotation
-#define JS_VELR_AXIS_DIR -1
-
-#define JS_STOP_BT 10    // index of joystick data, used for function contro: stop
-#define JS_GAIT_STAND_BT 0
-#define JS_GAIT_WALK_BT 2
-#define JS_HEIGHT_UPPER_BT  1
-#define JS_HEIGHT_LOWER_BT  3
-#define JS_MODE_BT          5
-#define JS_START_BT 9
-
-#else //XBOX JS
+// XBOX joystick mapping reported by jstest for the deployed controller.
 #define JS_VELX_AXIS 3
 #define JS_VELX_AXIS_DIR -1
 #define JS_VELY_AXIS 0
@@ -33,22 +18,11 @@ using namespace std;
 #define JS_VELR_AXIS 6
 #define JS_VELR_AXIS_DIR -1
 
-#define JS_STOP_BT          11      // 终止程序                     (button for stop programe)
-#define JS_START_BT         14      // 启动程序                     (button for start programe)
-#define JS_LB_BT            6       // LB功能                       (define LB button)
-#define JS_RB_BT            7       // RB功能                       (define RB button)
-
-#define JS_SWITCH_X         3       // 暂停或继续跳舞                 (stop or continue danceing)
-                                    // 组合LB：跳舞                   (conbine with LB for change to dance)
-                                    // 组合RB：正常模式，走路站立跑步    (conbine with RB for change to normal: walk stand and run)
-#define JS_SWITCH_A         0       // 组合LB：HOST起身               (conbine with LB for change to dance)
-                                    // 组合RB：零力                   (conbine with LB for change to dance)
-#define JS_SWITCH_B         1       //
-                                    // 组合RB：pd模式                 (conbine with LB for change to dance)
-#define JS_SWITCH_Y         4       // 
-                                    // 组合RB：初始位置模式            (conbine with LB for change to zero position)
-#define JS_START2_BT        14
-#endif
+#define JS_START_BT 11
+#define JS_SWITCH_A 0
+#define JS_SWITCH_B 1
+#define JS_SWITCH_X 3
+#define JS_SWITCH_Y 4
 
 #define AXIS_DEAD_ZONE  1000
 
@@ -73,8 +47,11 @@ static void run_shell_command(const char *command)
 
 static void stop_robot_processes()
 {
-    run_shell_command("killall -SIGINT hardware_elf3 bxi_example_hw bxi_example_py_elf3 bxi_example_py_elf3_demo 2>/dev/null");
-    run_shell_command("sleep 1");
+    // Stopping the hardware driver makes the ROS launch file shut down the
+    // controller and this remote cleanly. Signalling all three processes here
+    // as well would deliver duplicate SIGINTs during launch teardown.
+    run_shell_command(
+        "killall -SIGINT hardware_elf3 bxi_example_hw 2>/dev/null");
 }
 
 class COMPublisher : public rclcpp::Node{
@@ -87,8 +64,8 @@ public:
 
         strcpy(_js_dev_name, _js_dev);
         
-        while (1){
-            js_fd = open(_js_dev_name, O_RDONLY); // O_NONBLOCK
+        while (rclcpp::ok()){
+            js_fd = open(_js_dev_name, O_RDONLY | O_NONBLOCK);
             if (js_fd < 0){
                 printf("open:%s failed\n", _js_dev_name);
                 sleep(1);      
@@ -98,6 +75,10 @@ public:
                 break;
             }
         }
+
+        if (!rclcpp::ok()){
+            return;
+        }
         
         com_pub = this->create_publisher<communication::msg::MotionCommands>("motion_commands", 20);
         timer_ = this->create_wall_timer(10ms, std::bind(&COMPublisher::timer_callback, this));
@@ -105,8 +86,13 @@ public:
     }
 
     ~COMPublisher(){
-        if (js_fd > 0){
+        running_.store(false);
+        if (js_loop_thread_.joinable()){
+            js_loop_thread_.join();
+        }
+        if (js_fd >= 0){
             close(js_fd);
+            js_fd = -1;
         }
     }
 
@@ -114,10 +100,11 @@ private:
     mutable std::mutex lock_;
 
     char _js_dev_name[128] = {0};
-    int js_fd;
+    int js_fd = -1;
     double js_axis[20] = {0};   // original data of js axis data
     double js_bt[20] = {0};    // original data of ja button data
     std::thread js_loop_thread_;
+    std::atomic<bool> running_{true};
 
     double velxy[2] = {0};                      //x y速度       (x,y speed)
     double velxy_filt[2] = {0};                 //x y速度滤波值  (x,y speed filter)
@@ -125,8 +112,6 @@ private:
     double height_filt = STAND_HEIGHT;
     double velr = 0;                            //旋转速度       (rotation speed)
     double velr_filt = 0;
-
-    bool launch_lock = false;           // 防止多次启动程序，True时不允许启动程序。    (launch programe lock)
 
     bool LB_press = false;              // 长按改变状态，弹起恢复                   (pressed for change state, release for recover)
     bool RB_press = false;              // 长按改变状态，弹起恢复
@@ -140,6 +125,8 @@ private:
     bool dance_mode = false;            // 按下改变状态，切换为跳舞模式               (change to dance mode)
 
     bool dance_flag = false;            // 按下改变状态，暂停或继续跳舞               (stop or continue dancing)
+    bool vibration_flag = false;        // Y: 启动/停止吊挂振动测试
+    bool joint_test_flag = false;       // A: 启动/停止整机关节测试
 
     double vel_offset = 0.0;
 
@@ -197,12 +184,12 @@ private:
             // LB组合键
             message.btn_5 = dance_mode ? 1 : 0;
             message.btn_6 = host_mode ? 1 : 0; 
-            // message.btn_7 = 
+            message.btn_7 = joint_test_flag ? 1 : 0;
             // message.btn_8 =  
 
             // 纯按键
             message.btn_9 = dance_flag ? 1 : 0;
-            // message.btn_10 =
+            message.btn_10 = vibration_flag ? 1 : 0;
             // message.btn_11 = 
             // message.btn_12 = 
 
@@ -221,10 +208,41 @@ private:
         memset(velxy_filt, 0, sizeof(velxy_filt));
         velr_filt = 0;
         height_filt = STAND_HEIGHT;
+        dance_flag = false;
+        vibration_flag = false;
+        joint_test_flag = false;
+    }
+
+    void handle_button_press(int button)
+    {
+        if (button == JS_START_BT){
+            printf("EMERGENCY STOP: terminating robot programs\n");
+            fflush(stdout);
+            stop_robot_processes();
+            reset_value();
+        }
+        else if (button == JS_SWITCH_X){
+            const std::lock_guard<std::mutex> guard(lock_);
+            dance_flag = !dance_flag;
+            printf("dance_flag: %d\n", dance_flag);
+        }
+        else if (button == JS_SWITCH_Y){
+            const std::lock_guard<std::mutex> guard(lock_);
+            vibration_flag = !vibration_flag;
+            printf("vibration_flag: %d\n", vibration_flag);
+        }
+        else if (button == JS_SWITCH_A){
+            const std::lock_guard<std::mutex> guard(lock_);
+            joint_test_flag = !joint_test_flag;
+            printf("joint_test_flag: %d\n", joint_test_flag);
+        }
+        else if (button == JS_SWITCH_B){
+            printf("B\n");
+        }
     }
 
     void js_loop(){
-        while (1){
+        while (running_.load() && rclcpp::ok()){
             ssize_t len;
             struct js_event event;
             
@@ -234,138 +252,34 @@ private:
             if (len == sizeof(event)){
                 if (event.type & JS_EVENT_AXIS){  // axis event
                     //printf("Axis: %d -> %d\n", (int)event.number, (int)event.value);
-                    js_axis[event.number] = event.value;
+                    if (event.number < 20){
+                        const std::lock_guard<std::mutex> guard(lock_);
+                        js_axis[event.number] = event.value;
+                    }
                 }
                 else if (event.type & JS_EVENT_BUTTON){ // button event
-                    //printf("Button: %d -> %d\n", (int)event.number, (int)event.value);
                     if (event.value){
-                        switch (event.number){
-                        case JS_STOP_BT:{
-                            stop_robot_processes();
-
-                            launch_lock = false;
-
-                            reset_value();
-                        }break;
-
-                        case JS_START_BT:{
-                            if(launch_lock == false){
-                                stop_robot_processes();
-                                run_shell_command("mkdir -p /var/log/bxi_log");
-                                // // sim
-                                // run_shell_command("ros2 launch bxi_example_py_elf3 example_launch_demo.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
-                                // // real
-                                run_shell_command("ros2 launch bxi_example_py_elf3 example_launch_demo_hw.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log  2>&1 &");
-                                run_shell_command("ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log 2>&1 &");
-                                printf("run robot\n");//robot_controller
-                            
-                                reset_value();
-
-                                launch_lock = true;
-                            }else{
-                                printf("\nprograme already exist! stop launch!!\n\n");
-                            }
-                        }break;
-
-                        case JS_LB_BT:{
-                            const std::lock_guard<std::mutex> guard(lock_);
-                            LB_press = true;
-                        }break;
-
-                        case JS_RB_BT:{
-                            const std::lock_guard<std::mutex> guard(lock_);
-                            RB_press = true;
-                        }break;
-
-                        case JS_SWITCH_X:{
-                            if(LB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                dance_mode = !dance_mode;
-                                printf("dance_mode: %d\n", dance_mode);
-                            }else if(RB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                normal_mode = !normal_mode;
-                                printf("normal mode: %d\n", normal_mode);
-                            }else{
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                dance_flag = !dance_flag;
-                                printf("dance_flag: %d\n", dance_flag);
-                            }
-                        }break;
-
-                        case JS_SWITCH_Y:{
-                            if(LB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                printf("LB + Y\n");
-                            }else if(RB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                initial_pos_mode = !initial_pos_mode;
-                                printf("initial_pos_mode: %d\n", initial_pos_mode);
-                            }else{
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                printf("Y\n");
-                            }
-                        }break;
-
-                        case JS_SWITCH_A:{
-                            if(LB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                host_mode = !host_mode;
-                                printf("host mode:%d\n", host_mode);
-                            }else if(RB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                zero_torque_mode = !zero_torque_mode;
-                                printf("zero torque mode:%d\n", zero_torque_mode);
-                            }else{
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                printf("A\n");
-                            }
-                        }break;
-
-                        case JS_SWITCH_B:{
-                            if(LB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                printf("LB + B\n");
-                            }else if(RB_press){
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                pd_brake_mode = !pd_brake_mode;
-                                printf("pd brake mode:%d\n", pd_brake_mode);
-                            }else{
-                                const std::lock_guard<std::mutex> guard(lock_);
-                                printf("B\n");
-                            }
-                        }break;
-
-                        default:
-                            break;
-                        }
-                    }
-                    else if(!event.value){
-                        switch(event.number){
-                        case JS_LB_BT:{
-                            const std::lock_guard<std::mutex> guard(lock_);
-                            LB_press = false;
-                        }break;
-
-                        case JS_RB_BT:{
-                            const std::lock_guard<std::mutex> guard(lock_);
-                            RB_press = false;
-                        }break;
-                        
-                        default:
-                            break;
-                        }
+                        handle_button_press(
+                            static_cast<int>(event.number));
                     }
                 }
                 else{
                     printf("unknown event:%u\n", event.type);
                 }
             }
-            if (len <= 0){
+            if (
+                len < 0
+                && (errno == EAGAIN || errno == EWOULDBLOCK)
+            ){
+                usleep(5000);
+                continue;
+            }
+            if (len <= 0 && running_.load() && rclcpp::ok()){
                 printf("js dev lost, retry\n");
                 close(js_fd);
-                while (1){
-                    js_fd = open(_js_dev_name, O_RDONLY); // O_NONBLOCK
+                js_fd = -1;
+                while (running_.load() && rclcpp::ok()){
+                    js_fd = open(_js_dev_name, O_RDONLY | O_NONBLOCK);
                     if (js_fd < 0){
                         printf("open:%s failed\n", _js_dev_name);
                         sleep(1);
@@ -385,8 +299,14 @@ private:
 
 int main(int argc, const char *argv[]){
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<COMPublisher>("/dev/input/js0"));
-    rclcpp::shutdown();
+    auto node = std::make_shared<COMPublisher>("/dev/input/js0");
+    if (rclcpp::ok()){
+        rclcpp::spin(node);
+    }
+    node.reset();
+    if (rclcpp::ok()){
+        rclcpp::shutdown();
+    }
 
     return 0;
 }

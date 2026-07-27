@@ -213,7 +213,7 @@ class BxiExample(Node):
         self.dt = 0.02  # loop @100Hz
         self.timer = self.create_timer(self.dt, self.timer_callback, callback_group=self.timer_callback_group_1)
 
-        self.data_txt_path = '/home/bxi/bxi_ws/bxi_rl_controller_ros2_example/src/bxi_example_py_elf3/data/data.txt'
+        self.data_txt_path = '/home/bxi/BXI/robot_vibration testing/bxi_rl_controller_ros2_example/src/bxi_example_py_elf3/data/data.txt'
         self.pos_data_lines = self.load_pos_file()
         self.pos_data_index = 0
 

@@ -35,17 +35,30 @@ def get_launch_files():
     
     return data_files
 
+def get_config_files():
+    data_files = []
+    source_dir = 'config'
+    target_dir = os.path.join('share', package_name, 'config')
+    for root, dirs, files in os.walk(source_dir):
+        for file in files:
+            file_path = os.path.join(root, file)
+            relative_path = os.path.relpath(root, source_dir)
+            install_dir = os.path.join(target_dir, relative_path)
+            data_files.append((install_dir, [file_path]))
+    return data_files
+
 setup(
     name=package_name,
     version='0.0.0',
     packages=[package_name,
               f'{package_name}.inference',
               f'{package_name}.utils',
+              f'{package_name}.control',
               ],
     data_files=[
         ('share/ament_index/resource_index/packages',['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-    ] + get_data_files() + get_launch_files(),
+    ] + get_data_files() + get_launch_files() + get_config_files(),
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='liufq',
@@ -59,6 +72,8 @@ setup(
             'bxi_example_py_elf3_mjlab = bxi_example_py_elf3.bxi_example_mjlab:main',
             'bxi_example_py_elf3_demo = bxi_example_py_elf3.bxi_example_demo:main',
             'bxi_example_py_elf3_test_wire = bxi_example_py_elf3.bxi_example_test_wire:main',
+            'bxi_example_py_elf3_vibration = bxi_example_py_elf3.bxi_example_vibration:main',
+            'bxi_example_py_elf3_suspended_tests = bxi_example_py_elf3.bxi_example_suspended_tests:main',
         ],
     },
 )
