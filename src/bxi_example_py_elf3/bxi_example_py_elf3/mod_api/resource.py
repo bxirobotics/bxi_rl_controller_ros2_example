@@ -3,11 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generic, Protocol, TypeVar
+from typing import Generic, Literal, Protocol, TypeAlias, TypeVar
 
 
 ResourceT = TypeVar("ResourceT")
 ResourceFactory = Callable[["ResourceLoadContext"], ResourceT]
+ResourceLoading: TypeAlias = Literal["lazy", "eager"]
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,7 @@ class _ResourceResolver(Protocol):
 
 
 class ResourceHandle(Generic[ResourceT]):
-    """Lazy typed reference to a resource owned by the runtime."""
+    """Typed reference to a cached resource owned by the runtime."""
 
     def __init__(self, manager: _ResourceResolver, key: ResourceKey[ResourceT]):
         self._manager = manager
@@ -65,5 +66,6 @@ __all__ = [
     "ResourceFactory",
     "ResourceHandle",
     "ResourceKey",
+    "ResourceLoading",
     "ResourceLoadContext",
 ]

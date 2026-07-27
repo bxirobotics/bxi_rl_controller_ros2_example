@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 
-MOD_API_VERSION = "1.0.0"
+MOD_API_VERSION = "1.1.0"
 
 
 def parse_numeric_version(version: str) -> tuple[int, ...]:

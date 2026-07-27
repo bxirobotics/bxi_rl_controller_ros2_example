@@ -10,6 +10,7 @@ from .resource import (
     ResourceFactory,
     ResourceHandle,
     ResourceKey,
+    ResourceLoading,
     ResourceT,
 )
 from .state import RobotControlState
@@ -122,6 +123,7 @@ class _ResourceRegistry(Protocol):
         owner: str,
         root: Path,
         factory: ResourceFactory[ResourceT],
+        loading: ResourceLoading,
     ) -> None:
         ...
 
@@ -144,12 +146,15 @@ class ModLoadContext:
         self,
         key: ResourceKey[ResourceT],
         factory: ResourceFactory[ResourceT],
+        *,
+        loading: ResourceLoading = "lazy",
     ) -> None:
         self.resources.register(
             key,
             owner=self.mod_id,
             root=self.mod_root,
             factory=factory,
+            loading=loading,
         )
 
     def resource(self, key: ResourceKey[ResourceT]) -> ResourceHandle[ResourceT]:

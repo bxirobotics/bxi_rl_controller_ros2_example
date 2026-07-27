@@ -10,6 +10,9 @@ import importlib.util
 import os
 from pathlib import Path
 import re
+import subprocess
+import sys
+import sysconfig
 from typing import cast
 
 from ament_index_python.packages import PackageNotFoundError, get_package_prefix
@@ -40,7 +43,8 @@ class RuntimeRequirements:
 @dataclass(frozen=True)
 class RuntimeRequirementReport:
     errors: tuple[str, ...]
-    vendor_python: bool
+    warnings: tuple[str, ...]
+    vendor_python_paths: tuple[Path, ...]
     vendor_libraries: tuple[Path, ...]
 
     @property
@@ -49,7 +53,11 @@ class RuntimeRequirementReport:
 
     @property
     def uses_vendor(self) -> bool:
-        return self.vendor_python or bool(self.vendor_libraries)
+        return bool(self.vendor_python_paths or self.vendor_libraries)
+
+    @property
+    def vendor_python(self) -> bool:
+        return bool(self.vendor_python_paths)
 
 
 def read_runtime_requirements(
@@ -104,17 +112,60 @@ def check_runtime_requirements(
 ) -> RuntimeRequirementReport:
     """Check vendor-first, then host availability without installing anything."""
 
-    vendor_python_root = mod_root / "vendor" / "python"
-    vendor_library_root = mod_root / "vendor" / "lib"
+    python_paths = vendor_python_paths(mod_root)
+    library_paths = vendor_library_paths(mod_root)
     errors: list[str] = []
-    vendor_python = False
+    warnings: list[str] = []
+    used_python_paths: list[Path] = []
     vendor_libraries: list[Path] = []
 
     for requirement in requirements.python:
-        if _vendor_python_module_exists(vendor_python_root, requirement.import_name):
-            vendor_python = True
+        bundled_python = any(
+            _vendor_python_module_exists(root, requirement.import_name)
+            for root in python_paths
+        )
+        if bundled_python:
+            probe_error = _probe_python_import(
+                requirement.import_name,
+                python_paths,
+                library_paths,
+            )
+            if probe_error is not None:
+                errors.append(
+                    f"bundled Python module '{requirement.import_name}' is not "
+                    f"importable for target '{runtime_python_tag()}': {probe_error}"
+                )
+                continue
+            used_python_paths.extend(python_paths)
             continue
+
+        incompatible_targets = _incompatible_python_targets(
+            mod_root,
+            requirement.import_name,
+        )
+        legacy_vendor = _vendor_python_module_exists(
+            mod_root / "vendor" / "python",
+            requirement.import_name,
+        )
+        if incompatible_targets:
+            warnings.append(
+                f"ignored bundled Python module '{requirement.import_name}' "
+                f"for incompatible targets {list(incompatible_targets)}"
+            )
+        if legacy_vendor:
+            warnings.append(
+                f"ignored legacy flat vendor Python module "
+                f"'{requirement.import_name}'; move it under "
+                f"vendor/python/{runtime_python_tag()} or vendor/python/common"
+            )
         if _host_python_module_exists(requirement.import_name):
+            probe_error = _probe_python_import(requirement.import_name, ())
+            if probe_error is not None:
+                errors.append(
+                    f"host Python module '{requirement.import_name}' is not "
+                    f"importable: {probe_error}"
+                )
+                continue
             continue
         errors.append(f"missing Python module '{requirement.import_name}'")
 
@@ -125,27 +176,60 @@ def check_runtime_requirements(
             errors.append(f"missing ROS package '{requirement.package}'")
 
     for requirement in requirements.system:
-        vendor_library = _find_vendor_library(vendor_library_root, requirement.library)
+        vendor_library = next(
+            (
+                library
+                for root in library_paths
+                if (library := _find_vendor_library(root, requirement.library))
+                is not None
+            ),
+            None,
+        )
         if vendor_library is not None:
             vendor_libraries.append(vendor_library)
             continue
+        incompatible_targets = _incompatible_library_targets(
+            mod_root,
+            requirement.library,
+        )
+        if incompatible_targets:
+            warnings.append(
+                f"ignored bundled system library '{requirement.library}' "
+                f"for incompatible targets {list(incompatible_targets)}"
+            )
         if _host_library_exists(requirement.library):
             continue
         errors.append(f"missing system library '{requirement.library}'")
 
     return RuntimeRequirementReport(
         errors=tuple(errors),
-        vendor_python=vendor_python,
+        warnings=tuple(dict.fromkeys(warnings)),
+        vendor_python_paths=tuple(dict.fromkeys(used_python_paths)),
         vendor_libraries=tuple(dict.fromkeys(vendor_libraries)),
     )
 
 
-def vendor_python_path(mod_root: Path) -> Path:
-    return mod_root / "vendor" / "python"
+def runtime_platform_tag() -> str:
+    return _safe_tag(sysconfig.get_platform())
 
 
-def vendor_library_path(mod_root: Path) -> Path:
-    return mod_root / "vendor" / "lib"
+def runtime_python_tag() -> str:
+    cache_tag = sys.implementation.cache_tag
+    if not cache_tag:
+        cache_tag = f"python-{sys.version_info.major}{sys.version_info.minor}"
+    return f"{runtime_platform_tag()}-{_safe_tag(cache_tag)}"
+
+
+def vendor_python_paths(mod_root: Path) -> tuple[Path, ...]:
+    root = mod_root / "vendor" / "python"
+    candidates = (root / runtime_python_tag(), root / "common")
+    return tuple(path.resolve() for path in candidates if path.is_dir())
+
+
+def vendor_library_paths(mod_root: Path) -> tuple[Path, ...]:
+    root = mod_root / "vendor" / "lib"
+    candidate = root / runtime_platform_tag()
+    return (candidate.resolve(),) if candidate.is_dir() else ()
 
 
 def _read_named_entries(
@@ -193,6 +277,93 @@ def _host_python_module_exists(import_name: str) -> bool:
         return False
 
 
+def _probe_python_import(
+    import_name: str,
+    extra_paths: Sequence[Path],
+    library_paths: Sequence[Path] = (),
+) -> str | None:
+    script = (
+        "import importlib, sys\n"
+        "for path in reversed(sys.argv[2:]):\n"
+        "    sys.path.insert(0, path)\n"
+        "importlib.import_module(sys.argv[1])\n"
+    )
+    environment = os.environ.copy()
+    if library_paths:
+        inherited = environment.get("LD_LIBRARY_PATH")
+        values = [*(str(path) for path in library_paths)]
+        if inherited:
+            values.extend(inherited.split(os.pathsep))
+        environment["LD_LIBRARY_PATH"] = os.pathsep.join(dict.fromkeys(values))
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                script,
+                import_name,
+                *(str(path) for path in extra_paths),
+            ],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=20.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    if completed.returncode == 0:
+        return None
+    output = completed.stderr.strip() or completed.stdout.strip()
+    detail = output.splitlines()[-1] if output else f"exit code {completed.returncode}"
+    return detail[:500]
+
+
+def _incompatible_python_targets(
+    mod_root: Path,
+    import_name: str,
+) -> tuple[str, ...]:
+    root = mod_root / "vendor" / "python"
+    if not root.is_dir():
+        return ()
+    current = runtime_python_tag()
+    return tuple(
+        child.name
+        for child in sorted(root.iterdir())
+        if child.is_dir()
+        and child.name not in (current, "common")
+        and _is_python_target_tag(child.name)
+        and _vendor_python_module_exists(child, import_name)
+    )
+
+
+def _incompatible_library_targets(
+    mod_root: Path,
+    library: str,
+) -> tuple[str, ...]:
+    root = mod_root / "vendor" / "lib"
+    if not root.is_dir():
+        return ()
+    current = runtime_platform_tag()
+    return tuple(
+        child.name
+        for child in sorted(root.iterdir())
+        if child.is_dir()
+        and child.name != current
+        and _find_vendor_library(child, library) is not None
+    )
+
+
+def _is_python_target_tag(value: str) -> bool:
+    return re.fullmatch(r".+-(?:cpython|pypy)-\d+", value) is not None
+
+
+def _safe_tag(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip().lower())
+
+
 def _find_vendor_library(root: Path, library: str) -> Path | None:
     if not root.is_dir():
         return None
@@ -235,6 +406,8 @@ __all__ = [
     "RuntimeRequirements",
     "check_runtime_requirements",
     "read_runtime_requirements",
-    "vendor_library_path",
-    "vendor_python_path",
+    "runtime_platform_tag",
+    "runtime_python_tag",
+    "vendor_library_paths",
+    "vendor_python_paths",
 ]

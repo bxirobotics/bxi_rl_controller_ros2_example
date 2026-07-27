@@ -8,7 +8,7 @@ from .context import LoggerLike, RobotControlContext
 from .frame import FloatArray, MotorFrame
 from .mod import ModDefinition, ModLoadContext, StateBuildContext, StateFactory
 from .node import ModNode, NodeBuildContext, NodeFactory
-from .resource import ResourceHandle, ResourceKey, ResourceLoadContext
+from .resource import ResourceHandle, ResourceKey, ResourceLoading, ResourceLoadContext
 from .state import RobotControlState, StateBehavior
 from .states import (
     MotionReplayState,
@@ -49,6 +49,7 @@ __all__ = [
     "ReplayPolicy",
     "ResourceHandle",
     "ResourceKey",
+    "ResourceLoading",
     "ResourceLoadContext",
     "RobotControlContext",
     "RobotControlState",

@@ -13,8 +13,8 @@ from typing import Protocol
 
 from bxi_example_py_elf3.mod_api.node import ModNode, NodeBuildContext, NodeFactory
 from bxi_example_py_elf3._runtime.runtime_requirements import (
-    vendor_library_path,
-    vendor_python_path,
+    vendor_library_paths,
+    vendor_python_paths,
 )
 
 
@@ -407,18 +407,14 @@ class ModNodeManager:
     def _spawn_process(self, spec: ModNodeSpec) -> subprocess.Popen[bytes]:
         environment = os.environ.copy()
         inherited_paths: list[str] = []
-        bundled_python = vendor_python_path(spec.mod_root)
-        if bundled_python.is_dir():
-            inherited_paths.append(str(bundled_python))
+        inherited_paths.extend(str(path) for path in vendor_python_paths(spec.mod_root))
         inherited_paths.extend(str(path) for path in sys.path if path)
         existing_python_path = environment.get("PYTHONPATH")
         if existing_python_path:
             inherited_paths.extend(existing_python_path.split(os.pathsep))
         environment["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(inherited_paths))
-        bundled_libraries = vendor_library_path(spec.mod_root)
         library_paths: list[str] = []
-        if bundled_libraries.is_dir():
-            library_paths.append(str(bundled_libraries))
+        library_paths.extend(str(path) for path in vendor_library_paths(spec.mod_root))
         existing_library_path = environment.get("LD_LIBRARY_PATH")
         if existing_library_path:
             library_paths.extend(existing_library_path.split(os.pathsep))

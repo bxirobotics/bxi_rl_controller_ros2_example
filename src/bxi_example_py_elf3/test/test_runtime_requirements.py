@@ -13,8 +13,10 @@ from bxi_example_py_elf3._runtime.runtime_requirements import (
     RuntimeRequirements,
     check_runtime_requirements,
     read_runtime_requirements,
+    runtime_platform_tag,
+    runtime_python_tag,
 )
-from bxi_example_py_elf3.mod_api import MOD_API_VERSION
+from bxi_example_py_elf3.mod_api import MOD_API_VERSION, ResourceKey
 
 
 def _empty_requirements() -> dict[str, list[object]]:
@@ -52,6 +54,51 @@ class _SeverityStickyLogger:
 
 
 class RuntimeRequirementsTest(unittest.TestCase):
+    def test_registration_controls_eager_and_lazy_resource_loading(self) -> None:
+        for loading in ("eager", "lazy"):
+            with self.subTest(loading=loading), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                self._write_base_mod(root)
+                mod_root = root / "com.example.resources"
+                mod_root.mkdir()
+                manifest = self._manifest_header(
+                    "com.example.resources",
+                    entrypoint="plugin:create_mod",
+                )
+                (mod_root / "mod.yaml").write_text(
+                    yaml.safe_dump(manifest, sort_keys=False),
+                    encoding="utf-8",
+                )
+                (mod_root / "plugin.py").write_text(
+                    "from bxi_example_py_elf3.mod_api import (\n"
+                    "    ModDefinition, ResourceKey\n"
+                    ")\n"
+                    "MODEL = ResourceKey('com.example.resources/model')\n"
+                    "def load_model(context):\n"
+                    "    (context.mod_root / 'loaded').write_text('yes')\n"
+                    "    return object()\n"
+                    "def create_mod(context):\n"
+                    f"    context.register_resource(MODEL, load_model, "
+                    f"loading={loading!r})\n"
+                    "    return ModDefinition()\n",
+                    encoding="utf-8",
+                )
+
+                runtime = mod_loader.load_mod_runtime(
+                    {"initial_state": "com.example.base/idle"},
+                    built_in_root=root,
+                )
+                try:
+                    marker = mod_root / "loaded"
+                    self.assertEqual(marker.exists(), loading == "eager")
+                    if loading == "lazy":
+                        runtime.resources.get(
+                            ResourceKey[object]("com.example.resources/model")
+                        )
+                        self.assertTrue(marker.is_file())
+                finally:
+                    runtime.close()
+
     def test_mod_node_log_levels_use_distinct_rclpy_callsites(self) -> None:
         logger = _SeverityStickyLogger()
         manager = ModNodeManager([], logger=logger)
@@ -72,7 +119,7 @@ class RuntimeRequirementsTest(unittest.TestCase):
         )
 
     def test_mod_api_version_is_public_and_manifest_range_is_checked(self) -> None:
-        self.assertEqual(MOD_API_VERSION, "1.0.0")
+        self.assertEqual(MOD_API_VERSION, "1.1.0")
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             mod_root = root / "com.example.incompatible"
@@ -89,7 +136,7 @@ class RuntimeRequirementsTest(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 ValueError,
-                r"requires Mod API.*>=2,<3.*framework provides.*1\.0\.0",
+                r"requires Mod API.*>=2,<3.*framework provides.*1\.1\.0",
             ):
                 mod_loader._discover_mods((root,))
 
@@ -164,8 +211,8 @@ class RuntimeRequirementsTest(unittest.TestCase):
     def test_vendor_dependencies_are_checked_before_host(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             mod_root = Path(temporary_directory)
-            vendor_python = mod_root / "vendor" / "python"
-            vendor_library = mod_root / "vendor" / "lib"
+            vendor_python = mod_root / "vendor" / "python" / runtime_python_tag()
+            vendor_library = mod_root / "vendor" / "lib" / runtime_platform_tag()
             vendor_python.mkdir(parents=True)
             vendor_library.mkdir(parents=True)
             (vendor_python / "bxi_test_vendor.py").write_text("VALUE = 1\n")
@@ -184,9 +231,48 @@ class RuntimeRequirementsTest(unittest.TestCase):
 
             self.assertTrue(report.available)
             self.assertTrue(report.vendor_python)
+            self.assertEqual(report.vendor_python_paths, (vendor_python.resolve(),))
             self.assertEqual(
                 report.vendor_libraries,
                 (bundled_library.resolve(),),
+            )
+
+    def test_common_vendor_can_use_platform_python_and_library_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            mod_root = Path(temporary_directory)
+            platform_python = mod_root / "vendor" / "python" / runtime_python_tag()
+            common_python = mod_root / "vendor" / "python" / "common"
+            platform_library = mod_root / "vendor" / "lib" / runtime_platform_tag()
+            platform_python.mkdir(parents=True)
+            common_python.mkdir(parents=True)
+            platform_library.mkdir(parents=True)
+            (platform_python / "bxi_platform_helper.py").write_text(
+                "VALUE = 42\n",
+                encoding="utf-8",
+            )
+            (common_python / "bxi_common_vendor.py").write_text(
+                "import os\n"
+                "from bxi_platform_helper import VALUE\n"
+                f"assert os.environ['LD_LIBRARY_PATH'].split(os.pathsep)[0] "
+                f"== {str(platform_library.resolve())!r}\n"
+                "assert VALUE == 42\n",
+                encoding="utf-8",
+            )
+            requirements = read_runtime_requirements(
+                {
+                    "python": [{"import": "bxi_common_vendor"}],
+                    "ros": [],
+                    "system": [],
+                },
+                "requirements",
+            )
+
+            report = check_runtime_requirements(requirements, mod_root)
+
+            self.assertTrue(report.available)
+            self.assertEqual(
+                report.vendor_python_paths,
+                (platform_python.resolve(), common_python.resolve()),
             )
 
     def test_missing_dependencies_have_specific_diagnostics(self) -> None:
@@ -212,6 +298,58 @@ class RuntimeRequirementsTest(unittest.TestCase):
                     "missing system library 'bxi_definitely_missing_system'",
                 ),
             )
+
+    def test_incompatible_vendor_python_falls_back_to_host(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            mod_root = Path(temporary_directory)
+            incompatible = (
+                mod_root / "vendor" / "python" / "foreign-platform-cpython-999" / "yaml"
+            )
+            incompatible.mkdir(parents=True)
+            (incompatible / "__init__.py").write_text(
+                "raise AssertionError('must not import incompatible vendor')\n",
+                encoding="utf-8",
+            )
+            requirements = read_runtime_requirements(
+                {"python": [{"import": "yaml"}], "ros": [], "system": []},
+                "requirements",
+            )
+
+            report = check_runtime_requirements(requirements, mod_root)
+
+            self.assertTrue(report.available)
+            self.assertFalse(report.vendor_python)
+            self.assertIn("incompatible targets", report.warnings[0])
+
+    def test_matching_vendor_python_must_really_import(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            mod_root = Path(temporary_directory)
+            package = (
+                mod_root
+                / "vendor"
+                / "python"
+                / runtime_python_tag()
+                / "bxi_broken_vendor"
+            )
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text(
+                "raise RuntimeError('broken native dependency')\n",
+                encoding="utf-8",
+            )
+            requirements = read_runtime_requirements(
+                {
+                    "python": [{"import": "bxi_broken_vendor"}],
+                    "ros": [],
+                    "system": [],
+                },
+                "requirements",
+            )
+
+            report = check_runtime_requirements(requirements, mod_root)
+
+            self.assertFalse(report.available)
+            self.assertIn("is not importable", report.errors[0])
+            self.assertIn("broken native dependency", report.errors[0])
 
     def test_unavailable_node_is_not_imported_or_started(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -282,7 +420,7 @@ class RuntimeRequirementsTest(unittest.TestCase):
     def test_in_process_vendor_is_loaded_with_explicit_warning(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             mod_root = Path(temporary_directory) / "com.example.vendor_node"
-            vendor_python = mod_root / "vendor" / "python"
+            vendor_python = mod_root / "vendor" / "python" / runtime_python_tag()
             vendor_python.mkdir(parents=True)
             (vendor_python / "bxi_test_inprocess_vendor.py").write_text(
                 "VALUE = 7\n",
@@ -340,8 +478,8 @@ class RuntimeRequirementsTest(unittest.TestCase):
     def test_process_node_receives_vendor_paths_first(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             mod_root = Path(temporary_directory)
-            vendor_python = mod_root / "vendor" / "python"
-            vendor_library = mod_root / "vendor" / "lib"
+            vendor_python = mod_root / "vendor" / "python" / runtime_python_tag()
+            vendor_library = mod_root / "vendor" / "lib" / runtime_platform_tag()
             vendor_python.mkdir(parents=True)
             vendor_library.mkdir(parents=True)
             captured: dict[str, object] = {}

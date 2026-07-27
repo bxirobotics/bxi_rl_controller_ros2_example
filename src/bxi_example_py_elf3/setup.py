@@ -17,41 +17,37 @@ package_name = "bxi_example_py_elf3"
 
 
 class SyncInstalledModsMixin:
-    """Remove built-in Mods that no longer exist in the source tree."""
+    """Replace installed Mod directories instead of merging stale contents."""
 
     def run(self):
-        self._remove_stale_mods()
+        self._reset_installed_mods()
         super().run()
 
-    def _remove_stale_mods(self):
+    def _reset_installed_mods(self):
         source_root = Path(__file__).resolve().parent / "mods"
-        installed_root = (
-            Path(self.install_dir)
-            / "share"
-            / package_name
-            / "mods"
-        )
+        installed_root = Path(self.install_dir) / "share" / package_name / "mods"
 
         # A symlinked root already follows the source tree and must never be
         # traversed for deletion: doing so could remove source files.
         if installed_root.is_symlink() or not installed_root.is_dir():
             return
 
-        source_mods = {
-            child.name
-            for child in source_root.iterdir()
-            if child.is_dir() and (child / "mod.yaml").is_file()
-        } if source_root.is_dir() else set()
+        source_mods = (
+            {
+                child.name
+                for child in source_root.iterdir()
+                if child.is_dir() and (child / "mod.yaml").is_file()
+            }
+            if source_root.is_dir()
+            else set()
+        )
 
         for installed_mod in installed_root.iterdir():
-            if installed_mod.name in source_mods:
-                continue
-
             # Only direct children that contain a Mod manifest are eligible.
             # A broken manifest link is expected after deleting a Mod built
             # with --symlink-install.
             manifest = installed_mod / "mod.yaml"
-            if installed_mod.is_symlink() and manifest.is_file():
+            if installed_mod.is_symlink():
                 installed_mod.unlink()
             elif installed_mod.is_dir() and (
                 manifest.is_file() or manifest.is_symlink()
@@ -61,7 +57,12 @@ class SyncInstalledModsMixin:
                 continue
 
             self.announce(
-                f"removing stale built-in Mod: {installed_mod}",
+                (
+                    "refreshing installed Mod: "
+                    if installed_mod.name in source_mods
+                    else "removing stale built-in Mod: "
+                )
+                + str(installed_mod),
                 level=2,
             )
 
@@ -86,6 +87,7 @@ class SyncModInstallData(SyncInstalledModsMixin, install_data):
 
 
 if symlink_data is not None:
+
     class SyncModSymlinkData(SyncInstalledModsMixin, symlink_data):
         def copy_file(self, src, dst, **kwargs):
             if kwargs.get("link"):
@@ -189,6 +191,11 @@ def get_mod_files():
             if file.endswith((".pyc", ".pyo")):
                 continue
             file_path = os.path.join(root, file)
+            # colcon --symlink-install can leave broken data-file symlinks in
+            # the build staging tree after a Mod file is moved or deleted.
+            # Never turn those stale entries back into install data.
+            if not os.path.isfile(file_path):
+                continue
             relative_path = os.path.relpath(root, source_dir)
             install_dir = (
                 target_dir

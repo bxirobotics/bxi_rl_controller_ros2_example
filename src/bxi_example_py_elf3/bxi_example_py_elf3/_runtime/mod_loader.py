@@ -34,7 +34,6 @@ from bxi_example_py_elf3._runtime.runtime_requirements import (
     RuntimeRequirements,
     check_runtime_requirements,
     read_runtime_requirements,
-    vendor_python_path,
 )
 from bxi_example_py_elf3.mod_api.state import RobotControlState
 from bxi_example_py_elf3._runtime.transition import (
@@ -137,8 +136,8 @@ class _VendorSession:
             self.loaded_libraries.append(handle)
             _process_vendor_library_handles.append(handle)
 
-        if report.vendor_python:
-            path = str(vendor_python_path(mod.root))
+        for root in reversed(report.vendor_python_paths):
+            path = str(root)
             if path not in sys.path:
                 sys.path.insert(0, path)
                 self.added_python_paths.append(path)
@@ -231,7 +230,9 @@ def load_mod_runtime(
     }
     ordered_candidates = _dependency_order(candidates)
     vendor_session = _VendorSession()
-    mod_warnings: dict[str, tuple[str, ...]] = {}
+    mod_warnings = {
+        mod_id: report.warnings for mod_id, report in runtime_reports.items()
+    }
     ordered: list[_DiscoveredMod] = []
     try:
         for mod in ordered_candidates:
@@ -247,7 +248,10 @@ def load_mod_runtime(
                 runtime_reports[mod.id],
                 f"Mod '{mod.id}'",
             )
-            mod_warnings[mod.id] = activation_warnings
+            mod_warnings[mod.id] = (
+                *runtime_reports[mod.id].warnings,
+                *activation_warnings,
+            )
             if activation_error is not None:
                 unavailable_reasons[mod.id] = activation_error
                 continue
@@ -284,6 +288,7 @@ def load_mod_runtime(
                         f"match plugin type_name '{plugin.type_name}'"
                     )
                 register_transition_plugin(plugin)
+        resources.preload_eager()
         config, factories = _compose_config(base_config, ordered, definitions)
         _validate_mod_node_states(node_specs, config)
     except Exception:
@@ -758,7 +763,7 @@ def _load_mod_node_specs(
             if not requirement_report.available
             else None
         )
-        runtime_warnings: tuple[str, ...] = ()
+        runtime_warnings = requirement_report.warnings
         factory: NodeFactory | None = None
         should_load_factory = unavailable_error is None and (
             execution == "in_process" or load_process_factories
@@ -769,11 +774,12 @@ def _load_mod_node_specs(
                     raise RuntimeError(
                         f"{context} needs a vendor session for in-process loading"
                     )
-                activation_error, runtime_warnings = vendor_session.activate(
+                activation_error, activation_warnings = vendor_session.activate(
                     mod,
                     requirement_report,
                     f"Mod node '{_qualify(mod.id, local_name)}'",
                 )
+                runtime_warnings = (*runtime_warnings, *activation_warnings)
                 if activation_error is not None:
                     unavailable_error = activation_error
             if unavailable_error is None:
