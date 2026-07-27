@@ -269,18 +269,22 @@ actions:
     action: toggle_pause
     manifest:
       label: 暂停/继续
+      ui: pause
   - from: applause
     event: toggle_pause
     action: toggle_pause
     manifest:
       label: 暂停/继续
+      ui: pause
   - from: hello
     event: toggle_pause
     action: toggle_pause
     manifest:
       label: 暂停/继续
+      ui: pause
   - from: lie_down
     event: toggle_pause
     action: toggle_pause
     manifest:
       label: 暂停/继续
+      ui: pause
