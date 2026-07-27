@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Protocol
+
+import yaml
 
 from bxi_example_py_elf3.mod_api.node import ModNode, NodeBuildContext, NodeFactory
 from bxi_example_py_elf3._runtime.runtime_requirements import (
@@ -43,6 +47,11 @@ class ModNodeSpec:
     restart_max_attempts: int
     restart_delay: float
     factory: NodeFactory | None
+    runtime: str = "python"
+    arguments: tuple[str, ...] = ()
+    remappings: Mapping[str, str] = field(default_factory=dict)
+    namespace: str = ""
+    executable_path: Path | None = None
     unavailable_error: str | None = None
     warnings: tuple[str, ...] = ()
 
@@ -93,6 +102,8 @@ class ModNodeManager:
         self._stopping_instances: dict[str, _StoppingInstance] = {}
         self._active_states: set[str] = set()
         self._prepared_states: set[str] = set()
+        self._parameter_directory: Path | None = None
+        self._parameter_files: dict[str, Path] = {}
         self._closed = False
 
     def start(self) -> None:
@@ -264,6 +275,7 @@ class ModNodeManager:
             result.append(
                 {
                     "id": spec.id,
+                    "runtime": spec.runtime,
                     "execution": spec.execution,
                     "lifecycle": spec.lifecycle,
                     "states": list(spec.states),
@@ -297,6 +309,10 @@ class ModNodeManager:
         self._fault_attempts.clear()
         self._active_states.clear()
         self._prepared_states.clear()
+        if self._parameter_directory is not None:
+            shutil.rmtree(self._parameter_directory, ignore_errors=True)
+            self._parameter_directory = None
+            self._parameter_files.clear()
 
     def _desired_node_ids(self) -> set[str]:
         scoped_states = self._active_states | self._prepared_states
@@ -372,6 +388,9 @@ class ModNodeManager:
             node_name=spec.node_name,
             mod_root=spec.mod_root,
             params=spec.params,
+            arguments=spec.arguments,
+            remappings=spec.remappings,
+            namespace=spec.namespace,
         )
         instance: ModNode | None = None
         attached = False
@@ -423,8 +442,8 @@ class ModNodeManager:
             environment["LD_LIBRARY_PATH"] = os.pathsep.join(
                 dict.fromkeys(library_paths)
             )
-        return self._process_factory(
-            [
+        if spec.runtime == "python":
+            command = [
                 sys.executable,
                 "-m",
                 "bxi_example_py_elf3._runtime.mod_node_runner",
@@ -432,10 +451,66 @@ class ModNodeManager:
                 str(spec.manifest_path),
                 "--node",
                 spec.local_name,
-            ],
-            env=environment,
-            start_new_session=True,
+            ]
+            cwd = None
+        else:
+            executable = spec.executable_path
+            if executable is None:
+                raise RuntimeError(f"Mod node '{spec.id}' has no resolved executable")
+            command = [
+                str(executable),
+                *spec.arguments,
+                "--ros-args",
+                "-r",
+                f"__node:={spec.node_name}",
+            ]
+            if spec.namespace:
+                command.extend(("-r", f"__ns:={spec.namespace}"))
+            for source, target in spec.remappings.items():
+                command.extend(("-r", f"{source}:={target}"))
+            if spec.params:
+                command.extend(("--params-file", str(self._parameter_file(spec))))
+            cwd = str(spec.mod_root)
+
+        kwargs: dict[str, object] = {
+            "env": environment,
+            "start_new_session": True,
+        }
+        if cwd is not None:
+            kwargs["cwd"] = cwd
+        return self._process_factory(
+            command,
+            **kwargs,
         )
+
+    def _parameter_file(self, spec: ModNodeSpec) -> Path:
+        existing = self._parameter_files.get(spec.id)
+        if existing is not None:
+            return existing
+        if self._parameter_directory is None:
+            self._parameter_directory = Path(
+                tempfile.mkdtemp(prefix="bxi-mod-node-params-")
+            )
+        path = self._parameter_directory / f"{spec.node_name}.yaml"
+        namespace = spec.namespace.strip("/")
+        node_fqn = "/" + "/".join(part for part in (namespace, spec.node_name) if part)
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
+                yaml.safe_dump(
+                    {node_fqn: {"ros__parameters": dict(spec.params)}},
+                    output_file,
+                    sort_keys=False,
+                )
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        self._parameter_files[spec.id] = path
+        return path
 
     @staticmethod
     def _add_executor_node(executor: ExecutorLike, node: object) -> None:

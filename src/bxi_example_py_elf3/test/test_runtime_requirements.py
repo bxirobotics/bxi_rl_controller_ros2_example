@@ -142,7 +142,7 @@ class RuntimeRequirementsTest(unittest.TestCase):
         )
 
     def test_mod_api_version_is_public_and_manifest_range_is_checked(self) -> None:
-        self.assertEqual(MOD_API_VERSION, "1.1.0")
+        self.assertEqual(MOD_API_VERSION, "1.2.0")
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             mod_root = root / "com.example.incompatible"
@@ -159,7 +159,7 @@ class RuntimeRequirementsTest(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 ValueError,
-                r"requires Mod API.*>=2,<3.*framework provides.*1\.1\.0",
+                r"requires Mod API.*>=2,<3.*framework provides.*1\.2\.0",
             ):
                 mod_loader._discover_mods((root,))
 

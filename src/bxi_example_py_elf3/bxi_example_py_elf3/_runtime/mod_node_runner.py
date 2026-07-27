@@ -30,6 +30,9 @@ def main() -> None:
         node_name=spec.node_name,
         mod_root=spec.mod_root,
         params=spec.params,
+        arguments=spec.arguments,
+        remappings=spec.remappings,
+        namespace=spec.namespace,
     )
 
     rclpy.init(args=[])

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -22,6 +22,9 @@ class NodeBuildContext:
     node_name: str
     mod_root: Path
     params: Mapping[str, object]
+    arguments: tuple[str, ...] = ()
+    remappings: Mapping[str, str] = field(default_factory=dict)
+    namespace: str = ""
 
     def asset(self, relative_path: str) -> Path:
         path = (self.mod_root / relative_path).resolve()

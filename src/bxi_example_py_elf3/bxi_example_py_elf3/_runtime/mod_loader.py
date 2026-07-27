@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 import ctypes
 import importlib.util
+import os
 from pathlib import Path
 import re
 import sys
@@ -13,6 +14,7 @@ from types import ModuleType
 from typing import cast
 
 import yaml
+from ament_index_python.packages import PackageNotFoundError, get_package_prefix
 
 from bxi_example_py_elf3.mod_api_version import (
     MOD_API_VERSION,
@@ -34,6 +36,7 @@ from bxi_example_py_elf3._runtime.runtime_requirements import (
     RuntimeRequirements,
     check_runtime_requirements,
     read_runtime_requirements,
+    runtime_platform_tag,
 )
 from bxi_example_py_elf3.mod_api.state import RobotControlState
 from bxi_example_py_elf3._runtime.transition import (
@@ -709,10 +712,14 @@ def _load_mod_node_specs(
         node = _mapping(raw_node, context)
         allowed_fields = {
             "entrypoint",
+            "runtime",
             "execution",
             "lifecycle",
             "states",
             "params",
+            "arguments",
+            "remappings",
+            "namespace",
             "manifest",
             "restart",
             "runtime_requirements",
@@ -724,15 +731,44 @@ def _load_mod_node_specs(
         entrypoint = node.get("entrypoint")
         if not isinstance(entrypoint, str) or not entrypoint:
             raise ValueError(f"{context}.entrypoint must be a non-empty string")
-        module_name, function_name = _parse_entrypoint(
-            entrypoint,
-            f"{context}.entrypoint",
-        )
-        _validate_mod_module_exists(mod, module_name)
 
-        execution = node.get("execution", "in_process")
+        runtime = node.get("runtime", "python")
+        if runtime not in ("python", "executable", "ros"):
+            raise ValueError(
+                f"{context}.runtime must be 'python', 'executable' or 'ros'"
+            )
+        module_name = ""
+        function_name = ""
+        executable_path: Path | None = None
+        executable_error: str | None = None
+        if runtime == "python":
+            module_name, function_name = _parse_entrypoint(
+                entrypoint,
+                f"{context}.entrypoint",
+            )
+            _validate_mod_module_exists(mod, module_name)
+        elif runtime == "executable":
+            executable_path, executable_error = _resolve_mod_executable(
+                mod,
+                entrypoint,
+                context,
+            )
+        else:
+            executable_path, executable_error = _resolve_ros_executable(
+                entrypoint,
+                context,
+            )
+
+        execution = node.get(
+            "execution",
+            "in_process" if runtime == "python" else "process",
+        )
         if execution not in ("in_process", "process"):
             raise ValueError(f"{context}.execution must be 'in_process' or 'process'")
+        if runtime != "python" and execution != "process":
+            raise ValueError(
+                f"{context}.execution must be 'process' for runtime '{runtime}'"
+            )
         lifecycle = node.get("lifecycle", "mod")
         if lifecycle not in ("mod", "state"):
             raise ValueError(f"{context}.lifecycle must be 'mod' or 'state'")
@@ -762,15 +798,15 @@ def _load_mod_node_specs(
             runtime_requirements,
             mod.root,
         )
-        unavailable_error = (
-            "; ".join(requirement_report.errors)
-            if not requirement_report.available
-            else None
-        )
+        availability_errors = list(requirement_report.errors)
+        if executable_error is not None:
+            availability_errors.append(executable_error)
+        unavailable_error = "; ".join(availability_errors) or None
         runtime_warnings = requirement_report.warnings
         factory: NodeFactory | None = None
         should_load_factory = unavailable_error is None and (
-            execution == "in_process" or load_process_factories
+            runtime == "python"
+            and (execution == "in_process" or load_process_factories)
         )
         if should_load_factory:
             if execution == "in_process" and requirement_report.uses_vendor:
@@ -796,6 +832,21 @@ def _load_mod_node_specs(
                 factory = cast(NodeFactory, raw_factory)
 
         params = dict(_mapping(node.get("params"), f"{context}.params"))
+        arguments = _string_list(node.get("arguments", ()), f"{context}.arguments")
+        remappings = _string_mapping(
+            node.get("remappings"),
+            f"{context}.remappings",
+        )
+        namespace = node.get("namespace", "")
+        if not isinstance(namespace, str):
+            raise ValueError(f"{context}.namespace must be a string")
+        if namespace and not re.fullmatch(
+            r"/(?:[A-Za-z_][A-Za-z0-9_]*)(?:/[A-Za-z_][A-Za-z0-9_]*)*",
+            namespace,
+        ):
+            raise ValueError(
+                f"{context}.namespace must be empty or an absolute ROS namespace"
+            )
         manifest = dict(_mapping(node.get("manifest"), f"{context}.manifest"))
         label = manifest.get("label")
         if not isinstance(label, str) or not label.strip():
@@ -803,6 +854,7 @@ def _load_mod_node_specs(
         reserved_manifest_fields = {
             "id",
             "entrypoint",
+            "runtime",
             "execution",
             "lifecycle",
             "states",
@@ -863,11 +915,90 @@ def _load_mod_node_specs(
                 restart_max_attempts=max_attempts,
                 restart_delay=float(restart_delay),
                 factory=factory,
+                runtime=runtime,
+                arguments=arguments,
+                remappings=remappings,
+                namespace=namespace,
+                executable_path=executable_path,
                 unavailable_error=unavailable_error,
                 warnings=runtime_warnings,
             )
         )
     return specs
+
+
+def _resolve_mod_executable(
+    mod: _DiscoveredMod,
+    entrypoint: str,
+    context: str,
+) -> tuple[Path | None, str | None]:
+    relative = Path(entrypoint)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in ("", ".", "..") for part in relative.parts)
+    ):
+        raise ValueError(
+            f"{context}.entrypoint must be a safe relative executable name"
+        )
+    platform_root = (mod.root / "bin" / runtime_platform_tag()).resolve()
+    candidate = (platform_root / relative).resolve()
+    if candidate != platform_root and platform_root not in candidate.parents:
+        raise ValueError(f"{context}.entrypoint escapes the platform bin directory")
+    display_path = Path("bin") / runtime_platform_tag() / relative
+    error = _executable_error(candidate, str(display_path))
+    return (candidate if error is None else None), error
+
+
+def _resolve_ros_executable(
+    entrypoint: str,
+    context: str,
+) -> tuple[Path | None, str | None]:
+    package, separator, executable = entrypoint.partition(":")
+    if (
+        not separator
+        or not re.fullmatch(r"[a-z][a-z0-9_]*", package)
+        or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.+-]*", executable)
+    ):
+        raise ValueError(f"{context}.entrypoint must look like 'package:executable'")
+    try:
+        prefix = Path(get_package_prefix(package)).resolve()
+    except PackageNotFoundError:
+        return None, f"missing ROS package '{package}'"
+    candidate = (prefix / "lib" / package / executable).resolve()
+    error = _executable_error(candidate, f"{package}:{executable}")
+    return (candidate if error is None else None), error
+
+
+def _executable_error(path: Path, display_name: str) -> str | None:
+    if not path.is_file():
+        return f"missing executable '{display_name}'"
+    if not os.access(path, os.X_OK):
+        return f"file is not executable: '{display_name}'"
+    return None
+
+
+def _string_list(value: object, context: str) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"{context} must be a list")
+    result: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ValueError(f"{context}[{index}] must be a string")
+        result.append(item)
+    return tuple(result)
+
+
+def _string_mapping(value: object, context: str) -> dict[str, str]:
+    mapping = _mapping(value, context)
+    result: dict[str, str] = {}
+    for source, target in mapping.items():
+        if not isinstance(source, str) or not source:
+            raise ValueError(f"{context} keys must be non-empty strings")
+        if not isinstance(target, str) or not target:
+            raise ValueError(f"{context}.{source} must be a non-empty string")
+        result[source] = target
+    return result
 
 
 def _validate_mod_module_exists(mod: _DiscoveredMod, module_name: str) -> None:

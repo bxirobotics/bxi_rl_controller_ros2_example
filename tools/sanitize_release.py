@@ -96,6 +96,127 @@ def validate_runtime_requirements(value: object, context: str) -> None:
                 raise ValueError(f"{context}.{category}[{index}].{field} is invalid")
 
 
+def validate_node_declaration(
+    node: Mapping[str, object],
+    context: str,
+) -> None:
+    allowed_fields = {
+        "entrypoint",
+        "runtime",
+        "execution",
+        "lifecycle",
+        "states",
+        "params",
+        "arguments",
+        "remappings",
+        "namespace",
+        "manifest",
+        "restart",
+        "runtime_requirements",
+    }
+    unknown_fields = set(node) - allowed_fields
+    if unknown_fields:
+        raise ValueError(f"{context} has unknown fields: {sorted(unknown_fields)}")
+    entrypoint = node.get("entrypoint")
+    if not isinstance(entrypoint, str) or not entrypoint:
+        raise ValueError(f"{context}.entrypoint must be a non-empty string")
+    runtime = node.get("runtime", "python")
+    if runtime not in ("python", "executable", "ros"):
+        raise ValueError(f"{context}.runtime must be 'python', 'executable' or 'ros'")
+    if runtime == "python" and not re.fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*:"
+        r"[A-Za-z_][A-Za-z0-9_]*",
+        entrypoint,
+    ):
+        raise ValueError(f"{context}.entrypoint must look like 'module:function'")
+    if runtime == "executable":
+        relative = Path(entrypoint)
+        if (
+            relative.is_absolute()
+            or not relative.parts
+            or any(part in ("", ".", "..") for part in relative.parts)
+        ):
+            raise ValueError(f"{context}.entrypoint is not a safe relative path")
+    if runtime == "ros" and not re.fullmatch(
+        r"[a-z][a-z0-9_]*:[A-Za-z0-9_][A-Za-z0-9_.+-]*",
+        entrypoint,
+    ):
+        raise ValueError(f"{context}.entrypoint must look like 'package:executable'")
+    execution = node.get(
+        "execution",
+        "in_process" if runtime == "python" else "process",
+    )
+    if execution not in ("in_process", "process"):
+        raise ValueError(f"{context}.execution is invalid")
+    if runtime != "python" and execution != "process":
+        raise ValueError(f"{context}.execution must be 'process' for {runtime}")
+    lifecycle = node.get("lifecycle", "mod")
+    if lifecycle not in ("mod", "state"):
+        raise ValueError(f"{context}.lifecycle is invalid")
+    states = node.get("states", ())
+    if not isinstance(states, Sequence) or isinstance(states, (str, bytes)):
+        raise ValueError(f"{context}.states must be a list")
+    if not all(isinstance(state, str) and state for state in states):
+        raise ValueError(f"{context}.states entries must be non-empty strings")
+    if lifecycle == "state" and not states:
+        raise ValueError(f"{context}.states is required for state lifecycle")
+    if lifecycle == "mod" and states:
+        raise ValueError(f"{context}.states is only valid for state lifecycle")
+    arguments = node.get("arguments", ())
+    if not isinstance(arguments, Sequence) or isinstance(arguments, (str, bytes)):
+        raise ValueError(f"{context}.arguments must be a list")
+    if not all(isinstance(argument, str) for argument in arguments):
+        raise ValueError(f"{context}.arguments entries must be strings")
+    remappings = node.get("remappings", {})
+    if not isinstance(remappings, Mapping) or not all(
+        isinstance(source, str)
+        and bool(source)
+        and isinstance(target, str)
+        and bool(target)
+        for source, target in remappings.items()
+    ):
+        raise ValueError(f"{context}.remappings must map non-empty strings")
+    namespace = node.get("namespace", "")
+    if not isinstance(namespace, str) or (
+        namespace
+        and not re.fullmatch(
+            r"/(?:[A-Za-z_][A-Za-z0-9_]*)(?:/[A-Za-z_][A-Za-z0-9_]*)*",
+            namespace,
+        )
+    ):
+        raise ValueError(f"{context}.namespace is invalid")
+    for mapping_name in ("params", "manifest", "restart"):
+        value = node.get(mapping_name, {})
+        if not isinstance(value, Mapping):
+            raise ValueError(f"{context}.{mapping_name} must be a map")
+    manifest = cast(Mapping[str, object], node.get("manifest", {}))
+    if (
+        not isinstance(manifest.get("label"), str)
+        or not cast(str, manifest.get("label")).strip()
+    ):
+        raise ValueError(f"{context}.manifest.label must be a non-empty string")
+    restart = cast(Mapping[str, object], node.get("restart", {}))
+    if execution != "process" and restart:
+        raise ValueError(f"{context}.restart requires process execution")
+    if set(restart) - {"max_attempts", "delay"}:
+        raise ValueError(f"{context}.restart has unknown fields")
+    max_attempts = restart.get("max_attempts", 3)
+    if (
+        isinstance(max_attempts, bool)
+        or not isinstance(max_attempts, int)
+        or max_attempts < 0
+    ):
+        raise ValueError(f"{context}.restart.max_attempts is invalid")
+    delay = restart.get("delay", 1.0)
+    if isinstance(delay, bool) or not isinstance(delay, (int, float)) or delay < 0:
+        raise ValueError(f"{context}.restart.delay is invalid")
+    if "runtime_requirements" in node:
+        validate_runtime_requirements(
+            node["runtime_requirements"],
+            f"{context}.runtime_requirements",
+        )
+
+
 def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, ModInfo]:
     mods: dict[str, ModInfo] = {}
     for raw_root in mod_roots:
@@ -258,11 +379,10 @@ def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, Mod
                         f"invalid node declaration in {manifest_path}: "
                         f"{node_name!r}={raw_node!r}"
                     )
-                if "runtime_requirements" in raw_node:
-                    validate_runtime_requirements(
-                        raw_node["runtime_requirements"],
-                        f"{manifest_path}: nodes.{node_name}.runtime_requirements",
-                    )
+                validate_node_declaration(
+                    raw_node,
+                    f"{manifest_path}: nodes.{node_name}",
+                )
                 raw_states = raw_node.get("states", ())
                 if not isinstance(raw_states, Sequence) or isinstance(
                     raw_states, (str, bytes)
