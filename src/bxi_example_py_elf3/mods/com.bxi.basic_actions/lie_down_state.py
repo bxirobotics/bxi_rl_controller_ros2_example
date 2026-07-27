@@ -43,9 +43,3 @@ class LieDownState(MotionReplayState[DanceMotionPolicyGravityIsaaclabV2]):
                 trigger=self.finish_trigger,
                 transition=self.end_transition,
             )
-
-    # def on_action(self, ctx: RobotControlContext, action_name: str) -> bool:
-    #     if action_name != "toggle_pause":
-    #         return False
-    #     self.playing = not self.playing
-    #     return True

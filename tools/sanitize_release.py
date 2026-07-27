@@ -7,9 +7,22 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import shutil
+import sys
 from typing import cast
 
 import yaml
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+PACKAGE_SOURCE_ROOT = REPOSITORY_ROOT / "src" / "bxi_example_py_elf3"
+sys.path.insert(0, str(PACKAGE_SOURCE_ROOT))
+
+from bxi_example_py_elf3.mod_api_version import (  # noqa: E402
+    MOD_API_VERSION,
+    parse_numeric_version,
+    parse_version_constraint,
+    version_matches,
+)
 
 
 DEFAULT_MOD_ROOT = Path("src/bxi_example_py_elf3/mods")
@@ -103,8 +116,22 @@ def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, Mod
                     f"unknown Mod fields in {manifest_path}: "
                     f"{sorted(unknown_fields)}"
                 )
-            if manifest["schema"] != 1 or manifest["api"] != 1:
-                raise ValueError(f"unsupported Mod schema/api: {manifest_path}")
+            if manifest["schema"] != 1:
+                raise ValueError(f"unsupported Mod schema: {manifest_path}")
+            api = manifest["api"]
+            if not isinstance(api, str) or not api:
+                raise ValueError(f"invalid Mod API constraint: {manifest_path}")
+            try:
+                api_compatible = version_matches(MOD_API_VERSION, api)
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid Mod API constraint in {manifest_path}: {exc}"
+                ) from exc
+            if not api_compatible:
+                raise ValueError(
+                    f"Mod API mismatch in {manifest_path}: requires {api!r}, "
+                    f"framework provides {MOD_API_VERSION!r}"
+                )
             mod_id = manifest.get("id")
             if not isinstance(mod_id, str) or not re.fullmatch(
                 r"[a-z0-9]+(?:[._-][a-z0-9]+)+", mod_id
@@ -115,10 +142,12 @@ def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, Mod
             if not isinstance(manifest["name"], str) or not manifest["name"].strip():
                 raise ValueError(f"invalid Mod name: {manifest_path}")
             version = manifest["version"]
-            if not isinstance(version, str) or not re.fullmatch(
-                r"\d+(?:\.\d+)*", version
-            ):
+            if not isinstance(version, str):
                 raise ValueError(f"invalid Mod version: {manifest_path}")
+            try:
+                parse_numeric_version(version)
+            except ValueError as exc:
+                raise ValueError(f"invalid Mod version: {manifest_path}") from exc
             if not isinstance(manifest["enable"], bool):
                 raise ValueError(f"enable must be a boolean: {manifest_path}")
             entrypoint = manifest["entrypoint"]
@@ -157,6 +186,20 @@ def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, Mod
                 if isinstance(item, str):
                     requires.append(item)
                 elif isinstance(item, Mapping) and isinstance(item.get("id"), str):
+                    requirement_version = item.get("version")
+                    if requirement_version is not None:
+                        if not isinstance(requirement_version, str):
+                            raise ValueError(
+                                f"invalid requirement version in {manifest_path}: "
+                                f"{requirement_version!r}"
+                            )
+                        try:
+                            parse_version_constraint(requirement_version)
+                        except ValueError as exc:
+                            raise ValueError(
+                                f"invalid requirement version in {manifest_path}: "
+                                f"{requirement_version!r}"
+                            ) from exc
                     requires.append(cast(str, item["id"]))
                 else:
                     raise ValueError(

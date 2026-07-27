@@ -514,11 +514,32 @@ class ModNodeManager:
             process.wait(timeout=3.0)
 
     def _log(self, level: str, message: str) -> None:
-        method = getattr(self._logger, level, None)
-        if callable(method):
-            method(message)
-        else:
-            print(f"{level}: {message}")
+        logger = self._logger
+        if logger is not None:
+            # rclpy identifies a Python log call by its source location and
+            # rejects later calls from that location with a different severity.
+            # Keep every supported severity on its own call line.
+            if level == "info":
+                method = getattr(logger, "info", None)
+                if callable(method):
+                    method(message)
+                    return
+            elif level == "warning":
+                method = getattr(logger, "warning", None)
+                if callable(method):
+                    method(message)
+                    return
+            elif level == "error":
+                method = getattr(logger, "error", None)
+                if callable(method):
+                    method(message)
+                    return
+            else:
+                method = getattr(logger, level, None)
+                if callable(method):
+                    method(message)
+                    return
+        print(f"{level}: {message}")
 
 
 __all__ = ["ExecutorLike", "ModNodeManager", "ModNodeSpec"]

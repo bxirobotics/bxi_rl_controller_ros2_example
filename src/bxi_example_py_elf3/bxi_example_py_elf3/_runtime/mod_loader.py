@@ -14,6 +14,12 @@ from typing import cast
 
 import yaml
 
+from bxi_example_py_elf3.mod_api_version import (
+    MOD_API_VERSION,
+    parse_numeric_version,
+    parse_version_constraint,
+    version_matches,
+)
 from bxi_example_py_elf3.mod_api.mod import (
     ModDefinition,
     ModLoadContext,
@@ -401,10 +407,23 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
             if not name.strip():
                 raise ValueError(f"{manifest_path}: 'name' must not be blank")
             version = _required_string(manifest, "version", manifest_path)
-            _version_tuple(version)
+            parse_numeric_version(version)
             api = manifest["api"]
-            if api != 1:
-                raise ValueError(f"{manifest_path}: unsupported Mod API {api!r}")
+            if not isinstance(api, str) or not api:
+                raise ValueError(
+                    f"{manifest_path}: 'api' must be a non-empty version constraint"
+                )
+            try:
+                api_compatible = version_matches(MOD_API_VERSION, api)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{manifest_path}: invalid Mod API constraint {api!r}: {exc}"
+                ) from exc
+            if not api_compatible:
+                raise ValueError(
+                    f"{manifest_path}: requires Mod API {api!r}, "
+                    f"framework provides {MOD_API_VERSION!r}"
+                )
             enabled = manifest["enable"]
             if not isinstance(enabled, bool):
                 raise ValueError(f"{manifest_path}: 'enable' must be a boolean")
@@ -490,7 +509,7 @@ def _dependency_order(mods: Mapping[str, _DiscoveredMod]) -> list[_DiscoveredMod
                 raise ValueError(
                     f"Mod '{mod.id}' requires missing Mod '{requirement.id}'"
                 )
-            if requirement.version is not None and not _version_matches(
+            if requirement.version is not None and not version_matches(
                 dependency.version, requirement.version
             ):
                 raise ValueError(
@@ -1386,6 +1405,13 @@ def _read_requirements(value: object, path: Path) -> tuple[_Requirement, ...]:
             version = item.get("version")
             if version is not None and not isinstance(version, str):
                 raise ValueError(f"{path}: requires[{index}].version must be a string")
+            if version is not None:
+                try:
+                    parse_version_constraint(version)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{path}: requires[{index}].version is invalid: {exc}"
+                    ) from exc
             requirements.append(_Requirement(requirement_id, version))
         else:
             raise ValueError(f"{path}: requires[{index}] must be a string or map")
@@ -1413,37 +1439,6 @@ def _read_mod_id_list(
             raise ValueError(f"{path}: duplicate {field} entry '{item}'")
         result.append(item)
     return tuple(result)
-
-
-def _version_matches(version: str, specifier: str) -> bool:
-    actual = _version_tuple(version)
-    for raw_clause in specifier.split(","):
-        clause = raw_clause.strip()
-        match = re.fullmatch(r"(==|!=|>=|<=|>|<)\s*(\d+(?:\.\d+)*)", clause)
-        if match is None:
-            raise ValueError(f"unsupported Mod version constraint: {specifier!r}")
-        expected = _version_tuple(match.group(2))
-        width = max(len(actual), len(expected))
-        left = actual + (0,) * (width - len(actual))
-        right = expected + (0,) * (width - len(expected))
-        operator = match.group(1)
-        passed = {
-            "==": left == right,
-            "!=": left != right,
-            ">=": left >= right,
-            "<=": left <= right,
-            ">": left > right,
-            "<": left < right,
-        }[operator]
-        if not passed:
-            return False
-    return True
-
-
-def _version_tuple(version: str) -> tuple[int, ...]:
-    if not re.fullmatch(r"\d+(?:\.\d+)*", version):
-        raise ValueError(f"Mod versions must be numeric dot versions: {version!r}")
-    return tuple(int(part) for part in version.split("."))
 
 
 def _yaml_mapping(path: Path) -> Mapping[str, object]:

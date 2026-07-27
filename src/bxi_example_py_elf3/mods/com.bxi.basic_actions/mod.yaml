@@ -2,7 +2,7 @@ schema: 1
 id: com.bxi.basic_actions
 name: 基础动作
 version: 1.0.0
-api: 1
+api: ">=1,<2"
 enable: true
 entrypoint: plugin:create_mod
 visibility: public
@@ -277,12 +277,6 @@ actions:
       label: 暂停/继续
       ui: pause
   - from: hello
-    event: toggle_pause
-    action: toggle_pause
-    manifest:
-      label: 暂停/继续
-      ui: pause
-  - from: lie_down
     event: toggle_pause
     action: toggle_pause
     manifest:

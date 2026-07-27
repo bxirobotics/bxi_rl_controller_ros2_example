@@ -26,6 +26,7 @@ from .transition import (
     SingleClassTransition,
     TransitionSpec,
 )
+from ..mod_api_version import MOD_API_VERSION
 
 
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     "LoggerLike",
     "ModDefinition",
     "ModLoadContext",
+    "MOD_API_VERSION",
     "ModNode",
     "MotionReplayState",
     "MotorFrame",

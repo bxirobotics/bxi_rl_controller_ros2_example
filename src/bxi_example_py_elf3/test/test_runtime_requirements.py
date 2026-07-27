@@ -1,3 +1,4 @@
+import inspect
 import os
 from pathlib import Path
 import sys
@@ -13,13 +14,146 @@ from bxi_example_py_elf3._runtime.runtime_requirements import (
     check_runtime_requirements,
     read_runtime_requirements,
 )
+from bxi_example_py_elf3.mod_api import MOD_API_VERSION
 
 
 def _empty_requirements() -> dict[str, list[object]]:
     return {"python": [], "ros": [], "system": []}
 
 
+class _SeverityStickyLogger:
+    """Model Humble's fixed-severity-per-Python-callsite behavior."""
+
+    def __init__(self) -> None:
+        self.callsite_levels: dict[tuple[str, int], str] = {}
+        self.messages: list[tuple[str, str]] = []
+
+    def _record(self, level: str, message: str) -> None:
+        frame = inspect.currentframe()
+        assert frame is not None
+        method_frame = frame.f_back
+        assert method_frame is not None
+        caller_frame = method_frame.f_back
+        assert caller_frame is not None
+        callsite = (caller_frame.f_code.co_filename, caller_frame.f_lineno)
+        previous = self.callsite_levels.setdefault(callsite, level)
+        if previous != level:
+            raise ValueError("Logger severity cannot be changed between calls.")
+        self.messages.append((level, message))
+
+    def info(self, message: str) -> None:
+        self._record("info", message)
+
+    def warning(self, message: str) -> None:
+        self._record("warning", message)
+
+    def error(self, message: str) -> None:
+        self._record("error", message)
+
+
 class RuntimeRequirementsTest(unittest.TestCase):
+    def test_mod_node_log_levels_use_distinct_rclpy_callsites(self) -> None:
+        logger = _SeverityStickyLogger()
+        manager = ModNodeManager([], logger=logger)
+
+        manager._log("info", "started")
+        manager._log("warning", "restart scheduled")
+        manager._log("error", "restart limit reached")
+        manager._log("warning", "another warning")
+
+        self.assertEqual(
+            logger.messages,
+            [
+                ("info", "started"),
+                ("warning", "restart scheduled"),
+                ("error", "restart limit reached"),
+                ("warning", "another warning"),
+            ],
+        )
+
+    def test_mod_api_version_is_public_and_manifest_range_is_checked(self) -> None:
+        self.assertEqual(MOD_API_VERSION, "1.0.0")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            mod_root = root / "com.example.incompatible"
+            mod_root.mkdir()
+            manifest = self._manifest_header(
+                "com.example.incompatible",
+                entrypoint=None,
+            )
+            manifest["api"] = ">=2,<3"
+            (mod_root / "mod.yaml").write_text(
+                yaml.safe_dump(manifest, sort_keys=False),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"requires Mod API.*>=2,<3.*framework provides.*1\.0\.0",
+            ):
+                mod_loader._discover_mods((root,))
+
+    def test_requirement_version_constraint_is_validated_during_discovery(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            mod_root = root / "com.example.invalid_requirement"
+            mod_root.mkdir()
+            manifest = self._manifest_header(
+                "com.example.invalid_requirement",
+                entrypoint=None,
+            )
+            manifest["requires"] = [
+                {"id": "com.example.dependency", "version": "1.0.0"}
+            ]
+            (mod_root / "mod.yaml").write_text(
+                yaml.safe_dump(manifest, sort_keys=False),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"requires\[0\]\.version is invalid",
+            ):
+                mod_loader._discover_mods((root,))
+
+    def test_mod_requirement_version_range_is_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            dependency_root = root / "com.example.dependency"
+            dependency_root.mkdir()
+            dependency = self._manifest_header(
+                "com.example.dependency",
+                entrypoint=None,
+            )
+            dependency["version"] = "1.5.0"
+            (dependency_root / "mod.yaml").write_text(
+                yaml.safe_dump(dependency, sort_keys=False),
+                encoding="utf-8",
+            )
+
+            consumer_root = root / "com.example.consumer"
+            consumer_root.mkdir()
+            consumer = self._manifest_header(
+                "com.example.consumer",
+                entrypoint=None,
+            )
+            consumer["requires"] = [
+                {"id": "com.example.dependency", "version": ">=2,<3"}
+            ]
+            (consumer_root / "mod.yaml").write_text(
+                yaml.safe_dump(consumer, sort_keys=False),
+                encoding="utf-8",
+            )
+
+            discovered = mod_loader._discover_mods((root,))
+            with self.assertRaisesRegex(
+                ValueError,
+                r"requires 'com\.example\.dependency'.*>=2,<3.*found '1\.5\.0'",
+            ):
+                mod_loader._dependency_order(discovered)
+
     def test_runtime_requirements_are_explicit(self) -> None:
         with self.assertRaisesRegex(ValueError, "missing fields"):
             read_runtime_requirements(
@@ -88,7 +222,7 @@ class RuntimeRequirementsTest(unittest.TestCase):
                 "id": "com.example.unavailable_node",
                 "name": "Unavailable node fixture",
                 "version": "1.0.0",
-                "api": 1,
+                "api": ">=1,<2",
                 "enable": True,
                 "entrypoint": None,
                 "visibility": "protected",
@@ -348,7 +482,7 @@ class RuntimeRequirementsTest(unittest.TestCase):
             "id": mod_id,
             "name": mod_id,
             "version": "1.0.0",
-            "api": 1,
+            "api": ">=1,<2",
             "enable": True,
             "entrypoint": entrypoint,
             "visibility": "protected",
