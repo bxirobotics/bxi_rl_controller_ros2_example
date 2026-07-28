@@ -27,6 +27,10 @@ class OnnxArtifact(ModelArtifact):
 class RknnArtifact(ModelArtifact):
     backend: ClassVar[str] = "rknn"
     target: str | None = None
+    source_onnx: str | Path | None = None
+    do_quantization: bool = False
+    dataset: str | Path | None = None
+    build_config: tuple[tuple[str, object], ...] = ()
     core_mask: object | None = None
     input_shapes: tuple[tuple[str, tuple[int, ...]], ...] = ()
     output_shapes: tuple[tuple[str, tuple[int, ...]], ...] = ()

@@ -10,6 +10,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .base import BackendAvailability, BackendFactory, InferenceBackend, TensorMap
+from .rknn_builder import prepare_rknn_artifact
 from ..model import ModelArtifact, ModelSpec, RknnArtifact
 
 
@@ -103,6 +104,13 @@ class RknnBackendFactory(BackendFactory):
     def availability(self, artifact: ModelArtifact) -> BackendAvailability:
         if not isinstance(artifact, RknnArtifact):
             return BackendAvailability(False, "artifact is not an RKNN model")
+        preparation = prepare_rknn_artifact(artifact)
+        if not preparation.ready:
+            return BackendAvailability(
+                False,
+                preparation.reason,
+                preparation.install_hint,
+            )
         if importlib.util.find_spec("rknnlite") is None:
             return BackendAvailability(
                 False,
@@ -110,13 +118,12 @@ class RknnBackendFactory(BackendFactory):
                 "install the rknn-toolkit-lite2 wheel matching your Python "
                 "version and Rockchip SoC from the official RKNN Toolkit2 release",
             )
-        if not artifact.resolved_path.is_file():
-            return BackendAvailability(False, f"model does not exist: {artifact.path}")
         compatible = _rockchip_compatible()
-        if artifact.target and artifact.target.lower() not in compatible:
+        target = preparation.target or artifact.target
+        if target and target.lower() not in compatible:
             return BackendAvailability(
                 False,
-                f"platform is not compatible with RKNN target {artifact.target}",
+                f"platform is not compatible with RKNN target {target}",
             )
         return BackendAvailability(True, "RKNN Lite and compatible model are available")
 

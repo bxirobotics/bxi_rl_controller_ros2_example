@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 import warnings
@@ -25,6 +29,11 @@ from bxi_example_py_elf3.inference.backends.base import (
     InferenceBackend,
 )
 from bxi_example_py_elf3.inference.backends.openvino import OpenVinoBackend
+from bxi_example_py_elf3.inference.backends.rknn import RknnBackendFactory
+from bxi_example_py_elf3.inference.backends.rknn_builder import (
+    RKNN_CONVERT_ENV,
+    prepare_rknn_artifact,
+)
 
 
 class HistoryBufferTest(unittest.TestCase):
@@ -220,6 +229,209 @@ class OpenVinoBackendTest(unittest.TestCase):
         self.assertEqual(first_id, id(third))
         np.testing.assert_array_equal(third, np.full((1, 3), 8.0))
         backend.close()
+
+
+class _FakeRknnToolkit:
+    instances = []
+    export_result = 0
+
+    def __init__(self):
+        self.calls = []
+        self.released = False
+        self.__class__.instances.append(self)
+
+    def config(self, **kwargs):
+        self.calls.append(("config", kwargs))
+        return 0
+
+    def load_onnx(self, **kwargs):
+        self.calls.append(("load_onnx", kwargs))
+        return 0
+
+    def build(self, **kwargs):
+        self.calls.append(("build", kwargs))
+        return 0
+
+    def export_rknn(self, path):
+        self.calls.append(("export_rknn", path))
+        if self.export_result == 0:
+            Path(path).write_bytes(b"converted-rknn")
+        return self.export_result
+
+    def release(self):
+        self.released = True
+
+
+class RknnConversionTest(unittest.TestCase):
+    def setUp(self):
+        _FakeRknnToolkit.instances.clear()
+        _FakeRknnToolkit.export_result = 0
+
+    def _artifact(self, directory, **kwargs):
+        source = Path(directory) / "model.onnx"
+        source.write_bytes(b"onnx-v1")
+        return RknnArtifact(
+            Path(directory) / "model.rknn",
+            source_onnx=source,
+            target="rk3588",
+            **kwargs,
+        )
+
+    def test_unset_environment_never_converts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = self._artifact(directory)
+            environment = os.environ.copy()
+            environment.pop(RKNN_CONVERT_ENV, None)
+            with patch.dict(os.environ, environment, clear=True), patch(
+                "bxi_example_py_elf3.inference.backends.rknn_builder._rknn_api"
+            ) as api:
+                result = prepare_rknn_artifact(artifact)
+
+            self.assertFalse(result.ready)
+            self.assertFalse(artifact.resolved_path.exists())
+            api.assert_not_called()
+
+    def test_json_settings_convert_and_write_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "dataset.txt"
+            calibration = Path(directory) / "sample.npy"
+            calibration.write_bytes(b"sample")
+            dataset.write_text(str(calibration), encoding="utf-8")
+            artifact = self._artifact(directory)
+            settings = json.dumps(
+                {
+                    "target": "rk3568",
+                    "do_quantization": True,
+                    "dataset": str(dataset),
+                    "config": {"optimization_level": 3},
+                }
+            )
+            with patch.dict(
+                os.environ, {RKNN_CONVERT_ENV: settings}, clear=False
+            ), patch(
+                "bxi_example_py_elf3.inference.backends.rknn_builder._rknn_api",
+                return_value=_FakeRknnToolkit,
+            ), warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                result = prepare_rknn_artifact(artifact)
+
+            self.assertTrue(result.ready)
+            self.assertTrue(result.converted)
+            self.assertEqual(artifact.resolved_path.read_bytes(), b"converted-rknn")
+            instance = _FakeRknnToolkit.instances[0]
+            self.assertEqual(instance.calls[0][0], "config")
+            self.assertEqual(instance.calls[0][1]["target_platform"], "rk3568")
+            self.assertEqual(instance.calls[0][1]["optimization_level"], 3)
+            self.assertEqual(
+                instance.calls[2],
+                (
+                    "build",
+                    {"do_quantization": True, "dataset": str(dataset.resolve())},
+                ),
+            )
+            self.assertTrue(instance.released)
+            manifest = Path(str(artifact.resolved_path) + ".build.json")
+            self.assertEqual(json.loads(manifest.read_text())["schema"], 1)
+
+    def test_current_fingerprint_does_not_convert_again(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = self._artifact(directory)
+            with patch.dict(
+                os.environ, {RKNN_CONVERT_ENV: "rk3588"}, clear=False
+            ), patch(
+                "bxi_example_py_elf3.inference.backends.rknn_builder._rknn_api",
+                return_value=_FakeRknnToolkit,
+            ), warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                first = prepare_rknn_artifact(artifact)
+            self.assertTrue(first.converted)
+
+            with patch.dict(
+                os.environ, {RKNN_CONVERT_ENV: "rk3588"}, clear=False
+            ), patch(
+                "bxi_example_py_elf3.inference.backends.rknn_builder._rknn_api"
+            ) as api:
+                second = prepare_rknn_artifact(artifact)
+            self.assertTrue(second.ready)
+            self.assertFalse(second.converted)
+            api.assert_not_called()
+
+    def test_changed_source_rebuilds_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = self._artifact(directory)
+            with patch.dict(
+                os.environ, {RKNN_CONVERT_ENV: "rk3588"}, clear=False
+            ), patch(
+                "bxi_example_py_elf3.inference.backends.rknn_builder._rknn_api",
+                return_value=_FakeRknnToolkit,
+            ), warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                prepare_rknn_artifact(artifact)
+                Path(artifact.source_onnx).write_bytes(b"onnx-v2-with-new-size")
+                result = prepare_rknn_artifact(artifact)
+
+            self.assertTrue(result.converted)
+            self.assertEqual(len(_FakeRknnToolkit.instances), 2)
+
+    def test_environment_target_is_used_for_platform_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = self._artifact(directory)
+            with patch.dict(
+                os.environ, {RKNN_CONVERT_ENV: "rk3568"}, clear=False
+            ), patch(
+                "bxi_example_py_elf3.inference.backends.rknn_builder._rknn_api",
+                return_value=_FakeRknnToolkit,
+            ), patch(
+                "bxi_example_py_elf3.inference.backends.rknn.importlib.util.find_spec",
+                return_value=object(),
+            ), patch(
+                "bxi_example_py_elf3.inference.backends.rknn._rockchip_compatible",
+                return_value="rockchip,rk3568",
+            ), warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                availability = RknnBackendFactory().availability(artifact)
+
+            self.assertTrue(availability.available)
+
+    def test_failed_conversion_preserves_existing_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = self._artifact(directory)
+            artifact.resolved_path.write_bytes(b"known-good-rknn")
+            _FakeRknnToolkit.export_result = 9
+            settings = json.dumps({"target": "rk3588", "force_rebuild": True})
+            with patch.dict(
+                os.environ, {RKNN_CONVERT_ENV: settings}, clear=False
+            ), patch(
+                "bxi_example_py_elf3.inference.backends.rknn_builder._rknn_api",
+                return_value=_FakeRknnToolkit,
+            ), warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                result = prepare_rknn_artifact(artifact)
+
+            self.assertFalse(result.ready)
+            self.assertIn("export_rknn failed", result.reason)
+            self.assertEqual(artifact.resolved_path.read_bytes(), b"known-good-rknn")
+            temporary_models = [
+                path
+                for path in Path(directory).glob("*.rknn")
+                if path != artifact.resolved_path
+            ]
+            self.assertEqual(temporary_models, [])
+            self.assertTrue(_FakeRknnToolkit.instances[0].released)
+
+    def test_quantization_requires_dataset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = self._artifact(directory, do_quantization=True)
+            with patch.dict(
+                os.environ, {RKNN_CONVERT_ENV: "rk3588"}, clear=False
+            ), patch(
+                "bxi_example_py_elf3.inference.backends.rknn_builder._rknn_api"
+            ) as api:
+                result = prepare_rknn_artifact(artifact)
+
+            self.assertFalse(result.ready)
+            self.assertIn("requires a calibration dataset", result.reason)
+            api.assert_not_called()
 
 
 if __name__ == "__main__":
