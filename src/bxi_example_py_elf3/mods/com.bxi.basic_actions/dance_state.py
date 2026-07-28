@@ -2,19 +2,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicyGravityIsaaclabV3
-from bxi_example_py_elf3.mod_api import ResourceHandle
-from bxi_example_py_elf3.mod_api import RobotControlState
-from bxi_example_py_elf3.mod_api import NORMAL_STATE, ZERO_TORQUE_STATE
-from bxi_example_py_elf3.mod_api import StateBehavior
-from bxi_example_py_elf3.mod_api.transition import (
+from bxi_example_py_elf3.policies import DanceMotionPolicyGravityIsaaclabV3
+from bxi_example_py_elf3.framework.mod_api import ResourceHandle
+from bxi_example_py_elf3.framework.mod_api import RobotControlState
+from bxi_example_py_elf3.framework.mod_api import StateBehavior
+from bxi_example_py_elf3.framework.mod_api.transition import (
     EntryFrameProvider,
     MotorFrame,
     RunningFrameProvider,
 )
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.mod_api import RobotControlContext
+    from bxi_example_py_elf3.framework.mod_api import RobotControlContext
 
 
 class DanceState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
@@ -38,14 +37,14 @@ class DanceState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
     def on_prepare(
         self, ctx: RobotControlContext, from_state: StateBehavior[RobotControlContext]
     ) -> None:
-        self.policy.reset(self.start_frame)
+        self.policy.configure_range(start_frame=self.start_frame)
         ctx.preheat_model(self.policy)
 
     def on_enter(self, ctx: RobotControlContext) -> None:
         self.playing = True
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
-        return self._motor_frame(self.policy.target, self.policy.kp, self.policy.kd)
+        return self._motor_frame_from_target(ctx, self.policy.output.joints)
 
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
@@ -53,18 +52,19 @@ class DanceState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         policy = self.policy
         if policy.finished():
             return None
-        qpos = policy.step(
-            ctx.current_q, ctx.current_dq, ctx.current_quat_wxyz, ctx.current_omega
+        output = policy.step(
+            ctx.inference_frame,
+            dt,
+            advance=self.playing and advance,
         )
-        if self.playing and advance:
-            policy.advance(dt)
-        return self._motor_frame(qpos, policy.kp, policy.kd)
+        return self._motor_frame_from_target(ctx, output.joints)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if self.policy.finished():
-            self.policy.reset(self.start_frame)
+            self.policy.configure_range(start_frame=self.start_frame)
+            self.policy.reset(ctx.inference_frame)
             ctx.request_state(
-                NORMAL_STATE,
+                "com.bxi.basic_actions/normal",
                 trigger="motion_finished",
                 transition={
                     "profile": "dual_running_blend",
@@ -74,7 +74,7 @@ class DanceState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
             )
             return
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
-            ctx.request_state(ZERO_TORQUE_STATE, trigger="safety")
+            ctx.request_state("com.bxi.basic_actions/zero_torque", trigger="safety")
             return
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
 

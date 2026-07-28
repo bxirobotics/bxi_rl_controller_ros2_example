@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import importlib.util
+import importlib
 import io
 import json
 import os
@@ -28,22 +28,66 @@ ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = ROOT / "src/bxi_example_py_elf3"
 ASSETS = PACKAGE_ROOT / "mods/com.bxi.basic_actions/assets"
 DEPTH_ASSETS = PACKAGE_ROOT / "mods/com.bxi.normal_depth/assets"
-DEPTH_SOURCE = PACKAGE_ROOT / "mods/com.bxi.normal_depth/amp_depth.py"
 
 CASES = ("normal", "amp", "motion_legacy", "motion_v3", "depth_cached", "depth_fresh")
-BASELINE_SOURCES = {
-    "normal": "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/normal.py",
-    "amp": "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/amp.py",
-    "motion_legacy": "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/beyondmimic.py",
-    "motion_v3": "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/beyondmimic.py",
-    "depth_cached": "src/bxi_example_py_elf3/mods/com.bxi.normal_depth/amp_depth.py",
-    "depth_fresh": "src/bxi_example_py_elf3/mods/com.bxi.normal_depth/amp_depth.py",
+BASELINE_SOURCE_CANDIDATES = {
+    "normal": (
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/normal.py",
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/normal.py",
+    ),
+    "amp": (
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/amp.py",
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/amp.py",
+    ),
+    "motion_legacy": (
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/beyondmimic.py",
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/beyondmimic.py",
+    ),
+    "motion_v3": (
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/beyondmimic.py",
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/beyondmimic.py",
+    ),
+    "depth_cached": (
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/depth.py",
+        "src/bxi_example_py_elf3/mods/com.bxi.normal_depth/amp_depth.py",
+    ),
+    "depth_fresh": (
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/depth.py",
+        "src/bxi_example_py_elf3/mods/com.bxi.normal_depth/amp_depth.py",
+    ),
 }
 
 
 def _load_baseline(case: str) -> types.ModuleType:
-    source_path = BASELINE_SOURCES[case]
+    # Baseline source uses its historical flat import paths. Alias those names
+    # only inside this isolated benchmark worker; the installed package keeps
+    # no compatibility modules.
+    for old_name, current_name in (
+        ("history", "history"),
+        ("model", "model"),
+        ("runtime", "runtime"),
+    ):
+        qualified = f"bxi_example_py_elf3.inference.{old_name}"
+        sys.modules.setdefault(
+            qualified,
+            importlib.import_module(
+                f"bxi_example_py_elf3.framework.inference.{current_name}"
+            ),
+        )
+    sys.modules.setdefault(
+        "bxi_example_py_elf3.mod_api",
+        importlib.import_module("bxi_example_py_elf3.framework.mod_api"),
+    )
+    sys.modules.setdefault(
+        "bxi_example_py_elf3.mod_api.geometry",
+        importlib.import_module("bxi_example_py_elf3.framework.mod_api.geometry"),
+    )
+    sys.modules.setdefault(
+        "bxi_example_py_elf3.joints",
+        importlib.import_module("bxi_example_py_elf3.policies.joints"),
+    )
     baseline_ref = os.environ.get("INFERENCE_BENCHMARK_BASELINE_REF", "HEAD")
+    source_path = _find_baseline_source(case, baseline_ref)
     result = subprocess.run(
         ["git", "show", f"{baseline_ref}:{source_path}"],
         cwd=ROOT,
@@ -52,8 +96,11 @@ def _load_baseline(case: str) -> types.ModuleType:
         text=True,
     )
     if "/bxi_example_py_elf3/inference/" in source_path:
-        module_name = f"bxi_example_py_elf3.inference._baseline_{case}"
-        package = "bxi_example_py_elf3.inference"
+        module_name = f"bxi_example_py_elf3.framework.inference._baseline_{case}"
+        package = "bxi_example_py_elf3.framework.inference"
+    elif "/bxi_example_py_elf3/policies/" in source_path:
+        module_name = f"bxi_example_py_elf3.policies._baseline_{case}"
+        package = "bxi_example_py_elf3.policies"
     else:
         module_name = f"_baseline_{case}"
         package = ""
@@ -64,13 +111,19 @@ def _load_baseline(case: str) -> types.ModuleType:
     return module
 
 
-def _load_depth_current():
-    spec = importlib.util.spec_from_file_location("_current_depth_policy", DEPTH_SOURCE)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load {DEPTH_SOURCE}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def _find_baseline_source(case: str, baseline_ref: str) -> str:
+    for source_path in BASELINE_SOURCE_CANDIDATES[case]:
+        exists = subprocess.run(
+            ["git", "cat-file", "-e", f"{baseline_ref}:{source_path}"],
+            cwd=ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if exists.returncode == 0:
+            return source_path
+    raise RuntimeError(
+        f"cannot find baseline source for case '{case}' at {baseline_ref}"
+    )
 
 
 def _inputs():
@@ -84,120 +137,189 @@ def _inputs():
     }
 
 
-def _policy_method(policy, legacy: str, current: str):
-    method = getattr(policy, legacy, None)
-    return method if callable(method) else getattr(policy, current)
-
-
 def _make_runner(case: str, version: str):
     state = _inputs()
     q, dq = state["q"], state["dq"]
     wxyz, xyzw = state["quat_wxyz"], state["quat_xyzw"]
     omega, command = state["omega"], state["command"]
 
+    def inference_frame_for(policy):
+        from bxi_example_py_elf3.framework.inference import InferenceFrame
+        from bxi_example_py_elf3.framework.joints import JointStateView
+
+        layout = policy.joint_contract.observation
+        return InferenceFrame(
+            joints=JointStateView(layout, q, dq),
+            quat_wxyz=wxyz,
+            angular_velocity=omega,
+            command=command,
+        )
+
     if version == "baseline":
         module = _load_baseline(case)
         if case == "normal":
             policy = module.NormalMotionPolicyMjlab(
-                str((ASSETS / "model_normal.onnx").resolve())
+                str((ASSETS / "model_normal.onnx").resolve()), backend="onnxruntime"
             )
-            action = getattr(policy, "action", getattr(policy, "_action", None))
-            if action is not None:
-                action.fill(0.0)
-            infer = _policy_method(policy, "infer_step", "step")
-            quaternion = xyzw if hasattr(policy, "infer_step") else wxyz
-            return policy, lambda: infer(q, dq, quaternion, omega, command)
+            infer = getattr(policy, "infer_step", None)
+            if callable(infer):
+                action = getattr(policy, "action", getattr(policy, "_action", None))
+                if action is not None:
+                    action.fill(0.0)
+                return policy, lambda: infer(q, dq, xyzw, omega, command)
+            frame = inference_frame_for(policy)
+            policy.reset(frame)
+            return policy, lambda: policy.step(frame, 0.02, advance=False)
         if case == "amp":
             policy = module.HumanoidGaitPolicyLiteIsaaclab(
-                str((ASSETS / "amp_run.onnx").resolve())
+                str((ASSETS / "amp_run.onnx").resolve()), backend="onnxruntime"
             )
-            reset = _policy_method(policy, "reset_runtime_state", "reset")
-            reset(q, dq, wxyz, omega, command)
-            infer = _policy_method(policy, "inference_step", "step")
-            return policy, lambda: infer(q, dq, wxyz, omega, command)
+            infer = getattr(policy, "inference_step", None)
+            if callable(infer):
+                policy.reset_runtime_state(q, dq, wxyz, omega, command)
+                return policy, lambda: infer(q, dq, wxyz, omega, command)
+            frame = inference_frame_for(policy)
+            policy.reset(frame)
+            return policy, lambda: policy.step(frame, 0.02)
         if case == "motion_legacy":
             policy = module.DanceMotionPolicyMjlab(
                 str((ASSETS / "recover.npz").resolve()),
                 str((ASSETS / "recover.onnx").resolve()),
+                backend="onnxruntime",
             )
-            infer = _policy_method(policy, "inference_step", "step")
-            return policy, lambda: infer(q, dq, wxyz, omega)
+            infer = getattr(policy, "inference_step", None)
+            if callable(infer):
+                return policy, lambda: infer(q, dq, wxyz, omega)
+            frame = inference_frame_for(policy)
+            policy.reset(frame)
+            return policy, lambda: policy.step(frame, 0.02, advance=False)
         if case == "motion_v3":
             policy = module.DanceMotionPolicyGravityIsaaclabV3(
                 str((ASSETS / "shuishou.npz").resolve()),
                 str((ASSETS / "shuishou.onnx").resolve()),
+                backend="onnxruntime",
             )
-            infer = _policy_method(policy, "inference_step", "step")
-            return policy, lambda: infer(q, dq, wxyz, omega)
+            infer = getattr(policy, "inference_step", None)
+            if callable(infer):
+                return policy, lambda: infer(q, dq, wxyz, omega)
+            frame = inference_frame_for(policy)
+            policy.reset(frame)
+            return policy, lambda: policy.step(frame, 0.02, advance=False)
         policy = module.HumanoidGaitDepthPolicyIsaaclab(
-            str((DEPTH_ASSETS / "normal_depth.onnx").resolve())
+            str((DEPTH_ASSETS / "normal_depth.onnx").resolve()),
+            backend="onnxruntime",
         )
         depth = np.ones((policy.depth_h, policy.depth_w), dtype=np.float32)
         frame = [0]
-        infer = _policy_method(policy, "inference_step", "step")
+        infer = getattr(policy, "inference_step", None)
+        if callable(infer):
+            if case == "depth_cached":
+                return policy, lambda: infer(
+                    q, dq, wxyz, omega, command, depth, depth_frame_id=1
+                )
+
+            def baseline_depth_fresh():
+                frame[0] += 1
+                return infer(
+                    q,
+                    dq,
+                    wxyz,
+                    omega,
+                    command,
+                    depth,
+                    depth_frame_id=frame[0],
+                )
+
+            return policy, baseline_depth_fresh
+
+        inference_frame = inference_frame_for(policy)
+        inference_frame.depth = depth
+        policy.reset(inference_frame)
         if case == "depth_cached":
-            return policy, lambda: infer(
-                q, dq, wxyz, omega, command, depth, depth_frame_id=1
-            )
+            inference_frame.depth_frame_id = 1
+            return policy, lambda: policy.step(inference_frame, 0.02)
 
         def baseline_depth_fresh():
             frame[0] += 1
-            return infer(q, dq, wxyz, omega, command, depth, depth_frame_id=frame[0])
+            inference_frame.depth_frame_id = frame[0]
+            return policy.step(inference_frame, 0.02)
 
         return policy, baseline_depth_fresh
 
-    from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicyLiteIsaaclab
-    from bxi_example_py_elf3.inference.beyondmimic import (
+    from bxi_example_py_elf3.framework.inference import (
+        InferenceFrame,
+        InferenceRuntime,
+        RuntimeOptions,
+    )
+    from bxi_example_py_elf3.policies import (
         DanceMotionPolicyGravityIsaaclabV3,
         DanceMotionPolicyMjlab,
+        HumanoidGaitDepthPolicyIsaaclab,
+        HumanoidGaitPolicyLiteIsaaclab,
+        NormalMotionPolicyMjlab,
     )
-    from bxi_example_py_elf3.inference.normal import NormalMotionPolicyMjlab
-    from bxi_example_py_elf3.inference.runtime import InferenceRuntime, RuntimeOptions
+    from bxi_example_py_elf3.framework.joints import JointStateView
+    from bxi_example_py_elf3.policies.joints import ELF3_POLICY_JOINTS
 
     runtime = InferenceRuntime(options=RuntimeOptions(monitor_enabled=False))
+    inference_frame = InferenceFrame(
+        joints=JointStateView(ELF3_POLICY_JOINTS, q, dq),
+        quat_wxyz=wxyz,
+        angular_velocity=omega,
+        command=command,
+    )
     if case == "normal":
         policy = NormalMotionPolicyMjlab(
-            str((ASSETS / "model_normal.onnx").resolve()), runtime=runtime
+            str((ASSETS / "model_normal.onnx").resolve()),
+            runtime=runtime,
+            backend="onnxruntime",
         )
-        policy.reset()
-        return policy, lambda: policy.step(q, dq, wxyz, omega, command)
+        policy.reset(inference_frame)
+        return policy, lambda: policy.step(inference_frame, 0.02, advance=False)
     if case == "amp":
         policy = HumanoidGaitPolicyLiteIsaaclab(
-            str((ASSETS / "amp_run.onnx").resolve()), runtime=runtime
+            str((ASSETS / "amp_run.onnx").resolve()),
+            runtime=runtime,
+            backend="onnxruntime",
         )
-        policy.reset(q, dq, wxyz, omega, command)
-        return policy, lambda: policy.step(q, dq, wxyz, omega, command)
+        policy.reset(inference_frame)
+        return policy, lambda: policy.step(inference_frame, 0.02)
     if case == "motion_legacy":
         policy = DanceMotionPolicyMjlab(
             str((ASSETS / "recover.npz").resolve()),
             str((ASSETS / "recover.onnx").resolve()),
             runtime=runtime,
+            backend="onnxruntime",
         )
-        policy.reset()
-        return policy, lambda: policy.step(q, dq, wxyz, omega)
+        policy.reset(inference_frame)
+        return policy, lambda: policy.step(inference_frame, 0.02, advance=False)
     if case == "motion_v3":
         policy = DanceMotionPolicyGravityIsaaclabV3(
             str((ASSETS / "shuishou.npz").resolve()),
             str((ASSETS / "shuishou.onnx").resolve()),
             runtime=runtime,
+            backend="onnxruntime",
         )
-        policy.reset()
-        return policy, lambda: policy.step(q, dq, wxyz, omega)
+        policy.reset(inference_frame)
+        return policy, lambda: policy.step(inference_frame, 0.02, advance=False)
 
-    module = _load_depth_current()
-    policy = module.HumanoidGaitDepthPolicyIsaaclab(
-        str((DEPTH_ASSETS / "normal_depth.onnx").resolve()), runtime=runtime
+    policy = HumanoidGaitDepthPolicyIsaaclab(
+        str((DEPTH_ASSETS / "normal_depth.onnx").resolve()),
+        runtime=runtime,
+        backend="onnxruntime",
     )
     depth = np.ones((policy.depth_h, policy.depth_w), dtype=np.float32)
     frame = [0]
+    inference_frame.depth = depth
+    policy.reset(inference_frame)
     if case == "depth_cached":
-        return policy, lambda: policy.step(
-            q, dq, wxyz, omega, command, depth, depth_frame_id=1
-        )
+        inference_frame.depth_frame_id = 1
+        return policy, lambda: policy.step(inference_frame, 0.02)
 
     def current_depth_fresh():
         frame[0] += 1
-        return policy.step(q, dq, wxyz, omega, command, depth, depth_frame_id=frame[0])
+        inference_frame.depth_frame_id = frame[0]
+        return policy.step(inference_frame, 0.02)
 
     return policy, current_depth_fresh
 
@@ -220,6 +342,14 @@ def _worker(
     checksum = 0.0
     for _ in range(repeats):
         policy, step = _make_runner(case, version)
+        first_output = step()
+        if hasattr(first_output, "joints"):
+            checksum_array = first_output.joints.position
+        else:
+            checksum_array = (
+                first_output[0] if isinstance(first_output, tuple) else first_output
+            )
+        checksum += float(np.asarray(checksum_array).reshape(-1)[0])
         for _ in range(warmup):
             step()
         samples = np.empty(iterations, dtype=np.int64)
@@ -227,8 +357,6 @@ def _worker(
             started = time.perf_counter_ns()
             output = step()
             samples[index] = time.perf_counter_ns() - started
-        array = output[0] if isinstance(output, tuple) else output
-        checksum += float(np.asarray(array).reshape(-1)[0])
         repeat_results.append(
             {
                 "p50_us": float(np.percentile(samples, 50) / 1_000.0),

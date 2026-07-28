@@ -27,12 +27,12 @@ PACKAGE_SOURCE = ROOT / "src/bxi_example_py_elf3"
 if str(PACKAGE_SOURCE) not in sys.path:
     sys.path.insert(0, str(PACKAGE_SOURCE))
 
-from bxi_example_py_elf3.inference.backends import (  # noqa: E402
+from bxi_example_py_elf3.framework.inference.backends import (  # noqa: E402
     OnnxBackendFactory,
     OpenVinoBackendFactory,
     RknnBackendFactory,
 )
-from bxi_example_py_elf3.inference.model import (  # noqa: E402
+from bxi_example_py_elf3.framework.inference.model import (  # noqa: E402
     ModelSpec,
     OnnxArtifact,
     OpenVinoArtifact,

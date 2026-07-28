@@ -1,11 +1,11 @@
-from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicyLiteIsaaclab
-from bxi_example_py_elf3.inference.beyondmimic import (
+from bxi_example_py_elf3.policies import (
+    HumanoidGaitPolicyLiteIsaaclab,
     DanceMotionPolicyGravityIsaaclabV2,
     DanceMotionPolicyGravityIsaaclabV3,
     DanceMotionPolicyMjlab,
+    NormalMotionPolicyMjlab,
 )
-from bxi_example_py_elf3.inference.normal import NormalMotionPolicyMjlab
-from bxi_example_py_elf3.mod_api import (
+from bxi_example_py_elf3.framework.mod_api import (
     ModDefinition,
     ModLoadContext,
     ResourceKey,

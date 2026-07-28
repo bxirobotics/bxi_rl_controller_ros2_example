@@ -17,7 +17,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_SOURCE_ROOT = REPOSITORY_ROOT / "src" / "bxi_example_py_elf3"
 sys.path.insert(0, str(PACKAGE_SOURCE_ROOT))
 
-from bxi_example_py_elf3.mod_api_version import (  # noqa: E402
+from bxi_example_py_elf3.framework.mod_api_version import (  # noqa: E402
     MOD_API_VERSION,
     parse_numeric_version,
     parse_version_constraint,

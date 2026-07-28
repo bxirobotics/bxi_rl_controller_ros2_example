@@ -3,20 +3,19 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicyMjlab
-from bxi_example_py_elf3.mod_api import ResourceHandle
-from bxi_example_py_elf3.mod_api import RobotControlState
-from bxi_example_py_elf3.mod_api import NORMAL_STATE, ZERO_TORQUE_STATE
-from bxi_example_py_elf3.mod_api import StateBehavior
-from bxi_example_py_elf3.mod_api.geometry import quaternion_to_euler_array
-from bxi_example_py_elf3.mod_api.transition import (
+from bxi_example_py_elf3.policies import DanceMotionPolicyMjlab
+from bxi_example_py_elf3.framework.mod_api import ResourceHandle
+from bxi_example_py_elf3.framework.mod_api import RobotControlState
+from bxi_example_py_elf3.framework.mod_api import StateBehavior
+from bxi_example_py_elf3.framework.mod_api.geometry import quaternion_to_euler_array
+from bxi_example_py_elf3.framework.mod_api.transition import (
     EntryFrameProvider,
     MotorFrame,
     RunningFrameProvider,
 )
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.mod_api import RobotControlContext
+    from bxi_example_py_elf3.framework.mod_api import RobotControlContext
 
 
 class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
@@ -43,16 +42,19 @@ class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
     def on_enter(self, ctx: RobotControlContext) -> None:
         self.playing = True
         if not self.motion_selected:
-            ctx.request_state(ZERO_TORQUE_STATE, trigger="recover_pose_rejected")
+            ctx.request_state(
+                "com.bxi.basic_actions/zero_torque",
+                trigger="recover_pose_rejected",
+            )
 
     def _configure_motion(self, ctx: RobotControlContext) -> bool:
         angles = quaternion_to_euler_array(ctx.quat_xyzw)
         angles[angles > math.pi] -= 2 * math.pi
         if angles[1] < -(math.pi / 4.0):
-            self.policy.reset(600, 880)
+            self.policy.configure_range(start_frame=600, end_frame=880)
             self.end_frame_trim = 20
         elif angles[1] > (math.pi / 4.0):
-            self.policy.reset(1350, 1690)
+            self.policy.configure_range(start_frame=1350, end_frame=1690)
             self.end_frame_trim = 0
         else:
             self.motion_selected = False
@@ -62,25 +64,25 @@ class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         if not self.motion_selected:
-            return self._motor_frame(ctx.pos_last, ctx.kp_last, ctx.kd_last)
-        return self._motor_frame(self.policy.target, self.policy.kp, self.policy.kd)
+            return self._motor_frame(ctx, ctx.pos_last, ctx.kp_last, ctx.kd_last)
+        return self._motor_frame_from_target(ctx, self.policy.output.joints)
 
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame | None:
         if self.policy.finished():
             return None
-        qpos = self.policy.step(
-            ctx.current_q, ctx.current_dq, ctx.current_quat_wxyz, ctx.current_omega
+        output = self.policy.step(
+            ctx.inference_frame,
+            dt,
+            advance=self.playing and advance,
         )
-        if self.playing and advance:
-            self.policy.advance(dt)
-        return self._motor_frame(qpos, self.policy.kp, self.policy.kd)
+        return self._motor_frame_from_target(ctx, output.joints)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if self.policy.finished(self.end_frame_trim):
             ctx.request_state(
-                NORMAL_STATE,
+                "com.bxi.basic_actions/normal",
                 trigger="recover_finished",
                 transition={
                     "profile": "dual_running_blend",

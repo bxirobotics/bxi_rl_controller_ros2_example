@@ -8,19 +8,18 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
-from bxi_example_py_elf3.inference.amp import HumanoidGaitPolicyLiteIsaaclab
-from bxi_example_py_elf3.mod_api import ResourceHandle
-from bxi_example_py_elf3.mod_api import RobotControlState
-from bxi_example_py_elf3.mod_api import NORMAL_STATE, ZERO_TORQUE_STATE
-from bxi_example_py_elf3.mod_api import StateBehavior
-from bxi_example_py_elf3.mod_api.transition import (
+from bxi_example_py_elf3.policies import HumanoidGaitPolicyLiteIsaaclab
+from bxi_example_py_elf3.framework.mod_api import ResourceHandle
+from bxi_example_py_elf3.framework.mod_api import RobotControlState
+from bxi_example_py_elf3.framework.mod_api import StateBehavior
+from bxi_example_py_elf3.framework.mod_api.transition import (
     EntryFrameProvider,
     MotorFrame,
     RunningFrameProvider,
 )
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.mod_api import RobotControlContext
+    from bxi_example_py_elf3.framework.mod_api import RobotControlContext
 
 
 @dataclass(frozen=True)
@@ -70,40 +69,40 @@ class ApplauseState(RobotControlState, EntryFrameProvider, RunningFrameProvider)
     ) -> None:
         self.frame = 0.0
         self.playing = True
-        ctx.preheat_model(self.policy, with_cmd_vel=True, cmd_vel=self.get_cmd_vel(ctx))
+        ctx.preheat_model(self.policy, command=self.get_cmd_vel(ctx))
 
     def on_enter(self, ctx: RobotControlContext) -> None:
         self.frame = 0.0
         self.playing = True
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
-        qpos = self.policy.target.copy()
-        qpos[-14:] = self.clip.positions[0]
-        return self._motor_frame(qpos, self.policy.kp, self.policy.kd)
+        frame = self._motor_frame_from_target(ctx, self.policy.output.joints)
+        frame.qpos[-14:] = self.clip.positions[0]
+        return frame
 
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame:
-        qpos, _ = self.policy.step(
-            ctx.current_q,
-            ctx.current_dq,
-            ctx.current_quat_wxyz,
-            ctx.current_omega,
-            self.get_cmd_vel(ctx),
+        self.get_cmd_vel(ctx)
+        output = self.policy.step(
+            ctx.inference_frame,
+            dt,
+            advance=advance,
         )
+        frame = self._motor_frame_from_target(ctx, output.joints)
         index = min(int(self.frame), self.clip.positions.shape[0] - 1)
-        qpos[-14:] = self.clip.positions[index]
+        frame.qpos[-14:] = self.clip.positions[index]
         if self.playing and advance:
             self.frame += self.clip.fps * dt
-        return self._motor_frame(qpos, self.policy.kp, self.policy.kd)
+        return frame
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
-            ctx.request_state(ZERO_TORQUE_STATE, trigger="safety")
+            ctx.request_state("com.bxi.basic_actions/zero_torque", trigger="safety")
             return
         if self.frame >= self.clip.positions.shape[0]:
             ctx.request_state(
-                NORMAL_STATE,
+                "com.bxi.basic_actions/normal",
                 trigger="applause_finished",
                 transition={"profile": "dual_running_blend", "duration": 1.0},
             )
