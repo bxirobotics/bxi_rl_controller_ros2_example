@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -540,7 +541,7 @@ class ModNodeManager:
                 )
         process = handle.process
         if process is not None and process.poll() is None:
-            process.terminate()
+            self._signal_process(process, signal.SIGTERM)
             if wait:
                 self._wait_for_process(process)
             else:
@@ -558,7 +559,7 @@ class ModNodeManager:
                 continue
             if now < stopping.kill_at:
                 continue
-            stopping.process.kill()
+            self._signal_process(stopping.process, signal.SIGKILL)
             stopping.kill_at = float("inf")
             self._log("warning", f"killed unresponsive Mod node '{node_id}'")
 
@@ -575,15 +576,31 @@ class ModNodeManager:
         except Exception as exc:
             self._log("warning", f"failed to destroy Mod node '{node_id}': {exc}")
 
-    @staticmethod
-    def _wait_for_process(process: subprocess.Popen[bytes]) -> None:
+    @classmethod
+    def _wait_for_process(cls, process: subprocess.Popen[bytes]) -> None:
         if process.poll() is not None:
             return
         try:
             process.wait(timeout=3.0)
         except subprocess.TimeoutExpired:
-            process.kill()
+            cls._signal_process(process, signal.SIGKILL)
             process.wait(timeout=3.0)
+
+    @staticmethod
+    def _signal_process(
+        process: subprocess.Popen[bytes], value: signal.Signals
+    ) -> None:
+        pid = getattr(process, "pid", None)
+        if isinstance(process, subprocess.Popen) and isinstance(pid, int) and pid > 0:
+            try:
+                os.killpg(pid, value)
+                return
+            except (ProcessLookupError, PermissionError):
+                pass
+        if value == signal.SIGTERM:
+            process.terminate()
+        else:
+            process.kill()
 
     def _log(self, level: str, message: str) -> None:
         logger = self._logger
