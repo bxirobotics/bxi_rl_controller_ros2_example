@@ -229,7 +229,7 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         (
             "share/" + package_name,
-            ["package.xml", "MOD_NODES.md", "CONTROL_SCHEDULER.md"],
+            ["package.xml"],
         ),
         ("bin", ["../../tools/bxi-mod"]),
     ]

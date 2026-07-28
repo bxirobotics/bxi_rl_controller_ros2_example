@@ -40,3 +40,26 @@ python3 tools/cpu_usage.py <PID> --threads
 `process_by_recent_cpu~` 将每个线程在采样周期内使用的 CPU 时间归到该线程
 采样结束时最近运行的核心；线程可能迁核，因此这是按核分布估算值。脚本独立运行，
 不会在控制进程中增加采样代码或线程。
+
+## 推理 benchmark
+
+自动发现全部模型并测试当前平台可用的 ONNX Runtime、OpenVINO 和 RKNN 后端：
+
+```bash
+python3 tools/benchmark/backend_benchmark.py
+```
+
+快速检查：
+
+```bash
+python3 tools/benchmark/backend_benchmark.py --quick
+```
+
+与 Git baseline 比较策略热路径和 Python 内存申请：
+
+```bash
+python3 tools/benchmark/inference_benchmark.py --baseline-ref HEAD
+```
+
+完整参数和跨平台测试说明见 [`tools/benchmark/README.md`](benchmark/README.md)。
+benchmark 脚本纳入 Git；自动生成的 JSON 报告和 RKNN 转换缓存不会纳入 Git。

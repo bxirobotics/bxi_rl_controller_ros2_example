@@ -28,7 +28,10 @@ from bxi_example_py_elf3.inference.backends.base import (
     BackendFactory,
     InferenceBackend,
 )
-from bxi_example_py_elf3.inference.backends.openvino import OpenVinoBackend
+from bxi_example_py_elf3.inference.backends.openvino import (
+    OpenVinoBackend,
+    _safe_device,
+)
 from bxi_example_py_elf3.inference.backends.rknn import RknnBackendFactory
 from bxi_example_py_elf3.inference.backends.rknn_builder import (
     RKNN_CONVERT_ENV,
@@ -151,6 +154,18 @@ class _FakeOpenVinoCore:
         return _FakeCompiledModel()
 
 
+class _FakeDeviceCore:
+    available_devices = ("CPU", "GPU")
+
+    def __init__(self, gpu_name):
+        self.gpu_name = gpu_name
+
+    def get_property(self, device, name):
+        if name == "FULL_DEVICE_NAME" and device == "GPU":
+            return self.gpu_name
+        return device
+
+
 class RuntimeTest(unittest.TestCase):
     def test_artifacts_are_backend_extensible(self):
         spec = ModelSpec(
@@ -197,6 +212,21 @@ class RuntimeTest(unittest.TestCase):
 
 
 class OpenVinoBackendTest(unittest.TestCase):
+    def test_non_intel_gpu_is_rejected_and_auto_uses_cpu(self):
+        core = _FakeDeviceCore("NVIDIA GeForce RTX 3060 (dGPU)")
+        with self.assertRaisesRegex(RuntimeError, "ONNX Runtime CUDA/TensorRT"):
+            _safe_device(core, "GPU")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            selected = _safe_device(core, "AUTO")
+        self.assertEqual(selected, "CPU")
+        self.assertIn("ignored unsupported non-Intel GPU", str(caught[0].message))
+
+    def test_intel_gpu_remains_available(self):
+        core = _FakeDeviceCore("Intel(R) Iris(R) Xe Graphics")
+        self.assertEqual(_safe_device(core, "GPU"), "GPU")
+        self.assertEqual(_safe_device(core, "AUTO"), "AUTO")
+
     def test_reuses_output_and_rebinds_replaced_input(self):
         artifact = OpenVinoArtifact(
             "unused.onnx",

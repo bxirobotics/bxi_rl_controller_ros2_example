@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import importlib.util
+import warnings
 
 import numpy as np
 from numpy.typing import NDArray
@@ -43,6 +44,78 @@ def _port_shape(port) -> tuple[object, ...]:
         return tuple(port.partial_shape)
 
 
+def _device_name(core, device: str) -> str:
+    try:
+        return str(core.get_property(device, "FULL_DEVICE_NAME"))
+    except Exception:
+        return device
+
+
+def _unsupported_gpu_devices(core) -> dict[str, str]:
+    """Return OpenCL GPUs enumerated by Intel's plugin that it cannot run."""
+
+    try:
+        devices = tuple(core.available_devices)
+    except Exception:
+        return {}
+    unsupported = {}
+    for device in devices:
+        if device.split(".", 1)[0].upper() != "GPU":
+            continue
+        full_name = _device_name(core, device)
+        if "intel" not in full_name.lower():
+            unsupported[device] = full_name
+    return unsupported
+
+
+def _safe_device(core, requested: str) -> str:
+    unsupported = _unsupported_gpu_devices(core)
+    if not unsupported:
+        return requested
+
+    normalized = requested.upper()
+    if normalized == "AUTO" or normalized.startswith("AUTO:"):
+        try:
+            supported = [
+                device for device in core.available_devices if device not in unsupported
+            ]
+        except Exception:
+            supported = []
+        if not supported:
+            names = ", ".join(unsupported.values())
+            raise RuntimeError(
+                f"OpenVINO found only unsupported non-Intel GPU devices: {names}"
+            )
+        selected = "CPU" if "CPU" in supported else supported[0]
+        names = ", ".join(unsupported.values())
+        warnings.warn(
+            f"OpenVINO AUTO ignored unsupported non-Intel GPU device(s) "
+            f"{names}; selected {selected}",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return selected
+
+    requested_base = requested.split(".", 1)[0].upper()
+    if requested_base == "GPU":
+        matched = next(
+            (
+                name
+                for device, name in unsupported.items()
+                if device.upper() == normalized
+            ),
+            None,
+        )
+        if matched is None and normalized == "GPU" and len(unsupported) == 1:
+            matched = next(iter(unsupported.values()))
+        if matched is not None:
+            raise RuntimeError(
+                f"OpenVINO Intel GPU plugin cannot execute on {matched}; "
+                "use ONNX Runtime CUDA/TensorRT for NVIDIA GPUs"
+            )
+    return requested
+
+
 def _onnx_metadata(path) -> dict[str, str]:
     if path.suffix.lower() != ".onnx" or importlib.util.find_spec("onnx") is None:
         return {}
@@ -60,9 +133,10 @@ class OpenVinoBackend(InferenceBackend):
         self._tensor_type = Tensor
         self._core = Core()
         model = self._core.read_model(str(artifact.resolved_path))
+        device = _safe_device(self._core, artifact.device)
         self._compiled_model = self._core.compile_model(
             model,
-            device_name=artifact.device,
+            device_name=device,
             config=dict(artifact.config),
         )
         self._request = self._compiled_model.create_infer_request()

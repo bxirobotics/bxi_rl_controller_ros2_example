@@ -4,7 +4,10 @@
 build/
 install/
 log/
-benchmarks/
+benchmarks/results/
+benchmarks/cache/
+tools/benchmark/results/
+tools/benchmark/cache/
 .cache/
 !.gitignore
 # proxsuite/
