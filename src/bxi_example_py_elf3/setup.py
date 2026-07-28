@@ -227,7 +227,10 @@ setup(
     package_data={package_name: ["py.typed"]},
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
-        ("share/" + package_name, ["package.xml", "MOD_NODES.md"]),
+        (
+            "share/" + package_name,
+            ["package.xml", "MOD_NODES.md", "CONTROL_SCHEDULER.md"],
+        ),
         ("bin", ["../../tools/bxi-mod"]),
     ]
     + get_data_files()

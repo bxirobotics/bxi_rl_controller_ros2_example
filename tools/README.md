@@ -20,3 +20,23 @@ python3 tools/sanitize_release.py \
 
 共享推理器或模型应放在没有状态的资源 Mod 中。只要仍有公开 Mod 依赖该资源
 Mod，它就会保留；如果公开 Mod 依赖了受保护资源 Mod，生成过程会直接失败。
+
+## 查看进程和各核心 CPU 占用
+
+先查找控制进程 PID，再按 1 秒周期查看：
+
+```bash
+pgrep -af bxi_example_py_elf3_demo
+python3 tools/cpu_usage.py <PID>
+```
+
+同时展开最忙的 10 个线程：
+
+```bash
+python3 tools/cpu_usage.py <PID> --threads
+```
+
+`process` 以一个完整核心为 100%，`system_cores` 是整机各核心总负载。
+`process_by_recent_cpu~` 将每个线程在采样周期内使用的 CPU 时间归到该线程
+采样结束时最近运行的核心；线程可能迁核，因此这是按核分布估算值。脚本独立运行，
+不会在控制进程中增加采样代码或线程。

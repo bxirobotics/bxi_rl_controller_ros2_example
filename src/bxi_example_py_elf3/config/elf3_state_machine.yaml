@@ -4,6 +4,24 @@ initial_state: com.bxi.basic_actions/zero_torque
 # 可追加客户 Mod 根目录；内置 Mods 总是从安装包的 mods/ 自动发现。
 mod_paths: []
 
+# 控制运行时。所有平台适配器共用同一套绝对时间调度和维护策略。
+control_runtime:
+  period_sec: 0.02
+  compute_budget_sec: 0.010
+  deadline_tolerance_sec: 0.001
+
+  maintenance_hz: 5.0
+  maintenance_guard_sec: 0.005
+  statistics_interval_sec: 60.0
+  deadline_warning_interval_sec: 1.0
+
+  # 部署相关优化默认关闭；按目标机器能力显式开启。
+  python_switch_interval_sec: 0.001
+  # 先睡眠，距离绝对释放点最后200微秒时忙等；-1表示完全关闭忙等。
+  spin_wait_us: 200
+  cpu_affinity: -1
+  realtime_priority: 99 #需要程序以root运行，或者sudo prlimit --pid "$$" --rtprio=99:99赋予当前终端权限
+
 graph:
   validate: true
   export:

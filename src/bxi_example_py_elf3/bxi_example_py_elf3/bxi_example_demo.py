@@ -7,7 +7,7 @@ import communication.msg as bxiMsg
 import communication.srv as bxiSrv
 import nav_msgs.msg
 import sensor_msgs.msg
-from threading import Lock
+from threading import Event, Lock
 import numpy as np
 
 import time
@@ -20,10 +20,8 @@ from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
 
-from bxi_example_py_elf3._runtime.controller import (
-    RobotControlFramework,
-    RobotObservation,
-)
+from bxi_example_py_elf3._runtime.control_runtime import RobotControlRuntime
+from bxi_example_py_elf3._runtime.controller import RobotObservation
 from bxi_example_py_elf3._runtime.state_machine import load_state_machine_config
 from bxi_example_py_elf3.mod_api import MotorFrame
 
@@ -68,6 +66,8 @@ class BxiExample(Node):
     def __init__(self):
         super().__init__("bxi_example_py")
 
+        self._shutting_down = Event()
+
         # 加载运行参数
         self.load_files()
 
@@ -83,25 +83,27 @@ class BxiExample(Node):
         self.raw_cmd_vel = np.zeros(3, dtype=np.float32)
         self.pending_remote_events = deque()
 
-        # 定时器初始化
+        # 控制循环初始化
         self.step = 0
-        self.startup_loop_count = 0
-        self.dt = 0.02  # loop @50Hz
-        self.state_machine_info_elapsed = 0.0
+        self._second_reset_at = 0.0
+        self._zero_actuator_values = [0.0] * dof_num
 
-        self.framework = RobotControlFramework(
+        self.runtime = RobotControlRuntime(
             self.state_machine_config,
             built_in_mod_root=self.package_share / "mods",
             dof_num=dof_num,
             ros_node=self,
-            inference_period=self.dt,
+            platform=self,
+            logger=self.get_logger(),
+            fatal_callback=self._on_control_fatal,
         )
-        for message in self.framework.startup_messages():
-            self.get_logger().info(message)
-
-        self.timer = self.create_timer(
-            self.dt, self.timer_callback, callback_group=self.timer_callback_group_1
-        )
+        self.state_machine_info_timer = None
+        if self.state_machine_info_hz > 0.0:
+            self.state_machine_info_timer = self.create_timer(
+                1.0 / self.state_machine_info_hz,
+                self.publish_state_machine_info,
+                callback_group=self.status_callback_group,
+            )
 
     def load_files(self):
         self.declare_parameter("/topic_prefix", "default_value")
@@ -109,9 +111,7 @@ class BxiExample(Node):
             self.get_parameter("/topic_prefix").get_parameter_value().string_value
         )
 
-        self.package_share = Path(
-            get_package_share_directory("bxi_example_py_elf3")
-        )
+        self.package_share = Path(get_package_share_directory("bxi_example_py_elf3"))
         self.declare_parameter(
             "/state_machine_config",
             os.path.join(
@@ -120,12 +120,8 @@ class BxiExample(Node):
                 "elf3_state_machine.yaml",
             ),
         )
-        state_machine_config_path = self.get_parameter(
-            "/state_machine_config"
-        ).value
-        self.state_machine_config = load_state_machine_config(
-            state_machine_config_path
-        )
+        state_machine_config_path = self.get_parameter("/state_machine_config").value
+        self.state_machine_config = load_state_machine_config(state_machine_config_path)
 
         self.declare_parameter("/state_machine_info_topic", "")
         self.state_machine_info_topic = (
@@ -139,13 +135,18 @@ class BxiExample(Node):
             self.get_parameter("/state_machine_info_hz").value
         )
 
+    def _on_control_fatal(self, _message: str):
+        self._shutting_down.set()
+        rclpy.try_shutdown()
+
     def destroy_node(self):
-        framework = getattr(self, "framework", None)
-        if framework is not None:
+        self._shutting_down.set()
+        runtime = getattr(self, "runtime", None)
+        if runtime is not None:
             try:
-                framework.close()
+                runtime.close()
             except Exception as exc:
-                self.get_logger().warning(f"control framework cleanup failed: {exc}")
+                self.get_logger().warning(f"control runtime cleanup failed: {exc}")
         return super().destroy_node()
 
     # ---------------------------------------------------------------------------- #
@@ -153,6 +154,8 @@ class BxiExample(Node):
     # ---------------------------------------------------------------------------- #
     def init_pub_sub(self):
         # 订阅和发布主题
+        self.io_callback_group = MutuallyExclusiveCallbackGroup()
+        self.status_callback_group = MutuallyExclusiveCallbackGroup()
         qos = QoSProfile(
             depth=1,
             durability=qos_profile_sensor_data.durability,
@@ -170,26 +173,39 @@ class BxiExample(Node):
         )
 
         self.odom_sub = self.create_subscription(
-            nav_msgs.msg.Odometry, self.topic_prefix + "odom", self.odom_callback, qos
+            nav_msgs.msg.Odometry,
+            self.topic_prefix + "odom",
+            self.odom_callback,
+            qos,
+            callback_group=self.io_callback_group,
         )
-        # self.joint_sub = self.create_subscription(sensor_msgs.msg.JointState, self.topic_prefix+'joint_states', self.joint_callback, qos)
         self.actuator_sub = self.create_subscription(
             bxiMsg.ActuatorStates,
             self.topic_prefix + "actuator_states",
             self.actuator_callback,
             qos,
+            callback_group=self.io_callback_group,
         )
         self.imu_sub = self.create_subscription(
-            sensor_msgs.msg.Imu, self.topic_prefix + "imu_data", self.imu_callback, qos
+            sensor_msgs.msg.Imu,
+            self.topic_prefix + "imu_data",
+            self.imu_callback,
+            qos,
+            callback_group=self.io_callback_group,
         )
         self.touch_sub = self.create_subscription(
             bxiMsg.TouchSensor,
             self.topic_prefix + "touch_sensor",
             self.touch_callback,
             qos,
+            callback_group=self.io_callback_group,
         )
         self.joy_sub = self.create_subscription(
-            bxiMsg.MotionCommands, "motion_commands", self.joy_callback, qos
+            bxiMsg.MotionCommands,
+            "motion_commands",
+            self.joy_callback,
+            qos,
+            callback_group=self.io_callback_group,
         )
 
         self.rest_srv = self.create_client(
@@ -199,83 +215,69 @@ class BxiExample(Node):
             bxiSrv.SimulationReset, self.topic_prefix + "sim_reset"
         )
 
-        self.timer_callback_group_1 = MutuallyExclusiveCallbackGroup()
-        self.timer_callback_group_2 = MutuallyExclusiveCallbackGroup()
-
         self.lock_in = Lock()
         self.lock_ou = self.lock_in  # Lock()
 
-    def timer_callback(self):
-        # ptyhon 与 rclpy 多线程不太友好，这里使用定时间+简易状态机运行a
-        events = []
+    # --------------------------- Runtime 平台适配接口 --------------------------- #
+
+    def startup_step(self, now: float) -> bool:
+        """Perform the ELF3-specific two-stage reset before control starts."""
         if self.step == 0:
-            self.robot_reset(1, False)  # first reset
-            print("robot reset 1!")
-            self.step = 1
-            return
-        elif self.step == 1 and self.startup_loop_count >= (1.0 / self.dt):
-            self.robot_reset(2, True)  # first reset
-            print("robot reset 2!")
+            if self.robot_reset(1, False):
+                self.get_logger().info("robot reset step 1 requested")
+                self._second_reset_at = now + 1.0
+                self.step = 1
+            return False
+        if self.step == 1:
+            if now < self._second_reset_at:
+                return False
+            if not self.robot_reset(2, True):
+                return False
+            self.get_logger().info("robot reset step 2 requested")
             self.step = 2
-            self.framework.reset_inference_timeout_monitor()
             if self.topic_prefix.find("simulation") != -1:
-                # 仿真下自动切成走路并释放
-                self.framework.request_state(
+                self.runtime.request_state(
                     "com.bxi.basic_actions/pd_brake", trigger="AutoPdbreak"
                 )
-                self.framework.request_state(
+                self.runtime.request_state(
                     "com.bxi.basic_actions/normal", trigger="AutoRelease"
                 )
-            return
+            return False
+        return True
 
-        if self.step == 2:
-            with self.lock_in:
-                observation = RobotObservation(
-                    q=self.qpos.copy(),
-                    dq=self.qvel.copy(),
-                    quat_xyzw=self.quat_xyzw.copy(),
-                    quat_wxyz=self.quat_wxyz.copy(),
-                    omega=self.omega.copy(),
-                    raw_cmd_vel=self.raw_cmd_vel.copy(),
-                )
-                events = list(self.pending_remote_events)
-                self.pending_remote_events.clear()
+    def snapshot_control_inputs(self):
+        """Copy the latest ROS inputs into one coherent framework observation."""
+        with self.lock_in:
+            observation = RobotObservation(
+                q=self.qpos.copy(),
+                dq=self.qvel.copy(),
+                quat_xyzw=self.quat_xyzw.copy(),
+                quat_wxyz=self.quat_wxyz.copy(),
+                omega=self.omega.copy(),
+                raw_cmd_vel=self.raw_cmd_vel.copy(),
+            )
+            events = tuple(self.pending_remote_events)
+            self.pending_remote_events.clear()
+        return observation, events
 
-            frame = self.framework.update(observation, events, self.dt)
-            if frame is not None:
-                self.send_to_motor(frame)
-        else:
-            self.startup_loop_count += 1
-
-        self.publish_state_machine_info_if_due(events)
-
-    def send_to_motor(self, frame: MotorFrame):
+    def publish_motor_frame(self, frame: MotorFrame):
+        """Convert a framework motor frame into the ELF3 ROS command message."""
         msg = bxiMsg.ActuatorCmds()
         msg.header.frame_id = robot_name
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.actuators_name = joint_name
         msg.pos = frame.qpos.tolist()
-        msg.vel = np.zeros(dof_num, dtype=np.float32).tolist()
-        msg.torque = np.zeros(dof_num, dtype=np.float32).tolist()
+        msg.vel = self._zero_actuator_values
+        msg.torque = self._zero_actuator_values
         msg.kp = frame.kp.tolist()
         msg.kd = frame.kd.tolist()
         self.act_pub.publish(msg)
 
-    def publish_state_machine_info_if_due(self, events):
-        if self.state_machine_info_hz <= 0.0:
+    def publish_state_machine_info(self):
+        info = self.runtime.snapshot(include_graph=True)
+        if info is None:
             return
-
-        self.state_machine_info_elapsed += self.dt
-        period = 1.0 / self.state_machine_info_hz
-        if self.state_machine_info_elapsed + 1e-9 < period:
-            return
-
-        self.state_machine_info_elapsed = 0.0
-        self.publish_state_machine_info(events)
-
-    def publish_state_machine_info(self, events):
         now = self.get_clock().now()
-        info = self.framework.snapshot(include_graph=True)
         info.update(
             {
                 "stamp": {
@@ -283,7 +285,6 @@ class BxiExample(Node):
                     "nanosec": int(now.nanoseconds % 1000000000),
                 },
                 "step": int(self.step),
-                "events": list(events),
             }
         )
 
@@ -297,10 +298,13 @@ class BxiExample(Node):
         req.release = release
         req.header.frame_id = robot_name
 
-        while not self.rest_srv.wait_for_service(timeout_sec=1.0):
-            print("service not available, waiting again...")
+        while not self.rest_srv.wait_for_service(timeout_sec=0.2):
+            if self._shutting_down.is_set() or not rclpy.ok():
+                return False
+            self.get_logger().info("robot reset service not available; waiting")
 
         self.rest_srv.call_async(req)
+        return True
 
     def sim_robot_reset(self):
         req = bxiSrv.SimulationReset.Request()
@@ -332,7 +336,6 @@ class BxiExample(Node):
     def joint_callback(self, msg):
         joint_pos = msg.position
         joint_vel = msg.velocity
-        joint_tor = msg.effort
 
         with self.lock_in:
             self.qpos[:] = np.array(joint_pos[:])
@@ -341,23 +344,18 @@ class BxiExample(Node):
     def actuator_callback(self, msg):
         joint_pos = msg.position
         joint_vel = msg.velocity
-        joint_tor = msg.effort
-        drv_temperature = msg.driver_temperature
-        motor_temperature = msg.motor_temperature
 
         with self.lock_in:
             self.qpos[:] = np.array(joint_pos[:])
             self.qvel[:] = np.array(joint_vel[:])
 
     def joy_callback(self, msg):
+        events = self.runtime.extract_remote_events(msg, sync_only=self.step < 2)
         with self.lock_in:
             self.raw_cmd_vel[:] = (
                 msg.vel_des.x,
                 msg.vel_des.y,
                 msg.yawdot_des,
-            )
-            events = self.framework.extract_remote_events(
-                msg, sync_only=self.step < 2
             )
             self.pending_remote_events.extend(events)
 
@@ -367,7 +365,6 @@ class BxiExample(Node):
     def imu_callback(self, msg):
         quat = msg.orientation
         avel = msg.angular_velocity
-        acc = msg.linear_acceleration
 
         quat_tmp1 = np.array([quat.x, quat.y, quat.z, quat.w]).astype(np.double)
         quat_tmp2 = np.array([quat.w, quat.x, quat.y, quat.z]).astype(np.double)
@@ -377,14 +374,11 @@ class BxiExample(Node):
             self.quat_wxyz = quat_tmp2
             self.omega = np.array([avel.x, avel.y, avel.z])
 
-    def touch_callback(self, msg):
-        foot_force = msg.value
+    def touch_callback(self, _msg):
+        pass
 
-    def odom_callback(self, msg):  # 全局里程计（上帝视角，仅限仿真使用）
-        base_pose = msg.pose
-        base_twist = msg.twist
-
-    # ---------------------------------- ROS话题部分 --------------------------------- #
+    def odom_callback(self, _msg):  # 全局里程计（上帝视角，仅限仿真使用）
+        pass
 
 
 def main(args=None):
@@ -397,7 +391,8 @@ def main(args=None):
     executor = MultiThreadedExecutor(num_threads=3)
     try:
         executor.add_node(node)
-        node.framework.attach_executor(executor)
+        node.runtime.attach_executor(executor)
+        node.runtime.start()
         executor.spin()
     finally:
         try:

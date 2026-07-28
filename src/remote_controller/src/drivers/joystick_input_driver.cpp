@@ -61,6 +61,10 @@ public:
         stop_flag_ = false;
         ready_ = false;
         available_ = false;
+        expected_axes_ = 0;
+        expected_buttons_ = 0;
+        initialized_axes_.clear();
+        initialized_buttons_.clear();
         thread_ = std::thread(&JoystickInputDriver::run, this);
     }
 
@@ -139,9 +143,15 @@ private:
                 const bool initial = (event.type & JS_EVENT_INIT) != 0;
                 const unsigned char event_type = event.type & ~JS_EVENT_INIT;
                 if (event_type == JS_EVENT_AXIS) {
+                    // The Linux joystick API can report -32767 for axes that
+                    // have not been sampled yet after a wireless reconnect.
+                    // Treat the initial snapshot as neutral so reconnecting a
+                    // controller can never command motion.  A normal axis
+                    // event replaces this value as soon as the stick moves.
                     set_signal(
                         "js.axis." + std::to_string(event.number),
-                        event.value / static_cast<double>(kAxisValueMax));
+                        initial ? 0.0 :
+                            event.value / static_cast<double>(kAxisValueMax));
                     if (initial) {
                         initialized_axes_.insert(event.number);
                     }

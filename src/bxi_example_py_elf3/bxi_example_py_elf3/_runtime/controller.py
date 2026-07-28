@@ -6,7 +6,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import math
 from pathlib import Path
-import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -46,13 +45,14 @@ class RobotControlFramework:
         extra_mod_roots: Sequence[Path] | None = None,
         dof_num: int,
         ros_node: Node,
-        inference_period: float = 0.02,
-        inference_timeout_tolerance: float = 0.005,
+        control_period: float = 0.02,
     ) -> None:
         self._ros_node = ros_node
         self._closed = True
         self.dof_num = int(dof_num)
-        self.dt = float(inference_period)
+        if control_period <= 0.0:
+            raise ValueError("control_period must be greater than zero")
+        self.dt = float(control_period)
         self.loop_count = 0
 
         self.current_q = np.zeros(self.dof_num, dtype=np.float64)
@@ -77,11 +77,6 @@ class RobotControlFramework:
         self.kp_last_state = np.zeros(self.dof_num, dtype=np.float32)
         self.kd_last_state = np.zeros(self.dof_num, dtype=np.float32)
         self._motor_target: MotorFrame | None = None
-
-        self.inference_period = float(inference_period)
-        self.inference_timeout_tolerance = float(inference_timeout_tolerance)
-        self.last_inference_frame_time: float | None = None
-        self.inference_timeout_count = 0
 
         runtime: ModRuntime | None = None
         node_manager: ModNodeManager | None = None
@@ -168,6 +163,10 @@ class RobotControlFramework:
     def current_state_id(self) -> int:
         return self.state_machine.current_state_id
 
+    @property
+    def current_state_name(self) -> str:
+        return self.state_machine.current_state_name
+
     def update(
         self,
         observation: RobotObservation,
@@ -179,7 +178,6 @@ class RobotControlFramework:
             raise RuntimeError("RobotControlFramework is closed")
 
         self.dt = float(dt)
-        self.node_manager.poll()
         self._set_observation(observation)
         self.current_cmd_vel.fill(0.0)
         self._motor_target = None
@@ -193,9 +191,14 @@ class RobotControlFramework:
             self.pos_last = frame.qpos
             self.kp_last = frame.kp
             self.kd_last = frame.kd
-            self._check_inference_frame_timeout()
         self.loop_count += 1
         return frame
+
+    def maintenance_update(self) -> None:
+        """Run non-control Mod supervision outside the 50 Hz data path."""
+        if self._closed:
+            return
+        self.node_manager.poll()
 
     def extract_remote_events(
         self,
@@ -233,7 +236,6 @@ class RobotControlFramework:
                     "y": float(self.current_cmd_vel[1]),
                     "yaw": float(self.current_cmd_vel[2]),
                 },
-                "inference_timeout_count": self.inference_timeout_count,
                 "mods": [
                     {
                         "id": mod.id,
@@ -278,10 +280,6 @@ class RobotControlFramework:
             )
         return tuple(messages)
 
-    def reset_inference_timeout_monitor(self) -> None:
-        self.last_inference_frame_time = None
-        self.inference_timeout_count = 0
-
     def is_orientation_unsafe(self, quat_xyzw: object) -> bool:
         angles = quaternion_to_euler_array(quat_xyzw)
         angles[angles > math.pi] -= 2 * math.pi
@@ -306,17 +304,24 @@ class RobotControlFramework:
             if cmd_vel is None
             else np.asarray(cmd_vel, dtype=np.float32)
         )
-        history_len = int(getattr(model, "obs_history_len", 1))
-        for _ in range(history_len * 2):
-            infer_step = getattr(model, "infer_step", None)
-            if callable(infer_step):
-                infer_step(q, dq, quat_xyzw, omega, command)
-                continue
-            inference_step = getattr(model, "inference_step")
-            if with_cmd_vel:
-                inference_step(q, dq, quat_wxyz, omega, command)
-            else:
-                inference_step(q, dq, quat_wxyz, omega)
+        # History policies can fill their complete observation window from one
+        # current sample.  Do not run history_len * 2 ONNX calls in one 20 ms
+        # transition cycle (20 calls for the AMP policy).
+        reset_runtime_state = getattr(model, "reset_runtime_state", None)
+        if callable(reset_runtime_state):
+            reset_runtime_state(q, dq, quat_wxyz, omega, command)
+
+        # Run exactly once to perform lazy provider allocation and produce the
+        # entry frame for the current observation.
+        infer_step = getattr(model, "infer_step", None)
+        if callable(infer_step):
+            infer_step(q, dq, quat_xyzw, omega, command)
+            return
+        inference_step = getattr(model, "inference_step")
+        if with_cmd_vel:
+            inference_step(q, dq, quat_wxyz, omega, command)
+        else:
+            inference_step(q, dq, quat_wxyz, omega)
 
     def get_logger(self):
         return self._ros_node.get_logger()
@@ -402,28 +407,6 @@ class RobotControlFramework:
                     first_error = exc
         if first_error is not None:
             raise first_error
-
-    def _check_inference_frame_timeout(self) -> None:
-        now = time.perf_counter()
-        last = self.last_inference_frame_time
-        self.last_inference_frame_time = now
-        if last is None or self.inference_period <= 0.0:
-            return
-        frame_delay = now - last
-        timeout_threshold = self.inference_period + self.inference_timeout_tolerance
-        if frame_delay <= timeout_threshold:
-            return
-
-        self.inference_timeout_count += 1
-        state_id = self.current_state_id
-        state_name = self.state_name_by_id.get(state_id, str(state_id))
-        self.get_logger().warning(
-            "inference timeout: "
-            f"state={state_name}, delay={frame_delay * 1000.0:.2f}ms, "
-            f"limit={self.inference_period * 1000.0:.2f}ms, "
-            f"tolerance={self.inference_timeout_tolerance * 1000.0:.2f}ms, "
-            f"count={self.inference_timeout_count}"
-        )
 
 
 __all__ = ["RobotControlFramework", "RobotObservation"]
