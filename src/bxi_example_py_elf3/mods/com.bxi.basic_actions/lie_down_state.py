@@ -37,7 +37,7 @@ class LieDownState(MotionReplayState[DanceMotionPolicyGravityIsaaclabV2]):
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         policy = self.policy
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
-        if policy.timestep > policy.end_frame - self.end_frame_trim:
+        if policy.finished(self.end_frame_trim):
             ctx.request_state(
                 PD_BRAKE_STATE,
                 trigger=self.finish_trigger,

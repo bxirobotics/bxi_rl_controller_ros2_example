@@ -27,7 +27,7 @@ class PdBrakeState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
 
     def _frame(self, ctx: RobotControlContext) -> MotorFrame:
         policy = self._policy.get()
-        return self._motor_frame(policy.default_dof_pos, policy.kps, policy.kds)
+        return self._motor_frame(policy.default_position, policy.kp, policy.kd)
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         return self._frame(ctx)

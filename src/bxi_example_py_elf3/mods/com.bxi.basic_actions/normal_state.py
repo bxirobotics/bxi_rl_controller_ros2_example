@@ -38,20 +38,20 @@ class NormalState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         policy = self._policy.get()
-        return self._motor_frame(policy.target_dof_pos, policy.kps, policy.kds)
+        return self._motor_frame(policy.target, policy.kp, policy.kd)
 
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame:
         policy = self._policy.get()
-        qpos, _ = policy.inference_step(
+        qpos, _ = policy.step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
             ctx.current_omega,
             self.get_cmd_vel(ctx),
         )
-        return self._motor_frame(qpos, policy.kps, policy.kds)
+        return self._motor_frame(qpos, policy.kp, policy.kd)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):

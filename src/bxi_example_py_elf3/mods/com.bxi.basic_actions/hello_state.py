@@ -41,7 +41,7 @@ class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
     ) -> None:
         self.playing = True
         self.shaketime = 0
-        self.kp = np.zeros_like(self.policy.kps)
+        self.kp = np.zeros_like(self.policy.kp)
         ctx.preheat_model(self.policy, with_cmd_vel=True, cmd_vel=self.get_cmd_vel(ctx))
 
     def on_enter(self, ctx: RobotControlContext) -> None:
@@ -55,16 +55,16 @@ class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         return qpos
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
-        qpos = self.policy.target_dof_pos.copy()
+        qpos = self.policy.target.copy()
         qpos[22], qpos[24], qpos[25] = -0.9, 0.0, -0.3
-        return self._motor_frame(qpos, self.policy.kps, self.policy.kds)
+        return self._motor_frame(qpos, self.policy.kp, self.policy.kd)
 
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame:
         if self.shaketime < 50:
-            self.kp = self.shaketime / 50 * self.policy.kps
-        qpos, _ = self.policy.inference_step(
+            self.kp = self.shaketime / 50 * self.policy.kp
+        qpos, _ = self.policy.step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
@@ -74,7 +74,7 @@ class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         self._wave(qpos)
         if self.playing and advance:
             self.shaketime += 1
-        return self._motor_frame(qpos, self.kp, self.policy.kds)
+        return self._motor_frame(qpos, self.kp, self.policy.kd)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):

@@ -38,35 +38,31 @@ class DanceState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
     def on_prepare(
         self, ctx: RobotControlContext, from_state: StateBehavior[RobotControlContext]
     ) -> None:
-        self.policy.timestep = self.start_frame
-        self.policy.timeinit = 0.0
+        self.policy.reset(self.start_frame)
         ctx.preheat_model(self.policy)
 
     def on_enter(self, ctx: RobotControlContext) -> None:
         self.playing = True
-        self.policy.timestep = self.start_frame
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
-        return self._motor_frame(
-            self.policy.target_dof_pos, self.policy.kps, self.policy.kds
-        )
+        return self._motor_frame(self.policy.target, self.policy.kp, self.policy.kd)
 
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame | None:
         policy = self.policy
-        if policy.timestep >= policy.motionpos.shape[0]:
+        if policy.finished():
             return None
-        qpos = policy.inference_step(
+        qpos = policy.step(
             ctx.current_q, ctx.current_dq, ctx.current_quat_wxyz, ctx.current_omega
         )
         if self.playing and advance:
-            policy.timestep += 50 * dt
-        return self._motor_frame(qpos, policy.kps, policy.kds)
+            policy.advance(dt)
+        return self._motor_frame(qpos, policy.kp, policy.kd)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
-        if self.policy.timestep >= self.policy.motionpos.shape[0]:
-            self.policy.timestep = self.start_frame
+        if self.policy.finished():
+            self.policy.reset(self.start_frame)
             ctx.request_state(
                 NORMAL_STATE,
                 trigger="motion_finished",

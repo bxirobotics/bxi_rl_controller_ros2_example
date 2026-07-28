@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-import numpy as np
 
 from bxi_example_py_elf3.inference.normal import NormalMotionPolicyMjlab
 from bxi_example_py_elf3.mod_api import ResourceHandle
@@ -35,27 +34,22 @@ class NormalRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider
         ctx.preheat_model(self.policy, with_cmd_vel=True, cmd_vel=self.get_cmd_vel(ctx))
 
     def on_enter(self, ctx: RobotControlContext) -> None:
-        self.policy.action = np.zeros_like(self.policy.action)
+        self.policy.reset()
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
-        qpos = self.policy.default_joint_pos.copy() + self.policy.target_q
-        return self._motor_frame(
-            qpos, self.policy.joint_stiffness, self.policy.joint_damping
-        )
+        return self._motor_frame(self.policy.target, self.policy.kp, self.policy.kd)
 
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame:
-        qpos = self.policy.infer_step(
+        qpos = self.policy.step(
             ctx.current_q,
             ctx.current_dq,
-            ctx.current_quat_xyzw,
+            ctx.current_quat_wxyz,
             ctx.current_omega,
             self.get_cmd_vel(ctx),
         )
-        return self._motor_frame(
-            qpos, self.policy.joint_stiffness, self.policy.joint_damping
-        )
+        return self._motor_frame(qpos, self.policy.kp, self.policy.kd)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):

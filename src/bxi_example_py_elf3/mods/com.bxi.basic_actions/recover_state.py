@@ -49,14 +49,10 @@ class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         angles = quaternion_to_euler_array(ctx.quat_xyzw)
         angles[angles > math.pi] -= 2 * math.pi
         if angles[1] < -(math.pi / 4.0):
-            self.policy.end_frame = 880
-            self.policy.timestep = 600
-            self.policy.start_frame = 600
+            self.policy.reset(600, 880)
             self.end_frame_trim = 20
         elif angles[1] > (math.pi / 4.0):
-            self.policy.end_frame = 1690
-            self.policy.timestep = 1350
-            self.policy.start_frame = 1350
+            self.policy.reset(1350, 1690)
             self.end_frame_trim = 0
         else:
             self.motion_selected = False
@@ -67,24 +63,22 @@ class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         if not self.motion_selected:
             return self._motor_frame(ctx.pos_last, ctx.kp_last, ctx.kd_last)
-        return self._motor_frame(
-            self.policy.target_dof_pos, self.policy.kps, self.policy.kds
-        )
+        return self._motor_frame(self.policy.target, self.policy.kp, self.policy.kd)
 
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame | None:
-        if self.policy.timestep > self.policy.end_frame:
+        if self.policy.finished():
             return None
-        qpos = self.policy.inference_step(
+        qpos = self.policy.step(
             ctx.current_q, ctx.current_dq, ctx.current_quat_wxyz, ctx.current_omega
         )
         if self.playing and advance:
-            self.policy.timestep += 50 * dt
-        return self._motor_frame(qpos, self.policy.kps, self.policy.kds)
+            self.policy.advance(dt)
+        return self._motor_frame(qpos, self.policy.kp, self.policy.kd)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
-        if self.policy.timestep > self.policy.end_frame - self.end_frame_trim:
+        if self.policy.finished(self.end_frame_trim):
             ctx.request_state(
                 NORMAL_STATE,
                 trigger="recover_finished",

@@ -77,14 +77,14 @@ class ApplauseState(RobotControlState, EntryFrameProvider, RunningFrameProvider)
         self.playing = True
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
-        qpos = self.policy.target_dof_pos.copy()
+        qpos = self.policy.target.copy()
         qpos[-14:] = self.clip.positions[0]
-        return self._motor_frame(qpos, self.policy.kps, self.policy.kds)
+        return self._motor_frame(qpos, self.policy.kp, self.policy.kd)
 
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame:
-        qpos, _ = self.policy.inference_step(
+        qpos, _ = self.policy.step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
@@ -95,7 +95,7 @@ class ApplauseState(RobotControlState, EntryFrameProvider, RunningFrameProvider)
         qpos[-14:] = self.clip.positions[index]
         if self.playing and advance:
             self.frame += self.clip.fps * dt
-        return self._motor_frame(qpos, self.policy.kps, self.policy.kds)
+        return self._motor_frame(qpos, self.policy.kp, self.policy.kd)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):

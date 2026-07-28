@@ -47,9 +47,7 @@ class AmpRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         self.cmd_vel_run.fill(0.0)
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
-        return self._motor_frame(
-            self.policy.target_dof_pos, self.policy.kps, self.policy.kds
-        )
+        return self._motor_frame(self.policy.target, self.policy.kp, self.policy.kd)
 
     def process_cmd_vel(
         self, ctx: RobotControlContext, cmd_vel: NDArray[np.float32]
@@ -62,7 +60,7 @@ class AmpRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame:
-        qpos, velocity = self.policy.inference_step(
+        qpos, velocity = self.policy.step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
@@ -74,7 +72,7 @@ class AmpRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
             print(self.max_vel)
             ctx.loop_count = int(0.3 / ctx.dt)
             self.max_vel = 0.0
-        return self._motor_frame(qpos, self.policy.kps, self.policy.kds)
+        return self._motor_frame(qpos, self.policy.kp, self.policy.kd)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):

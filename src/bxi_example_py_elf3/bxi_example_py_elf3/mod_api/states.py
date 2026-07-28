@@ -26,20 +26,26 @@ ZERO_TORQUE_STATE = "com.bxi.basic_actions/zero_torque"
 
 
 class ReplayPolicy(Protocol):
-    timestep: float
-    start_frame: int
-    end_frame: int
-    target_dof_pos: NDArray[np.floating]
-    kps: NDArray[np.floating]
-    kds: NDArray[np.floating]
+    target: NDArray[np.floating]
+    kp: NDArray[np.floating]
+    kd: NDArray[np.floating]
 
-    def inference_step(
+    def step(
         self,
         q: NDArray[np.floating],
         dq: NDArray[np.floating],
         quat: NDArray[np.floating],
         omega: NDArray[np.floating],
     ) -> NDArray[np.floating]:
+        ...
+
+    def reset(self, start_frame=None, end_frame=None) -> None:
+        ...
+
+    def advance(self, dt: float) -> None:
+        ...
+
+    def finished(self, trim: int = 0) -> bool:
         ...
 
 
@@ -157,9 +163,7 @@ class PolicyState(_FrameState, Generic[PolicyT], ABC):
     ) -> None:
         super().__init__(name, state_id)
         self._policy_handle = (
-            params_or_policy
-            if isinstance(params_or_policy, ResourceHandle)
-            else None
+            params_or_policy if isinstance(params_or_policy, ResourceHandle) else None
         )
         self.params = None if self._policy_handle is not None else params_or_policy
         self._policy: PolicyT | None = None
@@ -194,9 +198,8 @@ class PolicyState(_FrameState, Generic[PolicyT], ABC):
     def preheat_policy(self, ctx: RobotControlContext, policy: PolicyT) -> None:
         """Use the controller's standard preheater for compatible model APIs."""
         preheat = getattr(ctx, "preheat_model", None)
-        has_standard_inference = callable(getattr(policy, "inference_step", None))
-        has_mjlab_inference = callable(getattr(policy, "infer_step", None))
-        if callable(preheat) and (has_standard_inference or has_mjlab_inference):
+        has_step = callable(getattr(policy, "step", None))
+        if callable(preheat) and has_step:
             preheat(policy)
 
     def on_prepare(
@@ -300,45 +303,34 @@ class MotionReplayState(
         from_state: StateBehavior[RobotControlContext],
     ) -> None:
         policy = self.policy
-        policy.timestep = policy.start_frame
-        if hasattr(policy, "timeinit"):
-            policy.timeinit = 0.0
+        policy.reset()
         ctx.preheat_model(policy)
 
     def on_enter(self, ctx: RobotControlContext) -> None:
         self.playing = True
-        policy = self.policy
-        policy.timestep = policy.start_frame
-        if hasattr(policy, "timeinit"):
-            policy.timeinit = 0.0
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         policy = self.policy
-        qpos = getattr(policy, "target_dof_pos", None)
-        if qpos is None:
-            qpos = getattr(policy, "default_dof_pos", None)
-        if qpos is None:
-            raise ValueError(f"state '{self.name}' policy has no entry position")
-        return self._motor_frame(qpos, policy.kps, policy.kds)
+        return self._motor_frame(policy.target, policy.kp, policy.kd)
 
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame:
         policy = self.policy
-        qpos = policy.inference_step(
+        qpos = policy.step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
             ctx.current_omega,
         )
         if self.playing and advance:
-            policy.timestep += 50 * dt
-        return self._motor_frame(qpos, policy.kps, policy.kds)
+            policy.advance(dt)
+        return self._motor_frame(qpos, policy.kp, policy.kd)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         policy = self.policy
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
-        if policy.timestep > policy.end_frame - self.end_frame_trim:
+        if policy.finished(self.end_frame_trim):
             ctx.request_state(
                 NORMAL_STATE,
                 trigger=self.finish_trigger,
