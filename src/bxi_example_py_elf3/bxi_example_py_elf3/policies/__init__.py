@@ -2,6 +2,7 @@
 
 from .joints import (
     ELF3_ISAAC_JOINTS,
+    ELF3_ISAAC_PARAMETERS,
     ELF3_LOWER_BODY_JOINTS,
     ELF3_POLICY_JOINTS,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "DanceMotionPolicyGravityMjlab",
     "DanceMotionPolicyMjlab",
     "ELF3_ISAAC_JOINTS",
+    "ELF3_ISAAC_PARAMETERS",
     "ELF3_LOWER_BODY_JOINTS",
     "ELF3_POLICY_JOINTS",
     "HumanoidGaitPolicyLiteIsaaclab",

@@ -17,7 +17,7 @@ from bxi_example_py_elf3.framework.inference import (
     default_runtime,
 )
 from bxi_example_py_elf3.framework.mod_api.geometry import get_gravity_orientation
-from .joints import ELF3_POLICY_JOINTS
+from .joints import ELF3_ISAAC_PARAMETERS
 
 _CV2 = None
 _CV2_IMPORT_TRIED = False
@@ -41,8 +41,8 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
     """带深度相机输入的 ELF3 / BX 29DoF 行走策略部署类。"""
 
     joint_contract = PolicyJointContract(
-        observation=ELF3_POLICY_JOINTS,
-        action=ELF3_POLICY_JOINTS,
+        observation=ELF3_ISAAC_PARAMETERS.layout,
+        action=ELF3_ISAAC_PARAMETERS.layout,
     )
 
     def __init__(
@@ -87,183 +87,7 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
         self.if_use_stand = True
         self.force_phase_active = False
         self.clip_action_limit = 100.0
-
-        self.joint2motor_idx = np.array(
-            [
-                15,
-                22,
-                0,
-                16,
-                23,
-                1,
-                17,
-                24,
-                2,
-                18,
-                25,
-                3,
-                9,
-                19,
-                26,
-                4,
-                10,
-                20,
-                27,
-                5,
-                11,
-                21,
-                28,
-                6,
-                12,
-                7,
-                13,
-                8,
-                14,
-            ],
-            dtype=np.int32,
-        )
-        self.mujoco_to_isaac_idx = self.joint2motor_idx
-
-        self._kp = np.array(
-            [
-                108.448,
-                162.672,
-                176.421,
-                176.421,
-                176.421,
-                54.224,
-                176.421,
-                33.493,
-                21.771,
-                176.421,
-                176.421,
-                54.224,
-                176.421,
-                33.493,
-                21.771,
-                54.224,
-                54.224,
-                16.747,
-                54.224,
-                16.747,
-                16.747,
-                16.747,
-                54.224,
-                54.224,
-                16.747,
-                54.224,
-                16.747,
-                16.747,
-                16.747,
-            ],
-            dtype=np.float32,
-        )
-        self._kd = np.array(
-            [
-                6.904,
-                10.356,
-                11.231,
-                11.231,
-                11.231,
-                3.452,
-                11.231,
-                2.132,
-                1.386,
-                11.231,
-                11.231,
-                3.452,
-                11.231,
-                2.132,
-                1.386,
-                3.452,
-                3.452,
-                1.066,
-                3.452,
-                1.066,
-                1.066,
-                1.066,
-                3.452,
-                3.452,
-                1.066,
-                3.452,
-                1.066,
-                1.066,
-                1.066,
-            ],
-            dtype=np.float32,
-        )
-
-        self._default_position = np.array(
-            [
-                0.0,
-                0.0,
-                0.0,
-                -0.3,
-                0.0,
-                0.0,
-                0.6,
-                -0.3,
-                0.0,
-                -0.3,
-                0.0,
-                0.0,
-                0.6,
-                -0.3,
-                0.0,
-                0.2,
-                0.2,
-                0.0,
-                0.6,
-                0.0,
-                0.0,
-                0.0,
-                0.2,
-                -0.2,
-                0.0,
-                0.6,
-                0.0,
-                0.0,
-                0.0,
-            ],
-            dtype=np.float32,
-        )
-        self.default_angles_policy = self._default_position[self.joint2motor_idx]
-
-        action_scales = np.array(
-            [
-                0.231,
-                0.154,
-                0.213,
-                0.213,
-                0.213,
-                0.231,
-                0.213,
-                0.373,
-                0.230,
-                0.213,
-                0.213,
-                0.231,
-                0.213,
-                0.373,
-                0.230,
-                0.231,
-                0.231,
-                0.373,
-                0.231,
-                0.373,
-                0.373,
-                0.373,
-                0.231,
-                0.231,
-                0.373,
-                0.231,
-                0.373,
-                0.373,
-                0.373,
-            ],
-            dtype=np.float32,
-        )
-        self.action_scales_policy = action_scales[self.joint2motor_idx]
+        self._parameters = ELF3_ISAAC_PARAMETERS
 
         self.range_velx = np.array([0.0, 1.0], dtype=np.float32)
         self.range_vely = np.array([0.0, 0.0], dtype=np.float32)
@@ -304,14 +128,11 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
         self.depth_buffer_length = 37
         self._apply_depth_profile(depth_profile)
 
-        self.qj_obs = np.zeros(self.num_actions, dtype=np.float32)
-        self.dqj_obs = np.zeros(self.num_actions, dtype=np.float32)
         self._single_obs = np.empty(self.num_obs, dtype=np.float32)
         self._action = np.zeros(self.num_actions, dtype=np.float32)
         self._previous_action = np.zeros(self.num_actions, dtype=np.float32)
         self._target = self._target_buffer.position
-        np.copyto(self._target, self._default_position)
-        self._target_policy = np.empty(self.num_actions, dtype=np.float32)
+        np.copyto(self._target, self._parameters.default_position)
         self.actor_obs_buffer = np.zeros(
             self.history_length * self.num_obs, dtype=np.float32
         )
@@ -325,7 +146,11 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
         self._depth_previewed = False
 
         self._initialize_model(model_source, backend)
-        self.publish_output(self._target, self._kp, self._kd)
+        self.publish_output(
+            self._target,
+            self._parameters.kp,
+            self._parameters.kd,
+        )
 
     def _apply_depth_profile(self, depth_profile):
         if depth_profile in ("default", None):
@@ -393,7 +218,7 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
             self._single_input_buffer.fill(0.0)
         self._previous_action.fill(0.0)
         self._action.fill(0.0)
-        np.copyto(self._target, self._default_position)
+        np.copyto(self._target, self._parameters.default_position)
         self.cmd.fill(0.0)
         self.counter = 0
         self.last_depth_frame_id = None
@@ -402,7 +227,11 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
     def reset(self, frame: InferenceFrame) -> None:
         self.bind_joints(frame)
         self._clear_state()
-        self.publish_output(self._target, self._kp, self._kd)
+        self.publish_output(
+            self._target,
+            self._parameters.kp,
+            self._parameters.kd,
+        )
 
     def step(
         self,
@@ -450,11 +279,10 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
 
         np.multiply(
             self._action,
-            self.action_scales_policy,
-            out=self._target_policy,
+            self._parameters.action_scale,
+            out=self._target,
         )
-        self._target_policy += self.default_angles_policy
-        self._target[self.joint2motor_idx] = self._target_policy
+        self._target += self._parameters.default_position
         if monitor:
             done = time.perf_counter_ns()
             self._runtime.monitor.record(
@@ -481,16 +309,14 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
 
         qj = np.asarray(qj, dtype=np.float32)[: self.num_actions]
         dqj = np.asarray(dqj, dtype=np.float32)[: self.num_actions]
-        np.take(qj, self.joint2motor_idx, out=self.qj_obs)
-        np.take(dqj, self.joint2motor_idx, out=self.dqj_obs)
 
         obs = self._single_obs
         np.multiply(omega, self.ang_vel_scale, out=obs[0:3])
         obs[3:6] = get_gravity_orientation(quat)
         np.multiply(self.cmd, self.cmd_scale, out=obs[6:9])
-        np.subtract(self.qj_obs, self.default_angles_policy, out=obs[9:38])
+        np.subtract(qj, self._parameters.default_position, out=obs[9:38])
         obs[9:38] *= self.dof_pos_scale
-        np.multiply(self.dqj_obs, self.dof_vel_scale, out=obs[38:67])
+        np.multiply(dqj, self.dof_vel_scale, out=obs[38:67])
         obs[67:96] = self._previous_action
 
         if self.num_obs == 98:

@@ -9,6 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from bxi_example_py_elf3.policies import HumanoidGaitPolicyLiteIsaaclab
+from bxi_example_py_elf3.policies.joints import ELF3_POLICY_JOINTS
 from bxi_example_py_elf3.framework.mod_api import ResourceHandle
 from bxi_example_py_elf3.framework.mod_api import RobotControlState
 from bxi_example_py_elf3.framework.mod_api import StateBehavior
@@ -20,6 +21,9 @@ from bxi_example_py_elf3.framework.mod_api.transition import (
 
 if TYPE_CHECKING:
     from bxi_example_py_elf3.framework.mod_api import RobotControlContext
+
+
+APPLAUSE_ARM_JOINTS = ELF3_POLICY_JOINTS.names[-14:]
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,8 @@ class ApplauseState(RobotControlState, EntryFrameProvider, RunningFrameProvider)
         self._clip = clip
         self.frame = 0.0
         self.playing = True
+        self._arm_output_indices = None
+        self._policy_output_layout = None
 
     @property
     def policy(self) -> HumanoidGaitPolicyLiteIsaaclab:
@@ -70,6 +76,14 @@ class ApplauseState(RobotControlState, EntryFrameProvider, RunningFrameProvider)
         self.frame = 0.0
         self.playing = True
         ctx.preheat_model(self.policy, command=self.get_cmd_vel(ctx))
+        layout = self.policy.output.joints.layout
+        if self._policy_output_layout is not layout:
+            self._arm_output_indices = np.fromiter(
+                (layout.index(name) for name in APPLAUSE_ARM_JOINTS),
+                dtype=np.intp,
+                count=len(APPLAUSE_ARM_JOINTS),
+            )
+            self._policy_output_layout = layout
 
     def on_enter(self, ctx: RobotControlContext) -> None:
         self.frame = 0.0
@@ -77,7 +91,7 @@ class ApplauseState(RobotControlState, EntryFrameProvider, RunningFrameProvider)
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         frame = self._motor_frame_from_target(ctx, self.policy.output.joints)
-        frame.qpos[-14:] = self.clip.positions[0]
+        frame.qpos[self._arm_output_indices] = self.clip.positions[0]
         return frame
 
     def sample_running_frame(
@@ -91,7 +105,7 @@ class ApplauseState(RobotControlState, EntryFrameProvider, RunningFrameProvider)
         )
         frame = self._motor_frame_from_target(ctx, output.joints)
         index = min(int(self.frame), self.clip.positions.shape[0] - 1)
-        frame.qpos[-14:] = self.clip.positions[index]
+        frame.qpos[self._arm_output_indices] = self.clip.positions[index]
         if self.playing and advance:
             self.frame += self.clip.fps * dt
         return frame

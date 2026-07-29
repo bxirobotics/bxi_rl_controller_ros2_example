@@ -94,6 +94,16 @@ Git revision. It also measures Python allocations:
 python3 tools/benchmark/inference_benchmark.py --baseline-ref HEAD
 ```
 
+Historical policy constructors are detected from the selected revision, so
+pre-framework implementations that accepted only model paths can also be used
+as baselines. A failed isolated worker prints its original traceback together
+with the case and version instead of only reporting `CalledProcessError`.
+The default suite covers both full-body and 15-joint `withoutarm` AMP models,
+the legacy MuJoCo-order and Isaac-order motion policies, history motion, and
+both cached and fresh depth input paths. Outputs are normalized by joint name
+before all 29 joint positions are compared, so a layout-only change is allowed
+but a semantic joint swap fails the benchmark.
+
 Use this benchmark when changing input construction, history buffers or policy
 code. Use `backend_benchmark.py` when comparing runtimes and deployment devices.
 

@@ -14,152 +14,21 @@ from bxi_example_py_elf3.framework.mod_api.geometry import (
     quaternion_to_rotation_matrix,
     yaw_quat,
 )
-from .joints import ELF3_ISAAC_JOINTS, ELF3_POLICY_JOINTS
+from .joints import (
+    ELF3_ISAAC_PARAMETERS,
+    ELF3_POLICY_JOINTS,
+)
 
 from bxi_example_py_elf3.framework.inference.api import InferenceFrame, PolicyOutput
 from bxi_example_py_elf3.framework.inference.contract import PolicyJointContract
 from bxi_example_py_elf3.framework.inference.history import HistoryBuffer
 from bxi_example_py_elf3.framework.inference.model import ModelSpec
 from bxi_example_py_elf3.framework.inference.policy import JointPolicy
-from bxi_example_py_elf3.framework.inference.runtime import InferenceRuntime, default_runtime
-
-
-MUJOCO_TO_ISAAC = np.asarray(
-    [
-        15,
-        22,
-        0,
-        16,
-        23,
-        1,
-        17,
-        24,
-        2,
-        18,
-        25,
-        3,
-        9,
-        19,
-        26,
-        4,
-        10,
-        20,
-        27,
-        5,
-        11,
-        21,
-        28,
-        6,
-        12,
-        7,
-        13,
-        8,
-        14,
-    ],
-    dtype=np.int64,
+from bxi_example_py_elf3.framework.inference.runtime import (
+    InferenceRuntime,
+    default_runtime,
 )
-ISAAC_TO_MUJOCO = np.asarray(
-    [
-        2,
-        5,
-        8,
-        11,
-        15,
-        19,
-        23,
-        25,
-        27,
-        12,
-        16,
-        20,
-        24,
-        26,
-        28,
-        0,
-        3,
-        6,
-        9,
-        13,
-        17,
-        21,
-        1,
-        4,
-        7,
-        10,
-        14,
-        18,
-        22,
-    ],
-    dtype=np.int64,
-)
-ELF3_KPS = np.asarray(
-    [
-        108.448,
-        162.672,
-        176.421,
-        176.421,
-        176.421,
-        54.224,
-        176.421,
-        33.493,
-        21.771,
-        176.421,
-        176.421,
-        54.224,
-        176.421,
-        33.493,
-        21.771,
-        54.224,
-        54.224,
-        16.747,
-        54.224,
-        16.747,
-        16.747,
-        16.747,
-        54.224,
-        54.224,
-        16.747,
-        54.224,
-        16.747,
-        16.747,
-        16.747,
-    ],
-    dtype=np.float32,
-)
-ELF3_KDS = np.asarray(
-    [
-        6.904,
-        10.356,
-        11.231,
-        11.231,
-        11.231,
-        3.452,
-        11.231,
-        2.132,
-        1.386,
-        11.231,
-        11.231,
-        3.452,
-        11.231,
-        2.132,
-        1.386,
-        3.452,
-        3.452,
-        1.066,
-        3.452,
-        1.066,
-        1.066,
-        1.066,
-        3.452,
-        3.452,
-        1.066,
-        3.452,
-        1.066,
-        1.066,
-        1.066,
-    ],
-    dtype=np.float32,
-)
+from bxi_example_py_elf3.framework.joints import JointParameterSet
 
 
 def _csv_floats(value: str) -> np.ndarray:
@@ -201,7 +70,7 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
         fixed_pos: bool = False,
         *,
         include_gravity: bool,
-        isaac_order: bool,
+        gains_from_metadata: bool,
         runtime: InferenceRuntime | None = None,
         backend: str = "auto",
     ) -> None:
@@ -210,7 +79,6 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
         self.fixed_pos = fixed_pos
         self._alignment_samples = 0
         self._include_gravity = include_gravity
-        self._isaac_order = isaac_order
         self.num_obs = 157 if include_gravity else 154
         self._runtime = runtime or default_runtime()
         self._policy_name = "motion"
@@ -237,28 +105,27 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
             name.strip() for name in meta["joint_names"].split(",")
         )
         self.num_actions = len(metadata_joint_names)
-        expected_model_layout = ELF3_ISAAC_JOINTS if isaac_order else ELF3_POLICY_JOINTS
+        expected_model_layout = self.joint_contract.observation
         if metadata_joint_names != expected_model_layout.names:
             raise ValueError(
                 "model joint_names metadata does not match the class-defined "
                 f"layout for {type(self).__name__}"
             )
-        self._default_policy_position = _csv_floats(meta["default_joint_pos"])
-        self._action_scale = _csv_floats(meta["action_scale"])
-        if isaac_order:
-            self.mujoco_to_isaac_idx = MUJOCO_TO_ISAAC.tolist()
-            self.isaac_to_mujoco_idx = ISAAC_TO_MUJOCO.tolist()
-            self._default_position = self._default_policy_position[
-                ISAAC_TO_MUJOCO
-            ].copy()
-            self._kp = ELF3_KPS.copy()
-            self._kd = ELF3_KDS.copy()
-            self._decode_scale = self._action_scale[ISAAC_TO_MUJOCO]
+        if gains_from_metadata:
+            kp = _csv_floats(meta["joint_stiffness"])
+            kd = _csv_floats(meta["joint_damping"])
         else:
-            self._kp = _csv_floats(meta["joint_stiffness"])
-            self._kd = _csv_floats(meta["joint_damping"])
-            self._default_position = self._default_policy_position
-            self._decode_scale = self._action_scale
+            if expected_model_layout != ELF3_ISAAC_PARAMETERS.layout:
+                raise ValueError("fixed gains do not match the model joint layout")
+            kp = ELF3_ISAAC_PARAMETERS.kp
+            kd = ELF3_ISAAC_PARAMETERS.kd
+        self._parameters = JointParameterSet.from_arrays(
+            expected_model_layout,
+            default_position=_csv_floats(meta["default_joint_pos"]),
+            kp=kp,
+            kd=kd,
+            action_scale=_csv_floats(meta["action_scale"]),
+        )
 
         self._start_frame = int(start_frame)
         self._end_frame = self._motion_position.shape[0] - 1
@@ -271,13 +138,14 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
         self._previous_action = np.zeros(self.num_actions, dtype=np.float32)
         self._alignment_checkpoint = np.empty((3, 3), dtype=np.float64)
         self._target = self._target_buffer.position
-        np.copyto(self._target, self._default_position)
+        np.copyto(self._target, self._parameters.default_position)
         self._joint_delta = np.empty(self.num_actions, dtype=np.float32)
-        self._policy_joint_delta = np.empty(self.num_actions, dtype=np.float32)
-        self._policy_velocity = np.empty(self.num_actions, dtype=np.float32)
-        self._decoded_action = np.empty(self.num_actions, dtype=np.float32)
         self._scaled_action = np.empty(self.num_actions, dtype=np.float32)
-        self.publish_output(self._target, self._kp, self._kd)
+        self.publish_output(
+            self._target,
+            self._parameters.kp,
+            self._parameters.kd,
+        )
 
     def step(
         self,
@@ -309,12 +177,16 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
         if advance:
             np.copyto(self._previous_action, self._action)
 
-        if self._isaac_order:
-            np.take(self._action, ISAAC_TO_MUJOCO, out=self._decoded_action)
-        else:
-            np.copyto(self._decoded_action, self._action)
-        np.multiply(self._decoded_action, self._decode_scale, out=self._scaled_action)
-        np.add(self._default_position, self._scaled_action, out=self._target)
+        np.multiply(
+            self._action,
+            self._parameters.action_scale,
+            out=self._scaled_action,
+        )
+        np.add(
+            self._parameters.default_position,
+            self._scaled_action,
+            out=self._target,
+        )
         if advance:
             self.advance(dt)
         else:
@@ -349,21 +221,13 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
         obs[offset : offset + 3] = omega
         offset += 3
 
-        if self._isaac_order:
-            np.subtract(q, self._default_position, out=self._joint_delta)
-            np.take(self._joint_delta, MUJOCO_TO_ISAAC, out=self._policy_joint_delta)
-            np.take(dq, MUJOCO_TO_ISAAC, out=self._policy_velocity)
-            obs[offset : offset + 29] = self._policy_joint_delta
-            offset += 29
-            obs[offset : offset + 29] = self._policy_velocity
-        else:
-            np.subtract(
-                q,
-                self._default_policy_position,
-                out=obs[offset : offset + 29],
-            )
-            offset += 29
-            obs[offset : offset + 29] = dq
+        np.subtract(
+            q,
+            self._parameters.default_position,
+            out=obs[offset : offset + 29],
+        )
+        offset += 29
+        obs[offset : offset + 29] = dq
         offset += 29
         obs[offset : offset + 29] = self._previous_action
 
@@ -379,8 +243,12 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
         self._alignment_samples = 0
         self._action.fill(0.0)
         self._previous_action.fill(0.0)
-        np.copyto(self._target, self._default_position)
-        self.publish_output(self._target, self._kp, self._kd)
+        np.copyto(self._target, self._parameters.default_position)
+        self.publish_output(
+            self._target,
+            self._parameters.kp,
+            self._parameters.kd,
+        )
 
     def advance(self, dt: float) -> None:
         self._frame += 50.0 * dt
@@ -404,6 +272,11 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
 
 
 class DanceMotionPolicyMjlab(_LegacyMotionPolicy):
+    joint_contract = PolicyJointContract(
+        observation=ELF3_POLICY_JOINTS,
+        action=ELF3_POLICY_JOINTS,
+    )
+
     def __init__(
         self, motion_npz_path, model_onnx_path, start_frame=0, fixed_pos=False, **kwargs
     ):
@@ -413,12 +286,17 @@ class DanceMotionPolicyMjlab(_LegacyMotionPolicy):
             start_frame,
             fixed_pos,
             include_gravity=False,
-            isaac_order=False,
+            gains_from_metadata=True,
             **kwargs,
         )
 
 
 class DanceMotionPolicyGravityMjlab(_LegacyMotionPolicy):
+    joint_contract = PolicyJointContract(
+        observation=ELF3_POLICY_JOINTS,
+        action=ELF3_POLICY_JOINTS,
+    )
+
     def __init__(
         self, motion_npz_path, model_onnx_path, start_frame=0, fixed_pos=False, **kwargs
     ):
@@ -428,12 +306,17 @@ class DanceMotionPolicyGravityMjlab(_LegacyMotionPolicy):
             start_frame,
             fixed_pos,
             include_gravity=True,
-            isaac_order=False,
+            gains_from_metadata=True,
             **kwargs,
         )
 
 
 class DanceMotionPolicyGravityIsaaclab(_LegacyMotionPolicy):
+    joint_contract = PolicyJointContract(
+        observation=ELF3_ISAAC_PARAMETERS.layout,
+        action=ELF3_ISAAC_PARAMETERS.layout,
+    )
+
     def __init__(
         self, motion_npz_path, model_onnx_path, start_frame=0, fixed_pos=False, **kwargs
     ):
@@ -443,15 +326,15 @@ class DanceMotionPolicyGravityIsaaclab(_LegacyMotionPolicy):
             start_frame,
             fixed_pos,
             include_gravity=True,
-            isaac_order=True,
+            gains_from_metadata=False,
             **kwargs,
         )
 
 
 class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
     joint_contract = PolicyJointContract(
-        observation=ELF3_POLICY_JOINTS,
-        action=ELF3_POLICY_JOINTS,
+        observation=ELF3_ISAAC_PARAMETERS.layout,
+        action=ELF3_ISAAC_PARAMETERS.layout,
     )
 
     def __init__(
@@ -472,11 +355,6 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
         self._reference_residual = reference_residual
         self._runtime = runtime or default_runtime()
         self._policy_name = "motion-history"
-        self.mujoco_to_isaac_idx = MUJOCO_TO_ISAAC.tolist()
-        self.isaac_to_mujoco_idx = ISAAC_TO_MUJOCO.tolist()
-        self._kp = ELF3_KPS.copy()
-        self._kd = ELF3_KDS.copy()
-
         self.motion = np.load(motion_npz_path)
         self._motion_position = self.motion["body_pos_w"]
         self.motionquat = self.motion["body_quat_w"]
@@ -499,14 +377,18 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
             name.strip() for name in meta["joint_names"].split(",")
         )
         self.num_actions = len(metadata_joint_names)
-        if metadata_joint_names != ELF3_ISAAC_JOINTS.names:
+        if metadata_joint_names != self.joint_contract.observation.names:
             raise ValueError(
                 "model joint_names metadata does not match the class-defined "
                 f"layout for {type(self).__name__}"
             )
-        self._default_policy_position = _csv_floats(meta["default_joint_pos"])
-        self._default_position = self._default_policy_position[ISAAC_TO_MUJOCO].copy()
-        self._action_scale = _csv_floats(meta["action_scale"])
+        self._parameters = JointParameterSet.from_arrays(
+            self.joint_contract.action,
+            default_position=_csv_floats(meta["default_joint_pos"]),
+            kp=ELF3_ISAAC_PARAMETERS.kp,
+            kd=ELF3_ISAAC_PARAMETERS.kd,
+            action_scale=_csv_floats(meta["action_scale"]),
+        )
         self.command_window_offsets = np.fromstring(
             meta.get("command_window_offsets", "-2,0,2,5,10"), sep=",", dtype=np.float32
         ).astype(np.int64)
@@ -533,8 +415,7 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
         self._previous_action = np.zeros(self.num_actions, dtype=np.float32)
         self._alignment_checkpoint = np.empty((3, 3), dtype=np.float64)
         self._target = self._target_buffer.position
-        np.copyto(self._target, self._default_position)
-        self._target_isaac = np.empty(self.num_actions, dtype=np.float32)
+        np.copyto(self._target, self._parameters.default_position)
         self._scaled_action = np.empty(self.num_actions, dtype=np.float32)
         self._joint_delta = np.empty(self.num_actions, dtype=np.float32)
 
@@ -568,7 +449,11 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
             offset += width
         if offset != self.num_obs:
             raise ValueError(f"obs dim mismatch: layout={offset}, model={self.num_obs}")
-        self.publish_output(self._target, self._kp, self._kd)
+        self.publish_output(
+            self._target,
+            self._parameters.kp,
+            self._parameters.kd,
+        )
 
     def step(
         self,
@@ -602,17 +487,20 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
         np.copyto(self._action, np.asarray(outputs["actions"]).reshape(-1))
         if advance:
             np.copyto(self._previous_action, self._action)
-        np.multiply(self._action, self._action_scale, out=self._scaled_action)
+        np.multiply(
+            self._action,
+            self._parameters.action_scale,
+            out=self._scaled_action,
+        )
         if self._reference_residual:
             reference = np.asarray(outputs["joint_pos"]).reshape(-1)
-            np.add(reference, self._scaled_action, out=self._target_isaac)
+            np.add(reference, self._scaled_action, out=self._target)
         else:
             np.add(
-                self._default_policy_position,
+                self._parameters.default_position,
                 self._scaled_action,
-                out=self._target_isaac,
+                out=self._target,
             )
-        np.take(self._target_isaac, ISAAC_TO_MUJOCO, out=self._target)
         if advance:
             self.advance(dt)
         else:
@@ -656,9 +544,13 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
         values["motion_anchor_ori_b"][:] = self.compute_relmatrix(quat, motion_quat)
         values["projected_gravity"][:] = get_gravity_orientation(quat)
         values["base_ang_vel"][:] = omega
-        np.subtract(q, self._default_position, out=self._joint_delta)
-        np.take(self._joint_delta, MUJOCO_TO_ISAAC, out=values["joint_pos"])
-        np.take(dq, MUJOCO_TO_ISAAC, out=values["joint_vel"])
+        np.subtract(
+            q,
+            self._parameters.default_position,
+            out=self._joint_delta,
+        )
+        values["joint_pos"][:] = self._joint_delta
+        values["joint_vel"][:] = dq
         values["actions"][:] = self._previous_action
         if "base_lin_vel" in values:
             if base_lin_vel_b is None:
@@ -707,10 +599,14 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
         self._alignment_samples = 0
         self._action.fill(0.0)
         self._previous_action.fill(0.0)
-        np.copyto(self._target, self._default_position)
+        np.copyto(self._target, self._parameters.default_position)
         for history in self.history_buffers.values():
             history.clear()
-        self.publish_output(self._target, self._kp, self._kd)
+        self.publish_output(
+            self._target,
+            self._parameters.kp,
+            self._parameters.kd,
+        )
 
     def advance(self, dt: float) -> None:
         self._frame += 50.0 * dt

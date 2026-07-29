@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare the current inference framework with the repository HEAD baseline.
+"""Compare the current inference framework with a selected Git baseline.
 
 Each case/version runs in a separate process so ONNX Runtime sessions, thread
 pools and allocator caches cannot leak from one result into another.
@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import importlib
+import inspect
 import io
 import json
 import os
@@ -28,8 +29,18 @@ ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = ROOT / "src/bxi_example_py_elf3"
 ASSETS = PACKAGE_ROOT / "mods/com.bxi.basic_actions/assets"
 DEPTH_ASSETS = PACKAGE_ROOT / "mods/com.bxi.normal_depth/assets"
+BACK_FLIP_ASSETS = PACKAGE_ROOT / "mods/com.bxi.back_flip/assets"
 
-CASES = ("normal", "amp", "motion_legacy", "motion_v3", "depth_cached", "depth_fresh")
+CASES = (
+    "normal",
+    "amp",
+    "amp_noarm",
+    "motion_legacy",
+    "motion_isaac",
+    "motion_v3",
+    "depth_cached",
+    "depth_fresh",
+)
 BASELINE_SOURCE_CANDIDATES = {
     "normal": (
         "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/normal.py",
@@ -39,7 +50,15 @@ BASELINE_SOURCE_CANDIDATES = {
         "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/amp.py",
         "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/amp.py",
     ),
+    "amp_noarm": (
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/amp.py",
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/amp.py",
+    ),
     "motion_legacy": (
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/beyondmimic.py",
+        "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/beyondmimic.py",
+    ),
+    "motion_isaac": (
         "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/beyondmimic.py",
         "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/beyondmimic.py",
     ),
@@ -126,10 +145,31 @@ def _find_baseline_source(case: str, baseline_ref: str) -> str:
     )
 
 
+def _construct_baseline(cls, *args, **kwargs):
+    """Construct a historical policy without assuming today's keywords.
+
+    Pre-framework policies accepted only asset paths, while newer revisions
+    also accept backend selection.  Filter optional benchmark keywords against
+    the constructor stored in the selected Git revision.
+    """
+    parameters = inspect.signature(cls).parameters
+    accepts_keywords = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+    supported = (
+        kwargs
+        if accepts_keywords
+        else {key: value for key, value in kwargs.items() if key in parameters}
+    )
+    return cls(*args, **supported)
+
+
 def _inputs():
     return {
-        "q": np.zeros(29, dtype=np.float32),
-        "dq": np.zeros(29, dtype=np.float32),
+        # Distinct values make a joint-order regression visible in model output.
+        "q": np.linspace(-0.14, 0.14, 29, dtype=np.float32),
+        "dq": np.linspace(0.28, -0.28, 29, dtype=np.float32),
         "quat_wxyz": np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
         "quat_xyzw": np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
         "omega": np.zeros(3, dtype=np.float32),
@@ -158,8 +198,10 @@ def _make_runner(case: str, version: str):
     if version == "baseline":
         module = _load_baseline(case)
         if case == "normal":
-            policy = module.NormalMotionPolicyMjlab(
-                str((ASSETS / "model_normal.onnx").resolve()), backend="onnxruntime"
+            policy = _construct_baseline(
+                module.NormalMotionPolicyMjlab,
+                str((ASSETS / "model_normal.onnx").resolve()),
+                backend="onnxruntime",
             )
             infer = getattr(policy, "infer_step", None)
             if callable(infer):
@@ -170,9 +212,12 @@ def _make_runner(case: str, version: str):
             frame = inference_frame_for(policy)
             policy.reset(frame)
             return policy, lambda: policy.step(frame, 0.02, advance=False)
-        if case == "amp":
-            policy = module.HumanoidGaitPolicyLiteIsaaclab(
-                str((ASSETS / "amp_run.onnx").resolve()), backend="onnxruntime"
+        if case in ("amp", "amp_noarm"):
+            model_name = "amp_run.onnx" if case == "amp" else "withoutarm.onnx"
+            policy = _construct_baseline(
+                module.HumanoidGaitPolicyLiteIsaaclab,
+                str((ASSETS / model_name).resolve()),
+                backend="onnxruntime",
             )
             infer = getattr(policy, "inference_step", None)
             if callable(infer):
@@ -182,7 +227,8 @@ def _make_runner(case: str, version: str):
             policy.reset(frame)
             return policy, lambda: policy.step(frame, 0.02)
         if case == "motion_legacy":
-            policy = module.DanceMotionPolicyMjlab(
+            policy = _construct_baseline(
+                module.DanceMotionPolicyMjlab,
                 str((ASSETS / "recover.npz").resolve()),
                 str((ASSETS / "recover.onnx").resolve()),
                 backend="onnxruntime",
@@ -193,8 +239,22 @@ def _make_runner(case: str, version: str):
             frame = inference_frame_for(policy)
             policy.reset(frame)
             return policy, lambda: policy.step(frame, 0.02, advance=False)
+        if case == "motion_isaac":
+            policy = _construct_baseline(
+                module.DanceMotionPolicyGravityIsaaclab,
+                str((BACK_FLIP_ASSETS / "back_flip.npz").resolve()),
+                str((BACK_FLIP_ASSETS / "back_flip.onnx").resolve()),
+                backend="onnxruntime",
+            )
+            infer = getattr(policy, "inference_step", None)
+            if callable(infer):
+                return policy, lambda: infer(q, dq, wxyz, omega)
+            frame = inference_frame_for(policy)
+            policy.reset(frame)
+            return policy, lambda: policy.step(frame, 0.02, advance=False)
         if case == "motion_v3":
-            policy = module.DanceMotionPolicyGravityIsaaclabV3(
+            policy = _construct_baseline(
+                module.DanceMotionPolicyGravityIsaaclabV3,
                 str((ASSETS / "shuishou.npz").resolve()),
                 str((ASSETS / "shuishou.onnx").resolve()),
                 backend="onnxruntime",
@@ -205,7 +265,8 @@ def _make_runner(case: str, version: str):
             frame = inference_frame_for(policy)
             policy.reset(frame)
             return policy, lambda: policy.step(frame, 0.02, advance=False)
-        policy = module.HumanoidGaitDepthPolicyIsaaclab(
+        policy = _construct_baseline(
+            module.HumanoidGaitDepthPolicyIsaaclab,
             str((DEPTH_ASSETS / "normal_depth.onnx").resolve()),
             backend="onnxruntime",
         )
@@ -252,6 +313,7 @@ def _make_runner(case: str, version: str):
         RuntimeOptions,
     )
     from bxi_example_py_elf3.policies import (
+        DanceMotionPolicyGravityIsaaclab,
         DanceMotionPolicyGravityIsaaclabV3,
         DanceMotionPolicyMjlab,
         HumanoidGaitDepthPolicyIsaaclab,
@@ -276,9 +338,10 @@ def _make_runner(case: str, version: str):
         )
         policy.reset(inference_frame)
         return policy, lambda: policy.step(inference_frame, 0.02, advance=False)
-    if case == "amp":
+    if case in ("amp", "amp_noarm"):
+        model_name = "amp_run.onnx" if case == "amp" else "withoutarm.onnx"
         policy = HumanoidGaitPolicyLiteIsaaclab(
-            str((ASSETS / "amp_run.onnx").resolve()),
+            str((ASSETS / model_name).resolve()),
             runtime=runtime,
             backend="onnxruntime",
         )
@@ -288,6 +351,15 @@ def _make_runner(case: str, version: str):
         policy = DanceMotionPolicyMjlab(
             str((ASSETS / "recover.npz").resolve()),
             str((ASSETS / "recover.onnx").resolve()),
+            runtime=runtime,
+            backend="onnxruntime",
+        )
+        policy.reset(inference_frame)
+        return policy, lambda: policy.step(inference_frame, 0.02, advance=False)
+    if case == "motion_isaac":
+        policy = DanceMotionPolicyGravityIsaaclab(
+            str((BACK_FLIP_ASSETS / "back_flip.npz").resolve()),
+            str((BACK_FLIP_ASSETS / "back_flip.onnx").resolve()),
             runtime=runtime,
             backend="onnxruntime",
         )
@@ -330,6 +402,22 @@ def _close(policy) -> None:
         close()
 
 
+def _semantic_output(output) -> np.ndarray:
+    if hasattr(output, "joints"):
+        joints = output.joints
+        from bxi_example_py_elf3.policies.joints import ELF3_POLICY_JOINTS
+
+        return np.asarray(
+            [
+                joints.position[joints.layout.index(name)]
+                for name in ELF3_POLICY_JOINTS.names
+            ],
+            dtype=np.float32,
+        )
+    values = output[0] if isinstance(output, tuple) else output
+    return np.asarray(values, dtype=np.float32).reshape(-1)[:29]
+
+
 def _worker(
     case: str,
     version: str,
@@ -340,16 +428,15 @@ def _worker(
 ):
     repeat_results = []
     checksum = 0.0
+    first_semantic_output = None
+    final_semantic_output = None
     for _ in range(repeats):
         policy, step = _make_runner(case, version)
         first_output = step()
-        if hasattr(first_output, "joints"):
-            checksum_array = first_output.joints.position
-        else:
-            checksum_array = (
-                first_output[0] if isinstance(first_output, tuple) else first_output
-            )
-        checksum += float(np.asarray(checksum_array).reshape(-1)[0])
+        semantic_output = _semantic_output(first_output)
+        if first_semantic_output is None:
+            first_semantic_output = semantic_output.copy()
+        checksum += float(semantic_output[0])
         for _ in range(warmup):
             step()
         samples = np.empty(iterations, dtype=np.int64)
@@ -357,6 +444,8 @@ def _worker(
             started = time.perf_counter_ns()
             output = step()
             samples[index] = time.perf_counter_ns() - started
+        if final_semantic_output is None:
+            final_semantic_output = _semantic_output(output).copy()
         repeat_results.append(
             {
                 "p50_us": float(np.percentile(samples, 50) / 1_000.0),
@@ -391,6 +480,8 @@ def _worker(
         "traced_net_bytes": current - before,
         "traced_peak_bytes": peak - before,
         "checksum": checksum,
+        "first_output": first_semantic_output.tolist(),
+        "final_output": final_semantic_output.tolist(),
     }
     sys.__stdout__.write(json.dumps(result) + "\n")
 
@@ -418,8 +509,14 @@ def _run_child(args, case: str, version: str):
     env.setdefault("PYTHONHASHSEED", "0")
     env["INFERENCE_BENCHMARK_BASELINE_REF"] = args.baseline_ref
     completed = subprocess.run(
-        command, cwd=ROOT, env=env, check=True, capture_output=True, text=True
+        command, cwd=ROOT, env=env, check=False, capture_output=True, text=True
     )
+    if completed.returncode != 0:
+        details = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(
+            f"benchmark worker failed for {case}/{version} "
+            f"(exit {completed.returncode}):\n{details}"
+        )
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
@@ -442,7 +539,10 @@ def _print_results(results):
             if item["case"] == case and item["version"] == "current"
         )
         speedup = old["p50_us"] / new["p50_us"]
-        if abs(old["checksum"] - new["checksum"]) > 1e-4:
+        if not (
+            np.allclose(old["first_output"], new["first_output"], atol=1e-4)
+            and np.allclose(old["final_output"], new["final_output"], atol=1e-4)
+        ):
             mismatches.append(case)
         print(
             f"{case:<16} {old['p50_us']:>8.1f}µ {new['p50_us']:>8.1f}µ "
@@ -450,7 +550,7 @@ def _print_results(results):
             f"{old['traced_peak_bytes']:>9}B {new['traced_peak_bytes']:>9}B"
         )
     if mismatches:
-        raise RuntimeError(f"output checksum mismatch: {', '.join(mismatches)}")
+        raise RuntimeError(f"semantic joint output mismatch: {', '.join(mismatches)}")
 
 
 def main() -> None:

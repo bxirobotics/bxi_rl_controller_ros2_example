@@ -5,6 +5,7 @@ from .assembly import ExactJointTargetAssembler, PartialJointTargetAssembler
 from .defaults import JointCommandDefaults, JointDefault
 from .layout import JointLayout
 from .mapping import CompiledJointMap
+from .parameters import JointParameterSet
 from .resolver import CompiledCommandBinding, JointCommandResolver
 from .state import JointStateBuffer, JointStateView
 from .target import JointTargetBuffer, JointTargetView
@@ -18,6 +19,7 @@ __all__ = [
     "JointCommandResolver",
     "JointDefault",
     "JointLayout",
+    "JointParameterSet",
     "JointStateBuffer",
     "JointStateView",
     "JointTargetBuffer",
