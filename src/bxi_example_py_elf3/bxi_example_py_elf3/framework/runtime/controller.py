@@ -442,6 +442,7 @@ class RobotControlFramework:
         self._command_resolver = JointCommandResolver(
             layout,
             self._command_defaults,
+            warning_callback=self.get_logger().warning,
         )
         self._resolved_motor_frame = MotorFrame.empty(layout)
         self._last_motor_frame = MotorFrame.empty(layout)

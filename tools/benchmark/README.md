@@ -106,6 +106,7 @@ python3 tools/benchmark/joint_mapping_benchmark.py
 ```
 
 It covers 31→29 observation selection, 29→31 commands with explicit defaults,
+31→29 command projection, allocation-free multi-source command composition,
 full-layout reordering and the exact-layout fast-path check. To keep a local
 cross-platform report (the report directory remains ignored):
 

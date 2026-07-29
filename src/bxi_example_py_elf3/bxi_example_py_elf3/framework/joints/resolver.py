@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import warnings
 from typing import Protocol
 
 import numpy as np
@@ -28,7 +30,10 @@ class CompiledCommandBinding:
         "source_layout",
         "robot_layout",
         "is_identity",
-        "_source_indices",
+        "ignored_names",
+        "_selected_source_indices",
+        "_selected_robot_indices",
+        "_selection_buffer",
         "_missing_indices",
         "_missing_position",
         "_missing_kp",
@@ -43,14 +48,14 @@ class CompiledCommandBinding:
     ) -> None:
         robot_names = set(robot_layout.names)
         source_names = set(source_layout.names)
-        unknown = tuple(
+        ignored_names = tuple(
             name for name in source_layout.names if name not in robot_names
         )
-        if unknown:
-            raise ValueError(
-                "state output contains joints that do not exist in the robot "
-                f"layout: {unknown}"
-            )
+        selected = tuple(
+            (source_index, name)
+            for source_index, name in enumerate(source_layout.names)
+            if name in robot_names
+        )
 
         missing_names = tuple(
             name for name in robot_layout.names if name not in source_names
@@ -59,8 +64,15 @@ class CompiledCommandBinding:
         self.source_layout = source_layout
         self.robot_layout = robot_layout
         self.is_identity = source_layout.names == robot_layout.names
-        self._source_indices = self._readonly_indices(
-            tuple(robot_layout.index(name) for name in source_layout.names)
+        self.ignored_names = ignored_names
+        self._selected_source_indices = self._readonly_indices(
+            tuple(source_index for source_index, _ in selected)
+        )
+        self._selected_robot_indices = self._readonly_indices(
+            tuple(robot_layout.index(name) for _, name in selected)
+        )
+        self._selection_buffer = (
+            np.empty(len(selected), dtype=np.float32) if ignored_names else None
         )
         self._missing_indices = self._readonly_indices(
             tuple(robot_layout.index(name) for name in missing_names)
@@ -103,7 +115,16 @@ class CompiledCommandBinding:
             (source.kd, output.kd, self._missing_kd),
         ):
             output_values[self._missing_indices] = missing_values
-            output_values[self._source_indices] = source_values
+            if self._selection_buffer is None:
+                selected_values = source_values
+            else:
+                np.take(
+                    source_values,
+                    self._selected_source_indices,
+                    out=self._selection_buffer,
+                )
+                selected_values = self._selection_buffer
+            output_values[self._selected_robot_indices] = selected_values
 
     @staticmethod
     def _readonly_indices(values: tuple[int, ...]) -> NDArray[np.intp]:
@@ -127,18 +148,21 @@ class JointCommandResolver:
         "_bindings",
         "_last_source_layout",
         "_last_binding",
+        "_warning_callback",
     )
 
     def __init__(
         self,
         robot_layout: JointLayout,
         defaults: JointCommandDefaults,
+        warning_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.robot_layout = robot_layout
         self._defaults = defaults
         self._bindings: dict[tuple[str, ...], CompiledCommandBinding] = {}
         self._last_source_layout: JointLayout | None = None
         self._last_binding: CompiledCommandBinding | None = None
+        self._warning_callback = warning_callback
 
     def compile(self, source_layout: JointLayout) -> CompiledCommandBinding:
         if self._last_source_layout is source_layout:
@@ -153,6 +177,17 @@ class JointCommandResolver:
                 self._defaults,
             )
             self._bindings[key] = binding
+            if binding.ignored_names:
+                message = (
+                    "state/policy MotorFrame contains joints that are absent from "
+                    "the robot layout and will be ignored: "
+                    f"{binding.ignored_names}; only commands for joints present "
+                    "on this robot will be published"
+                )
+                if self._warning_callback is None:
+                    warnings.warn(message, RuntimeWarning, stacklevel=2)
+                else:
+                    self._warning_callback(message)
         self._last_source_layout = source_layout
         self._last_binding = binding
         return binding

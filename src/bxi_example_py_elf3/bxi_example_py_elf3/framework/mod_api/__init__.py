@@ -5,6 +5,7 @@ implementation lives outside this package and may change independently.
 """
 
 from .context import LoggerLike, RobotControlContext
+from .composition import JointCommandComposer, JointCommandLayer
 from .frame import FloatArray, MotorFrame
 from .mod import ModDefinition, ModLoadContext, StateBuildContext, StateFactory
 from .node import ModNode, NodeBuildContext, NodeFactory
@@ -24,7 +25,7 @@ from .transition import (
     SingleClassTransition,
     TransitionSpec,
 )
-from ..joints import JointLayout
+from ..joints import JointLayout, JointTargetBuffer, JointTargetView
 from ..mod_api_version import MOD_API_VERSION
 
 
@@ -32,8 +33,12 @@ __all__ = [
     "ConfigReader",
     "EntryFrameProvider",
     "FloatArray",
+    "JointCommandComposer",
+    "JointCommandLayer",
     "LoggerLike",
     "JointLayout",
+    "JointTargetBuffer",
+    "JointTargetView",
     "ModDefinition",
     "ModLoadContext",
     "MOD_API_VERSION",

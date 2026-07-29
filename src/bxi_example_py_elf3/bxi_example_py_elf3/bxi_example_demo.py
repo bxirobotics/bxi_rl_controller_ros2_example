@@ -23,6 +23,7 @@ from ament_index_python.packages import get_package_share_directory
 from bxi_example_py_elf3.framework.runtime.state_machine import load_state_machine_config
 from bxi_example_py_elf3.framework.joints import (
     JointCommandDefaults,
+    JointDefault,
     JointLayout,
     JointStateBuffer,
 )
@@ -66,6 +67,8 @@ ELF3_RESET_JOINTS = JointLayout(
         "r_wrist_x_joint",
         "r_wrist_y_joint",
         "r_wrist_z_joint",
+        "neck_z_joint",
+        "neck_y_joint",
     ),
     label="ELF3 simulation reset",
 )
@@ -73,10 +76,16 @@ ELF3_RESET_JOINTS = JointLayout(
 dof_num = ELF3_RESET_JOINTS.dof_num
 joint_name = ELF3_RESET_JOINTS.names
 
-# Add an explicit JointDefault entry here for every hardware joint that older
-# policies do not command. Name lookup is compiled once when that policy first
-# produces a frame; the control-cycle path performs no dictionary lookup.
-ELF3_COMMAND_DEFAULTS = JointCommandDefaults()
+# The current ELF3 state message contains two neck joints that the original
+# 29-joint policies do not command. A future 31-joint policy overrides these
+# values naturally because defaults are only applied to omitted joints. Name
+# lookup is compiled once; the control-cycle path performs no dictionary lookup.
+ELF3_COMMAND_DEFAULTS = JointCommandDefaults(
+    {
+        "neck_y_joint": JointDefault(position=0.0, kp=16.747, kd=1.066),
+        "neck_z_joint": JointDefault(position=0.0, kp=16.747, kd=1.066),
+    }
+)
 
 
 class BxiExample(Node):

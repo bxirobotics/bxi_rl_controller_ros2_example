@@ -20,6 +20,8 @@
     <material name="silver" rgba="0.7 0.7 0.7 1"/>
     <material name="black" rgba="0.2 0.2 0.2 1"/>
     <mesh name="torso_link" content_type="model/stl" file="torso_link.STL"/>
+    <mesh name="neck_z_link" content_type="model/stl" file="neck_z_link.STL"/>
+    <mesh name="neck_y_link" content_type="model/stl" file="neck_y_link.STL"/>
     <mesh name="waist_y_link" content_type="model/stl" file="waist_y_link.STL"/>
     <mesh name="waist_x_link" content_type="model/stl" file="waist_x_link.STL"/>
     <mesh name="waist_z_link" content_type="model/stl" file="waist_z_link.STL"/>
@@ -58,7 +60,6 @@
       <geom rgba="0.75294 0.75294 0.75294 1" mesh="torso_link"/>
       <geom name="torso_collision" class="collision" size="0.09 0.1" pos="0 0 -0.02" quat="0 1 0 0" condim="1"/>
       <geom name="torso_2_collision" class="collision" size="0.08 0.025" pos="0 0 -0.12" quat="0.707107 0.707107 0 0" condim="1"/>
-      <geom name="head_collision" class="collision" size="0.065" fromto="-0.01 0.00 0.30 0.02 0.00 0.30"/>
       <site name="imu_in_torso" pos="0 0 0" size="0.01"/>
       <camera name="tracking" pos="1.734 -1.135 0.35" quat="0.683353 0.555871 0.298684 0.367183" mode="trackcom"/>
       <light pos="0 0 2" dir="0 0 -1" mode="trackcom"/>
@@ -245,6 +246,17 @@
           </body>
         </body>
       </body>
+      <body name="neck_z_link" pos="0 0 0.2995">
+          <inertial pos="2.48e-06 -2.072e-05 -0.07141233" mass="0.37665142" fullinertia="0.00192005 0.00110511 0.00095156 -1.6e-07 1.7e-07 7e-08"/>
+          <joint name="neck_z_joint" pos="0 0 0" axis="0 0 1" range="-1.57 1.57" actuatorfrcrange="-21 21" armature="0.00424198"/>
+          <geom rgba="0.752941 0.752941 0.752941 1" mesh="neck_z_link"/>
+          <body name="neck_y_link">
+            <inertial pos="0.00693497 0.00114433 -0.00987703" mass="1.57425673" fullinertia="0.00294861 0.0032495 0.00265366 8.37e-06 0.00021043 -1.401e-05"/>
+            <joint name="neck_y_joint" pos="0 0 0" axis="0 1 0" range="-0.785 0.785" actuatorfrcrange="-21 21" armature="0.00424198"/>
+            <geom rgba="0.752941 0.752941 0.752941 1" mesh="neck_y_link"/>
+            <geom name="neck_collision" class="collision" size="0.065" fromto="-0.01 0 0.0005 0.02 0 0.0005" condim="1"/>
+          </body>
+      </body>
     </body>
   </worldbody>
 
@@ -278,7 +290,9 @@
     <general name="r_wrist_x_joint" joint="r_wrist_x_joint" ctrllimited="false" forcelimited="true" forcerange="-21 21" biastype="affine" gainprm="16.7467" biasprm="0 -16.7467 -1.06613"/>
     <general name="r_wrist_y_joint" joint="r_wrist_y_joint" ctrllimited="false" forcelimited="true" forcerange="-21 21" biastype="affine" gainprm="16.7467" biasprm="0 -16.7467 -1.06613"/>
     <general name="r_wrist_z_joint" joint="r_wrist_z_joint" ctrllimited="false" forcelimited="true" forcerange="-21 21" biastype="affine" gainprm="16.7467" biasprm="0 -16.7467 -1.06613"/>
-  </actuator> -->
+    <general name="neck_z_joint" joint="neck_z_joint" ctrllimited="false" forcelimited="true" forcerange="-21 21" biastype="affine" gainprm="16.7467" biasprm="0 -16.7467 -1.06613"/>
+    <general name="neck_y_joint" joint="neck_y_joint" ctrllimited="false" forcelimited="true" forcerange="-21 21" biastype="affine" gainprm="16.7467" biasprm="0 -16.7467 -1.06613"/>
+    </actuator> -->
 
   <actuator>
     <motor name="waist_y_joint" joint="waist_y_joint" gear="1" ctrllimited='true' ctrlrange='-100 100'/>
@@ -314,6 +328,9 @@
     <motor name="r_wrist_x_joint" joint="r_wrist_x_joint" gear="1" ctrllimited='true' ctrlrange='-25 25'/>
     <motor name="r_wrist_y_joint" joint="r_wrist_y_joint" gear="1" ctrllimited='true' ctrlrange='-25 25'/>
     <motor name="r_wrist_z_joint" joint="r_wrist_z_joint" gear="1" ctrllimited='true' ctrlrange='-25 25'/>
+
+    <motor name="neck_z_joint" joint="neck_z_joint" gear="1" ctrllimited='true' ctrlrange='-21 21'/>
+    <motor name="neck_y_joint" joint="neck_y_joint" gear="1" ctrllimited='true' ctrlrange='-21 21'/>
   </actuator>
 
   <sensor>

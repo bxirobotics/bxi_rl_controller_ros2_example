@@ -30,8 +30,13 @@ from bxi_example_py_elf3.framework.joints import (  # noqa: E402
     JointDefault,
     JointLayout,
     JointStateBuffer,
+    JointTargetBuffer,
 )
-from bxi_example_py_elf3.framework.mod_api import MotorFrame  # noqa: E402
+from bxi_example_py_elf3.framework.mod_api import (  # noqa: E402
+    JointCommandComposer,
+    JointCommandLayer,
+    MotorFrame,
+)
 
 
 def _percentile(samples: np.ndarray, value: float) -> float:
@@ -79,6 +84,39 @@ def run(warmup: int, iterations: int) -> dict[str, object]:
     resolver = JointCommandResolver(robot31, defaults)
     resolved = MotorFrame.empty(robot31)
 
+    model31 = MotorFrame.create(
+        JointLayout(("tool_l", *policy29.names, "tool_r"), label="model31"),
+        np.arange(31, dtype=np.float32),
+        np.full(31, 20.0, dtype=np.float32),
+        np.full(31, 0.5, dtype=np.float32),
+    )
+    robot29_resolver = JointCommandResolver(
+        policy29,
+        JointCommandDefaults(),
+        warning_callback=lambda _message: None,
+    )
+    robot29_output = MotorFrame.empty(policy29)
+
+    external_layout = JointLayout(
+        ("joint_22", "joint_24", "joint_25", "tool_l", "tool_r"),
+        label="external command source",
+    )
+    external = JointTargetBuffer(external_layout)
+    external.update(
+        [-0.9, 0.2, -0.3, 0.1, -0.1],
+        [20.0, 20.0, 20.0, 5.0, 5.0],
+        [0.5, 0.5, 0.5, 0.2, 0.2],
+    )
+    policy_command = JointTargetBuffer(policy29)
+    policy_command.update(partial.qpos, partial.kp, partial.kd)
+    composer = JointCommandComposer(
+        robot31,
+        (
+            JointCommandLayer("policy", policy_command.view),
+            JointCommandLayer("external", external.view, override=True),
+        ),
+    )
+
     reordered_layout = JointLayout(tuple(reversed(robot31.names)), label="reordered31")
     reordered = MotorFrame.create(
         reordered_layout,
@@ -104,6 +142,18 @@ def run(warmup: int, iterations: int) -> dict[str, object]:
             iterations,
         ),
         _measure(
+            "command 31 -> robot 29 + projection",
+            lambda: robot29_resolver.resolve_into(model31, robot29_output),
+            warmup,
+            iterations,
+        ),
+        _measure(
+            "compose policy29 + external5 -> state31",
+            composer.compose,
+            warmup,
+            iterations,
+        ),
+        _measure(
             "command reordered 31 -> robot 31",
             lambda: resolver.resolve_into(reordered, reordered_output),
             warmup,
@@ -118,6 +168,8 @@ def run(warmup: int, iterations: int) -> dict[str, object]:
     ]
     np.testing.assert_array_equal(input_binding.joints.position, partial.qpos)
     np.testing.assert_allclose(resolved.qpos[-2:], [0.2, -0.2])
+    np.testing.assert_array_equal(robot29_output.qpos, model31.qpos[1:30])
+    np.testing.assert_allclose(composer.frame.qpos[-2:], [0.1, -0.1])
     return {
         "schema": 1,
         "timestamp": datetime.now(timezone.utc).isoformat(),

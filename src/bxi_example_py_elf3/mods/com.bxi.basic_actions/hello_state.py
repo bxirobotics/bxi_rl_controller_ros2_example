@@ -2,23 +2,51 @@ from __future__ import annotations
 
 import math
 from typing import TYPE_CHECKING
-import numpy as np
 
 from bxi_example_py_elf3.policies import HumanoidGaitPolicyLiteIsaaclab
-from bxi_example_py_elf3.framework.mod_api import ResourceHandle
-from bxi_example_py_elf3.framework.mod_api import RobotControlState
-from bxi_example_py_elf3.framework.mod_api import StateBehavior
-from bxi_example_py_elf3.framework.mod_api.transition import (
+from bxi_example_py_elf3.policies.joints import ELF3_POLICY_JOINTS
+from bxi_example_py_elf3.framework.mod_api import (
     EntryFrameProvider,
+    JointCommandComposer,
+    JointCommandLayer,
+    JointLayout,
+    JointTargetBuffer,
     MotorFrame,
+    ResourceHandle,
+    RobotControlState,
     RunningFrameProvider,
+    StateBehavior,
 )
 
 if TYPE_CHECKING:
     from bxi_example_py_elf3.framework.mod_api import RobotControlContext
 
 
+HELLO_WAVE_JOINTS = JointLayout(
+    (
+        "r_shoulder_y_joint",
+        "r_shoulder_z_joint",
+        "r_elbow_y_joint",
+    ),
+    label="hello wave command",
+)
+HELLO_HEAD_JOINTS = JointLayout(
+    ("neck_y_joint", "neck_z_joint"),
+    label="hello head command",
+)
+HELLO_OUTPUT_JOINTS = JointLayout(
+    (*ELF3_POLICY_JOINTS.names, *HELLO_HEAD_JOINTS.names),
+    label="hello state output",
+)
+
+
 class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
+    HEAD_Y_AMPLITUDE = 0.10
+    HEAD_Z_AMPLITUDE = 0.20
+    HEAD_ANGULAR_SPEED = 1.50
+    HEAD_KP = 16.747
+    HEAD_KD = 1.066
+
     def __init__(
         self,
         name: str,
@@ -29,7 +57,10 @@ class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         self._policy = policy
         self.playing = True
         self.shaketime = 0
-        self.kp = np.zeros(0, dtype=np.float32)
+        self._head_phase = 0.0
+        self._wave_command = JointTargetBuffer(HELLO_WAVE_JOINTS)
+        self._head_command = JointTargetBuffer(HELLO_HEAD_JOINTS)
+        self._composer: JointCommandComposer | None = None
 
     @property
     def policy(self) -> HumanoidGaitPolicyLiteIsaaclab:
@@ -40,44 +71,87 @@ class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
     ) -> None:
         self.playing = True
         self.shaketime = 0
-        self.kp = np.zeros_like(self.policy.output.joints.kp)
+        self._head_phase = 0.0
         ctx.preheat_model(self.policy, command=self.get_cmd_vel(ctx))
+        self._prepare_command_sources()
 
     def on_enter(self, ctx: RobotControlContext) -> None:
         self.playing = True
         self.shaketime = 0
+        self._head_phase = 0.0
 
-    def _wave(self, qpos: np.ndarray) -> np.ndarray:
-        qpos[22] = -0.9
-        qpos[24] = math.sin(self.shaketime / 10) * 0.5
-        qpos[25] = -0.3
-        return qpos
+    def _prepare_command_sources(self) -> None:
+        policy_target = self.policy.output.joints
+        for output_index, name in enumerate(HELLO_WAVE_JOINTS.names):
+            policy_index = policy_target.layout.index(name)
+            self._wave_command.kp[output_index] = policy_target.kp[policy_index]
+            self._wave_command.kd[output_index] = policy_target.kd[policy_index]
+        self._head_command.kp.fill(self.HEAD_KP)
+        self._head_command.kd.fill(self.HEAD_KD)
+        self._set_entry_commands()
+
+        composer = self._composer
+        if composer is None or composer.layers[0].target is not policy_target:
+            self._composer = JointCommandComposer(
+                HELLO_OUTPUT_JOINTS,
+                (
+                    JointCommandLayer("policy", policy_target),
+                    JointCommandLayer(
+                        "wave_controller",
+                        self._wave_command.view,
+                        override=True,
+                    ),
+                    JointCommandLayer("head_controller", self._head_command.view),
+                ),
+            )
+
+    def _set_entry_commands(self) -> None:
+        self._wave_command.position[:] = (-0.9, 0.0, -0.3)
+        self._head_command.position.fill(0.0)
+
+    def _update_command_sources(self) -> None:
+        self._wave_command.position[0] = -0.9
+        self._wave_command.position[1] = math.sin(self.shaketime / 10.0) * 0.5
+        self._wave_command.position[2] = -0.3
+
+        # This producer can later be replaced by a topic, IK or another
+        # controller without changing the composer or the policy.
+        self._head_command.position[0] = self.HEAD_Y_AMPLITUDE * math.sin(
+            self._head_phase * 0.5
+        )
+        self._head_command.position[1] = self.HEAD_Z_AMPLITUDE * math.sin(
+            self._head_phase
+        )
+
+    def _compose(self) -> MotorFrame:
+        composer = self._composer
+        if composer is None:
+            raise RuntimeError("hello command composer has not been prepared")
+        return composer.compose()
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
-        frame = self._motor_frame_from_target(ctx, self.policy.output.joints)
-        frame.qpos[22], frame.qpos[24], frame.qpos[25] = -0.9, 0.0, -0.3
-        return frame
+        self._set_entry_commands()
+        return self._compose()
 
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
     ) -> MotorFrame:
-        if self.shaketime < 50:
-            np.multiply(
-                self.policy.output.joints.kp,
-                self.shaketime / 50,
-                out=self.kp,
-            )
         self.get_cmd_vel(ctx)
-        output = self.policy.step(
+        self.policy.step(
             ctx.inference_frame,
             dt,
             advance=advance,
         )
-        frame = self._motor_frame_from_target(ctx, output.joints)
-        self._wave(frame.qpos)
-        np.copyto(frame.kp, self.kp)
+        self._update_command_sources()
+        frame = self._compose()
+        if self.shaketime < 50:
+            frame.kp[: ELF3_POLICY_JOINTS.dof_num] *= self.shaketime / 50.0
         if self.playing and advance:
             self.shaketime += 1
+            self._head_phase = math.fmod(
+                self._head_phase + self.HEAD_ANGULAR_SPEED * dt,
+                math.tau,
+            )
         return frame
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:

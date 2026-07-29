@@ -54,8 +54,14 @@ class JointCommandDefaults:
         missing = tuple(name for name in names if name not in self._values)
         if missing:
             raise ValueError(
-                "state output omits robot joints without explicit command "
-                f"defaults: {missing}"
+                "cannot expand the state/policy MotorFrame to the complete robot "
+                "joint layout: the output does not command robot joints "
+                f"{missing}, and they have no explicit JointCommandDefaults. "
+                "The framework refuses to guess their position/kp/kd or reuse a "
+                "previous command. Add a JointDefault(position=..., kp=..., "
+                "kd=...) for every listed joint in the platform's "
+                "command_defaults, or make the state/policy output those joints "
+                "in its MotorFrame. Full-layout outputs do not use defaults."
             )
         return tuple(self._values[name] for name in names)
 
