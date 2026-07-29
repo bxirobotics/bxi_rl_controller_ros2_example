@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from bxi_example_py_elf3.framework.mod_api import RobotControlState
+from bxi_example_py_elf3.policies.joints import ELF3_POLICY_JOINTS
 from bxi_example_py_elf3.framework.mod_api.transition import (
     EntryFrameProvider,
     MotorFrame,
@@ -38,7 +39,13 @@ class InitialPosState(RobotControlState, EntryFrameProvider, RunningFrameProvide
     )
 
     def _frame(self, ctx: RobotControlContext) -> MotorFrame:
-        return self._motor_frame(ctx, self._TARGET_POSITION, self._KP, self._KD)
+        return self._motor_frame(
+            ctx,
+            self._TARGET_POSITION,
+            self._KP,
+            self._KD,
+            layout=ELF3_POLICY_JOINTS,
+        )
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         return self._frame(ctx)

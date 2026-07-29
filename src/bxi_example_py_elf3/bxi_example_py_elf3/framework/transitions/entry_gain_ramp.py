@@ -73,11 +73,14 @@ class EntryGainRampTransition(SingleClassTransition):
         from_state: "StateBehavior[RobotControlContext]",
         to_state: "StateBehavior[RobotControlContext]",
     ) -> None:
-        target = require_entry_frame_provider(to_state).get_entry_frame(ctx)
+        natural_target = require_entry_frame_provider(to_state).get_entry_frame(ctx)
+        target = MotorFrame.empty(ctx.robot_layout)
+        ctx.resolve_motor_frame(natural_target, target)
         self._target = target
-        self._kp_start = self._gain_start(self._kp_from, target.kp, ctx.kp_last)
-        self._kd_start = self._gain_start(self._kd_from, target.kd, ctx.kd_last)
-        self._frame = MotorFrame.empty(ctx.control_layout)
+        last = ctx.last_motor_frame
+        self._kp_start = self._gain_start(self._kp_from, target.kp, last.kp)
+        self._kd_start = self._gain_start(self._kd_from, target.kd, last.kd)
+        self._frame = MotorFrame.empty(ctx.robot_layout)
 
     def apply(self, ctx: "RobotControlContext", dt: float, progress: float) -> None:
         target = self._target

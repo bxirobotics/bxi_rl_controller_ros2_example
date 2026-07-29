@@ -35,7 +35,12 @@ class EntryFrameProvider(Protocol):
 
 @runtime_checkable
 class RunningFrameProvider(Protocol):
-    """State capability for transitions that sample live motor output."""
+    """State capability for transitions that sample live motor output.
+
+    ``advance=False`` is a preview: it may overwrite caller-visible output
+    buffers, but must not change time, history, previous actions, or any other
+    state that can affect a later sample.
+    """
 
     def sample_running_frame(
         self,

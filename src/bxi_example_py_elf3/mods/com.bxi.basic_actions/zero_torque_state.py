@@ -16,9 +16,14 @@ if TYPE_CHECKING:
 
 class ZeroTorqueState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
     def _frame(self, ctx: RobotControlContext) -> MotorFrame:
-        qpos = ctx.current_q
-        zeros = np.zeros_like(qpos, dtype=np.float32)
-        return self._motor_frame(ctx, qpos, zeros, zeros)
+        frame = self._motor_frame_buffer
+        if frame is None or frame.layout != ctx.robot_layout:
+            frame = MotorFrame.empty(ctx.robot_layout)
+            frame.kp.fill(0.0)
+            frame.kd.fill(0.0)
+            self._motor_frame_buffer = frame
+        np.copyto(frame.qpos, ctx.robot_joints.position, casting="same_kind")
+        return frame
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         return self._frame(ctx)

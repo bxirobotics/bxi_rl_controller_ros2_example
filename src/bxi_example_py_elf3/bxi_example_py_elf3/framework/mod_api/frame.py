@@ -6,11 +6,7 @@ from typing import Iterator, TypeAlias
 import numpy as np
 from numpy.typing import NDArray
 
-from bxi_example_py_elf3.framework.joints import (
-    CompiledJointMap,
-    JointLayout,
-    JointTargetView,
-)
+from bxi_example_py_elf3.framework.joints import JointLayout
 
 
 FloatArray: TypeAlias = NDArray[np.float32]
@@ -18,12 +14,26 @@ FloatArray: TypeAlias = NDArray[np.float32]
 
 @dataclass(frozen=True)
 class MotorFrame:
-    """A complete motor command with owned float32 arrays."""
+    """A named state command in its natural N-joint output layout."""
 
     layout: JointLayout
     qpos: FloatArray
     kp: FloatArray
     kd: FloatArray
+
+    def __post_init__(self) -> None:
+        expected = (self.layout.dof_num,)
+        for name, array in (
+            ("qpos", self.qpos),
+            ("kp", self.kp),
+            ("kd", self.kd),
+        ):
+            if array.shape != expected:
+                raise ValueError(
+                    f"motor frame {name} has shape {array.shape}, expected {expected}"
+                )
+            if array.dtype != np.float32:
+                raise TypeError(f"motor frame {name} must use float32")
 
     @classmethod
     def create(
@@ -75,25 +85,6 @@ class MotorFrame:
                 )
             np.copyto(target, array, casting="same_kind")
         return self
-
-    @classmethod
-    def from_target(
-        cls,
-        target: JointTargetView,
-        control_layout: JointLayout,
-    ) -> "MotorFrame":
-        mapping = CompiledJointMap.compile(
-            target.layout,
-            control_layout,
-            require_exact=True,
-        )
-        qpos = np.empty(control_layout.dof_num, dtype=np.float32)
-        kp = np.empty(control_layout.dof_num, dtype=np.float32)
-        kd = np.empty(control_layout.dof_num, dtype=np.float32)
-        mapping.map_into(target.position, qpos)
-        mapping.map_into(target.kp, kp)
-        mapping.map_into(target.kd, kd)
-        return cls(control_layout, qpos, kp, kd)
 
     def __iter__(self) -> Iterator[FloatArray]:
         yield self.qpos

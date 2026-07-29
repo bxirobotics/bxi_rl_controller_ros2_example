@@ -24,6 +24,7 @@ from .transition import (
     SingleClassTransition,
     TransitionSpec,
 )
+from ..joints import JointLayout
 from ..mod_api_version import MOD_API_VERSION
 
 
@@ -32,6 +33,7 @@ __all__ = [
     "EntryFrameProvider",
     "FloatArray",
     "LoggerLike",
+    "JointLayout",
     "ModDefinition",
     "ModLoadContext",
     "MOD_API_VERSION",

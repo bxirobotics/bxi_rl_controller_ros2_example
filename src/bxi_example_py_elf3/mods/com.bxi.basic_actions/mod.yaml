@@ -2,7 +2,7 @@ schema: 1
 id: com.bxi.basic_actions
 name: 基础动作
 version: 1.0.0
-api: ">=1,<2"
+api: ">=2,<3"
 enable: true
 entrypoint: plugin:create_mod
 visibility: public

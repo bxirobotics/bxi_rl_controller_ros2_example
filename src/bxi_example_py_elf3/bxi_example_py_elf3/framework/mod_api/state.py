@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 
 from .context import RobotControlContext
 from .frame import MotorFrame
-from bxi_example_py_elf3.framework.joints import CompiledJointMap, JointLayout, JointTargetView
+from bxi_example_py_elf3.framework.joints import JointLayout, JointTargetView
 
 
 CtxT = TypeVar("CtxT")
@@ -70,8 +70,6 @@ class RobotControlState(StateBehavior[RobotControlContext], ABC):
         self._missing_speed_profile_warned = False
         self._cmd_vel_buffer = np.zeros(3, dtype=np.float32)
         self._motor_frame_buffer: MotorFrame | None = None
-        self._target_source_layout: JointLayout | None = None
-        self._target_mapping: CompiledJointMap | None = None
 
     def on_bind(self, ctx: RobotControlContext) -> None:
         """Called once after construction and before the state machine starts."""
@@ -93,11 +91,6 @@ class RobotControlState(StateBehavior[RobotControlContext], ABC):
         from_state: StateBehavior[RobotControlContext],
     ) -> None:
         """Undo preparation if the transition is interrupted."""
-
-    def on_exit(self, ctx: RobotControlContext) -> None:
-        np.copyto(ctx.pos_last_state, ctx.current_q)
-        np.copyto(ctx.kp_last_state, ctx.kp_last)
-        np.copyto(ctx.kd_last_state, ctx.kd_last)
 
     def get_cmd_vel(self, ctx: RobotControlContext) -> NDArray[np.float32]:
         cmd_vel = self._profile_cmd_vel(ctx)
@@ -170,11 +163,16 @@ class RobotControlState(StateBehavior[RobotControlContext], ABC):
         qpos: object,
         kp: object,
         kd: object,
+        *,
+        layout: JointLayout | None = None,
     ) -> MotorFrame:
+        layout = ctx.robot_layout if layout is None else layout
         frame = self._motor_frame_buffer
-        if frame is None or frame.layout != ctx.control_layout:
-            frame = MotorFrame.empty(ctx.control_layout)
-            self._motor_frame_buffer = frame
+        if frame is None or (
+            frame.layout is not layout and frame.layout != layout
+        ):
+            frame = MotorFrame.empty(layout)
+            self._motor_frame_buffer = frame 
         return frame.update(qpos, kp, kd)
 
     def _motor_frame_from_target(
@@ -183,21 +181,12 @@ class RobotControlState(StateBehavior[RobotControlContext], ABC):
         target: JointTargetView,
     ) -> MotorFrame:
         frame = self._motor_frame_buffer
-        if frame is None or frame.layout != ctx.control_layout:
-            frame = MotorFrame.empty(ctx.control_layout)
+        if frame is None or (
+            frame.layout is not target.layout and frame.layout != target.layout
+        ):
+            frame = MotorFrame.empty(target.layout)
             self._motor_frame_buffer = frame
-        if self._target_source_layout != target.layout:
-            self._target_mapping = CompiledJointMap.compile(
-                target.layout,
-                ctx.control_layout,
-                require_exact=True,
-            )
-            self._target_source_layout = target.layout
-        assert self._target_mapping is not None
-        self._target_mapping.map_into(target.position, frame.qpos)
-        self._target_mapping.map_into(target.kp, frame.kp)
-        self._target_mapping.map_into(target.kd, frame.kd)
-        return frame
+        return frame.update(target.position, target.kp, target.kd)
 
     @staticmethod
     def _apply_frame(ctx: RobotControlContext, frame: MotorFrame | None) -> None:

@@ -55,6 +55,7 @@ class NormalMotionPolicyMjlab(JointPolicy):
         self._obs = np.zeros((1, 96), dtype=np.float32)
         count = self.joint_contract.action.dof_num
         self._action = np.zeros(count, dtype=np.float32)
+        self._action_checkpoint = np.empty_like(self._action)
         self._scaled_action = np.zeros(count, dtype=np.float32)
         self._target = self._target_buffer.position
         np.copyto(self._target, self._default_position)
@@ -102,7 +103,9 @@ class NormalMotionPolicyMjlab(JointPolicy):
         *,
         advance: bool = True,
     ) -> PolicyOutput:
-        del dt, advance
+        del dt
+        if not advance:
+            np.copyto(self._action_checkpoint, self._action)
         joints = self.bind_joints(frame)
         command = frame.command
         if command is None:
@@ -127,6 +130,8 @@ class NormalMotionPolicyMjlab(JointPolicy):
         np.copyto(self._action, np.asarray(outputs["actions"]).reshape(-1))
         np.multiply(self._action, self._action_scale, out=self._scaled_action)
         np.add(self._default_position, self._scaled_action, out=self._target)
+        if not advance:
+            np.copyto(self._action, self._action_checkpoint)
         if monitor:
             output_finished = time.perf_counter_ns()
 

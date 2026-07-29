@@ -69,3 +69,20 @@ python3 tools/benchmark/inference_benchmark.py --baseline-ref HEAD
 
 Use this benchmark when changing input construction, history buffers or policy
 code. Use `backend_benchmark.py` when comparing runtimes and deployment devices.
+
+## Joint-layout hot path
+
+Measure the complete-state-to-policy mapping and 29/31/N command resolution:
+
+```bash
+python3 tools/benchmark/joint_mapping_benchmark.py
+```
+
+It covers 31→29 observation selection, 29→31 commands with explicit defaults,
+full-layout reordering and the exact-layout fast-path check. To keep a local
+cross-platform report (the report directory remains ignored):
+
+```bash
+python3 tools/benchmark/joint_mapping_benchmark.py \
+  --json tools/benchmark/results/joints-my-platform.json
+```

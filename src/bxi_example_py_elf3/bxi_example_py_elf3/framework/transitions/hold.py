@@ -39,10 +39,10 @@ class HoldTransition(SingleClassTransition):
         to_state: "StateBehavior[RobotControlContext]",
     ) -> None:
         self._frame = MotorFrame.create(
-            ctx.control_layout,
-            ctx.pos_last,
-            ctx.kp_last,
-            ctx.kd_last,
+            ctx.robot_layout,
+            ctx.last_motor_frame.qpos,
+            ctx.last_motor_frame.kp,
+            ctx.last_motor_frame.kd,
         )
 
     def apply(self, ctx: "RobotControlContext", dt: float, progress: float) -> None:

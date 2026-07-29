@@ -10,13 +10,17 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from bxi_example_py_elf3.framework.joints import (
-    CompiledJointMap,
+    JointCommandDefaults,
+    JointCommandResolver,
     JointLayout,
     JointStateView,
-    JointTargetView,
 )
 from bxi_example_py_elf3.framework.inference import InferenceFrame
-from bxi_example_py_elf3.framework.mod_api import MotorFrame, RobotControlState, TransitionSpec
+from bxi_example_py_elf3.framework.mod_api import (
+    MotorFrame,
+    RobotControlState,
+    TransitionSpec,
+)
 from bxi_example_py_elf3.framework.mod_api.geometry import quaternion_to_euler_array
 
 from .mod_loader import ModRuntime, load_mod_runtime
@@ -37,54 +41,34 @@ class RobotControlFramework:
         *,
         built_in_mod_root: Path,
         extra_mod_roots: Sequence[Path] | None = None,
-        control_layout: JointLayout,
+        command_defaults: JointCommandDefaults,
         ros_node: Node,
         control_period: float = 0.02,
     ) -> None:
         self._ros_node = ros_node
         self._closed = True
-        self.control_layout = control_layout
-        self.dof_num = control_layout.dof_num
         if control_period <= 0.0:
             raise ValueError("control_period must be greater than zero")
         self.dt = float(control_period)
         self.loop_count = 0
 
-        self.current_q = np.zeros(self.dof_num, dtype=np.float64)
-        self.current_dq = np.zeros(self.dof_num, dtype=np.float64)
         self.current_quat_xyzw = np.zeros(4, dtype=np.float64)
         self.current_quat_wxyz = np.zeros(4, dtype=np.float64)
         self.current_omega = np.zeros(3, dtype=np.float64)
         self.current_raw_cmd_vel = np.zeros(3, dtype=np.float32)
         self.current_cmd_vel = np.zeros(3, dtype=np.float32)
-        self.current_joints = JointStateView(
-            control_layout,
-            self.current_q,
-            self.current_dq,
-        )
-        self.inference_frame = InferenceFrame(
-            joints=self.current_joints,
-            quat_wxyz=self.current_quat_wxyz,
-            angular_velocity=self.current_omega,
-            command=self.current_cmd_vel,
-        )
-        self._observation_source_layout: JointLayout | None = None
-        self._observation_joint_map: CompiledJointMap | None = None
-
-        # Raw aliases retained by the current Mod API.
-        self.qpos = self.current_q
-        self.qvel = self.current_dq
-        self.quat_xyzw = self.current_quat_xyzw
-        self.quat_wxyz = self.current_quat_wxyz
-        self.omega = self.current_omega
-
-        self.pos_last = np.zeros(self.dof_num, dtype=np.float32)
-        self.kp_last = np.zeros(self.dof_num, dtype=np.float32)
-        self.kd_last = np.zeros(self.dof_num, dtype=np.float32)
-        self.pos_last_state = np.zeros(self.dof_num, dtype=np.float32)
-        self.kp_last_state = np.zeros(self.dof_num, dtype=np.float32)
-        self.kd_last_state = np.zeros(self.dof_num, dtype=np.float32)
+        self._command_defaults = command_defaults
+        self._robot_layout: JointLayout | None = None
+        self._robot_joints: JointStateView | None = None
+        self._inference_frame: InferenceFrame | None = None
+        self._command_resolver: JointCommandResolver | None = None
+        self._resolved_motor_frame: MotorFrame | None = None
+        self._last_motor_frame: MotorFrame | None = None
+        self._direct_motor_layout: JointLayout | None = None
         self._motor_target: MotorFrame | None = None
+        self._pending_state_requests: list[
+            tuple[str, str, TransitionSpec, float]
+        ] = []
 
         runtime: ModRuntime | None = None
         node_manager: ModNodeManager | None = None
@@ -140,7 +124,9 @@ class RobotControlFramework:
                 self.config,
                 states,
                 node_lifecycle=node_manager,
+                enter_initial=False,
             )
+            self._initial_state_entered = False
             self.remote_event_adapter = RemoteEventAdapter(
                 self.config.get("remote_events", {})
             )
@@ -175,6 +161,30 @@ class RobotControlFramework:
     def current_state_name(self) -> str:
         return self.state_machine.current_state_name
 
+    @property
+    def robot_layout(self) -> JointLayout:
+        if self._robot_layout is None:
+            raise RuntimeError("robot joint layout is not bound to an observation yet")
+        return self._robot_layout
+
+    @property
+    def robot_joints(self) -> JointStateView:
+        if self._robot_joints is None:
+            raise RuntimeError("robot joint state is not bound to an observation yet")
+        return self._robot_joints
+
+    @property
+    def inference_frame(self) -> InferenceFrame:
+        if self._inference_frame is None:
+            raise RuntimeError("inference frame is not bound to an observation yet")
+        return self._inference_frame
+
+    @property
+    def last_motor_frame(self) -> MotorFrame:
+        if self._last_motor_frame is None:
+            raise RuntimeError("motor frame is not bound to a robot layout yet")
+        return self._last_motor_frame
+
     def update(
         self,
         observation: RobotObservation,
@@ -187,6 +197,7 @@ class RobotControlFramework:
 
         self.dt = float(dt)
         self._set_observation(observation)
+        self._apply_pending_state_requests()
         self.current_cmd_vel.fill(0.0)
         self._motor_target = None
 
@@ -196,9 +207,7 @@ class RobotControlFramework:
 
         frame = self._motor_target
         if frame is not None:
-            np.copyto(self.pos_last, frame.qpos)
-            np.copyto(self.kp_last, frame.kp)
-            np.copyto(self.kd_last, frame.kd)
+            self.last_motor_frame.update(frame.qpos, frame.kp, frame.kd)
         self.loop_count += 1
         return frame
 
@@ -224,6 +233,11 @@ class RobotControlFramework:
         transition: TransitionSpec = None,
         delay: float = 0.0,
     ) -> None:
+        if self._robot_layout is None:
+            self._pending_state_requests.append(
+                (state_name, trigger, transition, float(delay))
+            )
+            return
         self.state_machine.request_transition(
             state_name,
             trigger=trigger,
@@ -231,27 +245,46 @@ class RobotControlFramework:
             delay=delay,
         )
 
-    def create_motor_frame(
-        self,
-        qpos: object,
-        kp: object,
-        kd: object,
-    ) -> MotorFrame:
-        return MotorFrame.create(self.control_layout, qpos, kp, kd)
-
-    def create_motor_frame_from_target(
-        self,
-        target: JointTargetView,
-    ) -> MotorFrame:
-        return MotorFrame.from_target(target, self.control_layout)
+    def _apply_pending_state_requests(self) -> None:
+        if not self._pending_state_requests:
+            return
+        pending = tuple(self._pending_state_requests)
+        self._pending_state_requests.clear()
+        for state_name, trigger, transition, delay in pending:
+            self.state_machine.request_transition(
+                state_name,
+                trigger=trigger,
+                transition=transition,
+                delay=delay,
+            )
 
     def set_motor_target(self, frame: MotorFrame) -> None:
-        if frame.layout != self.control_layout:
-            raise ValueError(
-                "motor frame layout does not match runtime control layout: "
-                f"frame={frame.layout.names}, control={self.control_layout.names}"
-            )
-        self._motor_target = frame
+        if frame.layout is self._direct_motor_layout:
+            self._motor_target = frame
+            return
+        if (
+            frame.layout is self.robot_layout
+            or frame.layout.names == self.robot_layout.names
+        ):
+            self._direct_motor_layout = frame.layout
+            self._motor_target = frame
+            return
+        output = self._resolved_motor_frame
+        if output is None:
+            raise RuntimeError("motor command resolver is not initialized")
+        self.resolve_motor_frame(frame, output)
+        self._motor_target = output
+
+    def resolve_motor_frame(
+        self,
+        frame: MotorFrame,
+        output: MotorFrame,
+    ) -> MotorFrame:
+        resolver = self._command_resolver
+        if resolver is None:
+            raise RuntimeError("motor command resolver is not initialized")
+        resolver.resolve_into(frame, output)
+        return output
 
     def snapshot(self, *, include_graph: bool = False) -> dict[str, object]:
         info = self.state_machine.snapshot(include_graph=include_graph)
@@ -376,16 +409,19 @@ class RobotControlFramework:
 
     def _set_observation(self, observation: RobotObservation) -> None:
         joints = observation.joints
-        if self._observation_source_layout != joints.layout:
-            self._observation_joint_map = CompiledJointMap.compile(
-                joints.layout,
-                self.control_layout,
+        if self._robot_layout is None:
+            self._bind_robot_layout(joints)
+        elif (
+            joints.layout is not self._robot_layout
+            and joints.layout.names != self._robot_layout.names
+        ):
+            raise ValueError(
+                "robot joint layout changed after startup: "
+                f"initial={self._robot_layout.names}, current={joints.layout.names}"
             )
-            self._observation_source_layout = joints.layout
-        assert self._observation_joint_map is not None
-        self._observation_joint_map.map_into(joints.position, self.current_q)
-        self._observation_joint_map.map_into(joints.velocity, self.current_dq)
-        self.current_joints.timestamp_ns = joints.timestamp_ns
+        self._robot_joints = joints
+        self.inference_frame.joints = joints
+        self.inference_frame.timestamp_ns = joints.timestamp_ns
 
         self._copy_vector(observation.quat_xyzw, self.current_quat_xyzw, "quat_xyzw")
         self._copy_vector(observation.quat_wxyz, self.current_quat_wxyz, "quat_wxyz")
@@ -394,6 +430,30 @@ class RobotControlFramework:
             observation.raw_cmd_vel,
             self.current_raw_cmd_vel,
             "raw_cmd_vel",
+        )
+        if not self._initial_state_entered:
+            self.state_machine.current.on_enter(self)
+            self._initial_state_entered = True
+
+    def _bind_robot_layout(self, joints: JointStateView) -> None:
+        layout = joints.layout
+        self._robot_layout = layout
+        self._robot_joints = joints
+        self._command_resolver = JointCommandResolver(
+            layout,
+            self._command_defaults,
+        )
+        self._resolved_motor_frame = MotorFrame.empty(layout)
+        self._last_motor_frame = MotorFrame.empty(layout)
+        self._last_motor_frame.qpos[:] = joints.position
+        self._last_motor_frame.kp.fill(0.0)
+        self._last_motor_frame.kd.fill(0.0)
+        self._inference_frame = InferenceFrame(
+            joints=joints,
+            quat_wxyz=self.current_quat_wxyz,
+            angular_velocity=self.current_omega,
+            command=self.current_cmd_vel,
+            timestamp_ns=joints.timestamp_ns,
         )
 
     @staticmethod

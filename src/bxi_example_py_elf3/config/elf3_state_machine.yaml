@@ -55,5 +55,5 @@ transition_profiles:
     curve: smoothstep
     sample_from: true
     sample_to: true
-    advance_from: false
-    advance_to: false
+    advance_from: true
+    advance_to: true

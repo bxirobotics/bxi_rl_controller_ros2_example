@@ -17,3 +17,4 @@ __pycache__/
 MUJOCO_LOG.TXT
 .*/
 !.github/
+src/http_motion_bridge/

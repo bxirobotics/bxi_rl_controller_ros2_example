@@ -12,7 +12,7 @@ from threading import current_thread, Event, Lock, Thread
 import time
 from typing import Callable
 
-from bxi_example_py_elf3.framework.joints import JointLayout
+from bxi_example_py_elf3.framework.joints import JointCommandDefaults
 from bxi_example_py_elf3.framework.mod_api import TransitionSpec
 
 from bxi_example_py_elf3.framework.runtime.control_scheduler import (
@@ -160,7 +160,7 @@ class RobotControlRuntime:
         system_config: Mapping[str, object],
         *,
         built_in_mod_root: Path,
-        control_layout: JointLayout,
+        command_defaults: JointCommandDefaults,
         ros_node: object,
         platform: ControlPlatformAdapter,
         logger: LoggerLike | None = None,
@@ -195,7 +195,7 @@ class RobotControlRuntime:
         self.framework = RobotControlFramework(
             framework_config,
             built_in_mod_root=built_in_mod_root,
-            control_layout=control_layout,
+            command_defaults=command_defaults,
             ros_node=ros_node,
             control_period=self.config.period_sec,
         )

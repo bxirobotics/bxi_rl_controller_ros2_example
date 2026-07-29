@@ -7,6 +7,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from bxi_example_py_elf3.framework.inference import InferenceFrame, PolicyOutput
+from bxi_example_py_elf3.framework.joints import JointLayout
 
 from .resource import ResourceHandle
 from .state import RobotControlState, StateBehavior
@@ -64,6 +65,7 @@ class _FrameState(
         ctx: RobotControlContext,
         qpos: object,
         *,
+        layout: JointLayout | None = None,
         kp: object | None = None,
         kd: object | None = None,
     ) -> MotorFrame:
@@ -71,7 +73,7 @@ class _FrameState(
             default_kp, default_kd = self.gains(ctx)
             kp = default_kp if kp is None else kp
             kd = default_kd if kd is None else kd
-        return self._motor_frame(ctx, qpos, kp, kd)
+        return self._motor_frame(ctx, qpos, kp, kd, layout=layout)
 
 
 class PoseState(_FrameState, Generic[ParamsT], ABC):
@@ -239,6 +241,7 @@ class PolicyState(_FrameState, Generic[PolicyT], ABC):
         return self.frame(
             ctx,
             self.policy_entry_position(ctx, policy),
+            layout=policy.output.joints.layout,
             kp=kp,
             kd=kd,
         )
@@ -255,6 +258,7 @@ class PolicyState(_FrameState, Generic[PolicyT], ABC):
         return self.frame(
             ctx,
             self.infer_position(ctx, policy, dt, advance=advance),
+            layout=policy.output.joints.layout,
             kp=kp,
             kd=kd,
         )

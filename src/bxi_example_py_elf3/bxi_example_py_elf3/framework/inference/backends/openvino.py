@@ -39,9 +39,24 @@ def _port_name(port) -> str:
 
 def _port_shape(port) -> tuple[object, ...]:
     try:
-        return tuple(int(dimension) for dimension in port.shape)
+        shape = port.shape
     except RuntimeError:
-        return tuple(port.partial_shape)
+        shape = port.partial_shape
+    return tuple(_dimension_value(dimension) for dimension in shape)
+
+
+def _dimension_value(dimension) -> object:
+    try:
+        return int(dimension)
+    except (TypeError, ValueError):
+        is_static = getattr(dimension, "is_static", False)
+        if callable(is_static):
+            is_static = is_static()
+        if is_static:
+            get_length = getattr(dimension, "get_length", None)
+            if callable(get_length):
+                return int(get_length())
+        return str(dimension)
 
 
 def _device_name(core, device: str) -> str:

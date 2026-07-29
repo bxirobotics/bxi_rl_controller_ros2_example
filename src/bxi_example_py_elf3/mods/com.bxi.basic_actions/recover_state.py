@@ -48,7 +48,7 @@ class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
             )
 
     def _configure_motion(self, ctx: RobotControlContext) -> bool:
-        angles = quaternion_to_euler_array(ctx.quat_xyzw)
+        angles = quaternion_to_euler_array(ctx.current_quat_xyzw)
         angles[angles > math.pi] -= 2 * math.pi
         if angles[1] < -(math.pi / 4.0):
             self.policy.configure_range(start_frame=600, end_frame=880)
@@ -64,7 +64,13 @@ class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         if not self.motion_selected:
-            return self._motor_frame(ctx, ctx.pos_last, ctx.kp_last, ctx.kd_last)
+            last = ctx.last_motor_frame
+            return self._motor_frame(
+                ctx,
+                last.qpos,
+                last.kp,
+                last.kd,
+            )
         return self._motor_frame_from_target(ctx, self.policy.output.joints)
 
     def sample_running_frame(

@@ -45,6 +45,8 @@ class RunningBlendTransition(SingleClassTransition):
         self._to_provider: RunningFrameProvider | None = None
         self._to_entry: MotorFrame | None = None
         self._last_frame: MotorFrame | None = None
+        self._from_frame: MotorFrame | None = None
+        self._to_frame: MotorFrame | None = None
         self._output_frame: MotorFrame | None = None
 
     @classmethod
@@ -62,7 +64,7 @@ class RunningBlendTransition(SingleClassTransition):
         )
         sample_from = reader.boolean("sample_from", default=True)
         sample_to = reader.boolean("sample_to", default=True)
-        advance_from = reader.boolean("advance_from", default=False)
+        advance_from = reader.boolean("advance_from", default=True)
         advance_to = reader.boolean("advance_to", default=False)
         reader.finish()
         return cls(
@@ -98,14 +100,18 @@ class RunningBlendTransition(SingleClassTransition):
         self._to_provider = (
             require_running_frame_provider(to_state) if self._sample_to else None
         )
-        self._to_entry = require_entry_frame_provider(to_state).get_entry_frame(ctx)
+        natural_entry = require_entry_frame_provider(to_state).get_entry_frame(ctx)
+        self._to_entry = MotorFrame.empty(ctx.robot_layout)
+        ctx.resolve_motor_frame(natural_entry, self._to_entry)
         self._last_frame = MotorFrame.create(
-            ctx.control_layout,
-            ctx.pos_last,
-            ctx.kp_last,
-            ctx.kd_last,
+            ctx.robot_layout,
+            ctx.last_motor_frame.qpos,
+            ctx.last_motor_frame.kp,
+            ctx.last_motor_frame.kd,
         )
-        self._output_frame = MotorFrame.empty(ctx.control_layout)
+        self._from_frame = MotorFrame.empty(ctx.robot_layout)
+        self._to_frame = MotorFrame.empty(ctx.robot_layout)
+        self._output_frame = MotorFrame.empty(ctx.robot_layout)
 
     def apply(self, ctx: "RobotControlContext", dt: float, progress: float) -> None:
         to_entry = self._to_entry
@@ -115,7 +121,7 @@ class RunningBlendTransition(SingleClassTransition):
 
         from_frame = last_frame
         if self._from_provider is not None:
-            from_frame = (
+            natural_from = (
                 self._from_provider.sample_running_frame(
                     ctx,
                     dt,
@@ -123,10 +129,14 @@ class RunningBlendTransition(SingleClassTransition):
                 )
                 or last_frame
             )
+            resolved_from = self._from_frame
+            if resolved_from is None:
+                raise RuntimeError("running blend transition has no source buffer")
+            from_frame = ctx.resolve_motor_frame(natural_from, resolved_from)
 
         to_frame = to_entry
         if self._to_provider is not None:
-            to_frame = (
+            natural_to = (
                 self._to_provider.sample_running_frame(
                     ctx,
                     dt,
@@ -134,6 +144,10 @@ class RunningBlendTransition(SingleClassTransition):
                 )
                 or to_entry
             )
+            resolved_to = self._to_frame
+            if resolved_to is None:
+                raise RuntimeError("running blend transition has no target buffer")
+            to_frame = ctx.resolve_motor_frame(natural_to, resolved_to)
 
         alpha = self._curve_alpha(progress)
         output_frame = self._output_frame

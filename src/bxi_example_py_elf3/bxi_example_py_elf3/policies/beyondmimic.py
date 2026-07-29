@@ -269,6 +269,7 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
         self._inputs = {"obs": self._input, "time_step": self._time_input}
         self._action = np.zeros(self.num_actions, dtype=np.float32)
         self._previous_action = np.zeros(self.num_actions, dtype=np.float32)
+        self._alignment_checkpoint = np.empty((3, 3), dtype=np.float64)
         self._target = self._target_buffer.position
         np.copyto(self._target, self._default_position)
         self._joint_delta = np.empty(self.num_actions, dtype=np.float32)
@@ -285,6 +286,9 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
         *,
         advance: bool = True,
     ) -> PolicyOutput:
+        alignment_samples = self._alignment_samples
+        if not advance and alignment_samples:
+            np.copyto(self._alignment_checkpoint, self.init_to_world)
         joints = self.bind_joints(frame)
         monitor = self._runtime.options.monitor_enabled
         if monitor:
@@ -302,7 +306,8 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
         if monitor:
             backend_finished = time.perf_counter_ns()
         np.copyto(self._action, np.asarray(raw).reshape(-1))
-        np.copyto(self._previous_action, self._action)
+        if advance:
+            np.copyto(self._previous_action, self._action)
 
         if self._isaac_order:
             np.take(self._action, ISAAC_TO_MUJOCO, out=self._decoded_action)
@@ -312,6 +317,10 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
         np.add(self._default_position, self._scaled_action, out=self._target)
         if advance:
             self.advance(dt)
+        else:
+            self._alignment_samples = alignment_samples
+            if alignment_samples:
+                np.copyto(self.init_to_world, self._alignment_checkpoint)
         if monitor:
             finished = time.perf_counter_ns()
             self._record(started, input_finished, backend_finished, finished)
@@ -522,6 +531,7 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
         self._inputs = {"obs": self._input, "time_step": self._time_input}
         self._action = np.zeros(self.num_actions, dtype=np.float32)
         self._previous_action = np.zeros(self.num_actions, dtype=np.float32)
+        self._alignment_checkpoint = np.empty((3, 3), dtype=np.float64)
         self._target = self._target_buffer.position
         np.copyto(self._target, self._default_position)
         self._target_isaac = np.empty(self.num_actions, dtype=np.float32)
@@ -567,6 +577,9 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
         *,
         advance: bool = True,
     ) -> PolicyOutput:
+        alignment_samples = self._alignment_samples
+        if not advance and alignment_samples:
+            np.copyto(self._alignment_checkpoint, self.init_to_world)
         joints = self.bind_joints(frame)
         monitor = self._runtime.options.monitor_enabled
         if monitor:
@@ -587,7 +600,8 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
         if monitor:
             backend_done = time.perf_counter_ns()
         np.copyto(self._action, np.asarray(outputs["actions"]).reshape(-1))
-        np.copyto(self._previous_action, self._action)
+        if advance:
+            np.copyto(self._previous_action, self._action)
         np.multiply(self._action, self._action_scale, out=self._scaled_action)
         if self._reference_residual:
             reference = np.asarray(outputs["joint_pos"]).reshape(-1)
@@ -601,6 +615,10 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
         np.take(self._target_isaac, ISAAC_TO_MUJOCO, out=self._target)
         if advance:
             self.advance(dt)
+        else:
+            self._alignment_samples = alignment_samples
+            if alignment_samples:
+                np.copyto(self.init_to_world, self._alignment_checkpoint)
         if monitor:
             done = time.perf_counter_ns()
             self._runtime.monitor.record(
@@ -657,8 +675,11 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
                 continue
             history = self.history_buffers[name]
             if not history.initialized:
-                history.fill(value)
-                history.write_into(target)
+                if advance_history:
+                    history.fill(value)
+                    history.write_into(target)
+                else:
+                    target.reshape((history_length, *value.shape))[...] = value
             elif advance_history:
                 history.append(value)
                 history.write_into(target)

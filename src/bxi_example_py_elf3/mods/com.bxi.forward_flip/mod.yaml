@@ -2,7 +2,7 @@ schema: 1
 id: com.bxi.forward_flip
 name: 前空翻
 version: 1.0.0
-api: ">=1,<2"
+api: ">=2,<3"
 enable: true
 entrypoint: plugin:create_mod
 visibility: public

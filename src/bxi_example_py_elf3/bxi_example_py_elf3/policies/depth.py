@@ -322,6 +322,7 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
         )
         self.counter = 0
         self.last_depth_frame_id = None
+        self._depth_previewed = False
 
         self._initialize_model(model_source, backend)
         self.publish_output(self._target, self._kp, self._kd)
@@ -396,6 +397,7 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
         self.cmd.fill(0.0)
         self.counter = 0
         self.last_depth_frame_id = None
+        self._depth_previewed = False
 
     def reset(self, frame: InferenceFrame) -> None:
         self.bind_joints(frame)
@@ -443,7 +445,8 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
             self.clip_action_limit,
             out=self._action,
         )
-        np.copyto(self._previous_action, self._action)
+        if advance:
+            np.copyto(self._previous_action, self._action)
 
         np.multiply(
             self._action,
@@ -467,14 +470,13 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
         self._update_command(cmd_vel)
 
         vel_norm = np.linalg.norm(self.cmd)
-        if self.if_use_stand:
-            if vel_norm > 0.1 or self.force_phase_active:
-                if advance:
+        if advance:
+            if self.if_use_stand:
+                if vel_norm > 0.1 or self.force_phase_active:
                     self.counter += 1
+                else:
+                    self.counter = 0
             else:
-                self.counter = 0
-        else:
-            if advance:
                 self.counter += 1
 
         qj = np.asarray(qj, dtype=np.float32)[: self.num_actions]
@@ -652,6 +654,7 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
         depth_buffer = self._get_depth_image_downsample_obs(
             depth_image,
             depth_frame_id=depth_frame_id,
+            advance=advance,
         )
         if self.model_input_mode == "single_obs_depth":
             flat = self._single_input_buffer[0]
@@ -663,8 +666,13 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
 
     def _update_obs_history(self, obs, *, advance: bool):
         if not self._obs_history.initialized:
-            self._obs_history.fill(obs)
-            self._obs_history.write_into(self.actor_obs_buffer)
+            if advance:
+                self._obs_history.fill(obs)
+                self._obs_history.write_into(self.actor_obs_buffer)
+            else:
+                self.actor_obs_buffer.reshape(self.history_length, self.num_obs)[
+                    ...
+                ] = obs
         elif advance:
             self._obs_history.append(obs)
             self._obs_history.write_into(self.actor_obs_buffer)
@@ -672,23 +680,38 @@ class HumanoidGaitDepthPolicyIsaaclab(JointPolicy):
             self._obs_history.preview_append_into(obs, self.actor_obs_buffer)
         return self.actor_obs_buffer.reshape(1, -1)
 
-    def _get_depth_image_downsample_obs(self, depth_image, depth_frame_id=None):
-        if depth_frame_id is not None:
+    def _get_depth_image_downsample_obs(
+        self,
+        depth_image,
+        depth_frame_id=None,
+        *,
+        advance: bool,
+    ):
+        if advance and depth_frame_id is not None:
             if (
                 self.last_depth_frame_id is not None
                 and depth_frame_id == self.last_depth_frame_id
                 and self._depth_history.initialized
+                and not self._depth_previewed
             ):
                 return self._selected_depth
 
             self.last_depth_frame_id = depth_frame_id
 
         depth = self._preprocess_depth(depth_image)
-        if self._depth_history.initialized:
-            self._depth_history.append(depth)
+        if not advance:
+            if self._depth_history.initialized:
+                self._depth_history.preview_append_into(depth, self._depth_storage)
+            else:
+                self._depth_storage[...] = depth
+            self._depth_previewed = True
         else:
-            self._depth_history.fill(depth)
-        self._depth_history.write_into(self._depth_storage)
+            if self._depth_history.initialized:
+                self._depth_history.append(depth)
+            else:
+                self._depth_history.fill(depth)
+            self._depth_history.write_into(self._depth_storage)
+            self._depth_previewed = False
         np.take(
             self._depth_storage,
             self.depth_obs_indices,

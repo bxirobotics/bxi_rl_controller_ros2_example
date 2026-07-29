@@ -21,7 +21,11 @@ from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
 
 from bxi_example_py_elf3.framework.runtime.state_machine import load_state_machine_config
-from bxi_example_py_elf3.framework.joints import JointLayout, JointStateBuffer
+from bxi_example_py_elf3.framework.joints import (
+    JointCommandDefaults,
+    JointLayout,
+    JointStateBuffer,
+)
 from bxi_example_py_elf3.framework.mod_api import MotorFrame
 from bxi_example_py_elf3.framework.platform import (
     NamedJointStateSource,
@@ -31,7 +35,7 @@ from bxi_example_py_elf3.framework.platform import (
 
 robot_name = "elf3"
 
-ELF3_CONTROL_JOINTS = JointLayout(
+ELF3_RESET_JOINTS = JointLayout(
     (
         "waist_y_joint",
         "waist_x_joint",
@@ -63,11 +67,16 @@ ELF3_CONTROL_JOINTS = JointLayout(
         "r_wrist_y_joint",
         "r_wrist_z_joint",
     ),
-    label="ELF3 ROS controller",
+    label="ELF3 simulation reset",
 )
 
-dof_num = ELF3_CONTROL_JOINTS.dof_num
-joint_name = ELF3_CONTROL_JOINTS.names
+dof_num = ELF3_RESET_JOINTS.dof_num
+joint_name = ELF3_RESET_JOINTS.names
+
+# Add an explicit JointDefault entry here for every hardware joint that older
+# policies do not command. Name lookup is compiled once when that policy first
+# produces a frame; the control-cycle path performs no dictionary lookup.
+ELF3_COMMAND_DEFAULTS = JointCommandDefaults()
 
 
 class BxiExample(Node):
@@ -91,31 +100,22 @@ class BxiExample(Node):
         self._joint_source = NamedJointStateSource(dtype=np.float64)
         self._joint_received = False
         self._bad_joint_state_warned = False
-        self._joint_snapshot = JointStateBuffer(
-            ELF3_CONTROL_JOINTS,
-            dtype=np.float64,
-        )
+        self._joint_snapshot: JointStateBuffer | None = None
         self._quat_xyzw_snapshot = np.zeros(4, dtype=np.float64)
         self._quat_wxyz_snapshot = np.zeros(4, dtype=np.float64)
         self._omega_snapshot = np.zeros(3, dtype=np.float64)
         self._cmd_snapshot = np.zeros(3, dtype=np.float32)
-        self._observation = RobotObservation(
-            joints=self._joint_snapshot.view,
-            quat_xyzw=self._quat_xyzw_snapshot,
-            quat_wxyz=self._quat_wxyz_snapshot,
-            omega=self._omega_snapshot,
-            raw_cmd_vel=self._cmd_snapshot,
-        )
+        self._observation: RobotObservation | None = None
 
         # 控制循环初始化
         self.step = 0
         self._second_reset_at = 0.0
-        self._zero_actuator_values = [0.0] * dof_num
+        self._zero_actuator_values: list[float] = []
 
         self.runtime = RobotControlRuntime(
             self.state_machine_config,
             built_in_mod_root=self.package_share / "mods",
-            control_layout=ELF3_CONTROL_JOINTS,
+            command_defaults=ELF3_COMMAND_DEFAULTS,
             ros_node=self,
             platform=self,
             logger=self.get_logger(),
@@ -274,6 +274,18 @@ class BxiExample(Node):
         """Copy the latest ROS inputs into one coherent framework observation."""
         with self.lock_in:
             latest_joints = self._joint_source.view
+            if self._joint_snapshot is None:
+                self._joint_snapshot = JointStateBuffer(
+                    latest_joints.layout,
+                    dtype=np.float64,
+                )
+                self._observation = RobotObservation(
+                    joints=self._joint_snapshot.view,
+                    quat_xyzw=self._quat_xyzw_snapshot,
+                    quat_wxyz=self._quat_wxyz_snapshot,
+                    omega=self._omega_snapshot,
+                    raw_cmd_vel=self._cmd_snapshot,
+                )
             self._joint_snapshot.update(
                 latest_joints.position,
                 latest_joints.velocity,
@@ -285,6 +297,7 @@ class BxiExample(Node):
             np.copyto(self._cmd_snapshot, self.raw_cmd_vel)
             events = tuple(self.pending_remote_events)
             self.pending_remote_events.clear()
+        assert self._observation is not None
         return self._observation, events
 
     def publish_motor_frame(self, frame: MotorFrame):
@@ -293,6 +306,8 @@ class BxiExample(Node):
         msg.header.frame_id = robot_name
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.actuators_name = frame.layout.names
+        if len(self._zero_actuator_values) != frame.layout.dof_num:
+            self._zero_actuator_values = [0.0] * frame.layout.dof_num
         msg.pos = frame.qpos.tolist()
         msg.vel = self._zero_actuator_values
         msg.torque = self._zero_actuator_values
@@ -381,12 +396,7 @@ class BxiExample(Node):
                     self._bad_joint_state_warned = True
                 return
 
-            if self._joint_snapshot.layout != latest.layout:
-                self._joint_snapshot = JointStateBuffer(
-                    latest.layout,
-                    dtype=np.float64,
-                )
-                self._observation.joints = self._joint_snapshot.view
+            if not self._joint_received:
                 self.get_logger().info(
                     "ELF3 state layout initialized from message names: "
                     f"{latest.layout.dof_num} joints"

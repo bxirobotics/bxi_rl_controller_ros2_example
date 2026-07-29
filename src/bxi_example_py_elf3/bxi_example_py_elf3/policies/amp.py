@@ -386,6 +386,13 @@ class HumanoidGaitPolicyLiteIsaaclab(JointPolicy):
             self.output_mujoco_idx.size,
             dtype=np.float32,
         )
+        # ``step(..., advance=False)`` is used by running transitions as a
+        # side-effect-free preview.  Keep reusable checkpoints so previewing
+        # never feeds its inferred action back into the next preview.
+        self._previous_action_checkpoint = np.empty_like(self._previous_action)
+        self._previous_controlled_action_checkpoint = np.empty_like(
+            self._previous_controlled_action
+        )
         self._target = self._target_buffer.position
         np.copyto(self._target, self._default_position)
         self._single_obs = np.zeros(self.single_obs_dim, dtype=np.float32)
@@ -424,6 +431,12 @@ class HumanoidGaitPolicyLiteIsaaclab(JointPolicy):
         *,
         advance: bool = True,
     ) -> PolicyOutput:
+        if not advance:
+            np.copyto(self._previous_action_checkpoint, self._previous_action)
+            np.copyto(
+                self._previous_controlled_action_checkpoint,
+                self._previous_controlled_action,
+            )
         joints = self.bind_joints(frame)
         cmd_vel = frame.command
         if cmd_vel is None:
@@ -494,6 +507,13 @@ class HumanoidGaitPolicyLiteIsaaclab(JointPolicy):
             out=self._scaled_action,
         )
         self._target[:output_action_dim] += self._scaled_action
+
+        if not advance:
+            np.copyto(self._previous_action, self._previous_action_checkpoint)
+            np.copyto(
+                self._previous_controlled_action,
+                self._previous_controlled_action_checkpoint,
+            )
 
         if monitor:
             output_finished = time.perf_counter_ns()
