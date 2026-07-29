@@ -25,6 +25,7 @@ _ENV_KEYS = {
     "dataset",
     "config",
     "force_rebuild",
+    "outputs",
 }
 _TOOLKIT_INSTALL_HINT = (
     "install the official rknn-toolkit2 wheel matching your Python version "
@@ -49,6 +50,7 @@ class _ConversionSettings:
     dataset: Path | None = None
     config: tuple[tuple[str, object], ...] = ()
     force_rebuild: bool = False
+    output_names: tuple[str, ...] = ()
 
 
 def _environment_settings(artifact: RknnArtifact) -> _ConversionSettings:
@@ -110,6 +112,16 @@ def _environment_settings(artifact: RknnArtifact) -> _ConversionSettings:
     if not isinstance(force_rebuild, bool):
         raise ValueError("RKNN force_rebuild must be true or false")
 
+    output_value = overrides.get("outputs", artifact.conversion_output_names)
+    if isinstance(output_value, str):
+        output_names = (output_value,)
+    elif isinstance(output_value, (list, tuple)):
+        if not all(isinstance(item, str) and item for item in output_value):
+            raise ValueError("RKNN outputs must be non-empty strings")
+        output_names = tuple(output_value)
+    else:
+        raise ValueError("RKNN outputs must be a string or string list")
+
     return _ConversionSettings(
         True,
         target=target,
@@ -117,6 +129,7 @@ def _environment_settings(artifact: RknnArtifact) -> _ConversionSettings:
         dataset=dataset,
         config=tuple(config.items()),
         force_rebuild=force_rebuild,
+        output_names=output_names,
     )
 
 
@@ -198,6 +211,24 @@ def _json_value(value: object) -> object:
     )
 
 
+def _rknn_input_size_list(
+    input_shapes: tuple[tuple[str, tuple[object, ...]], ...],
+) -> tuple[tuple[int, ...], ...] | None:
+    if not input_shapes:
+        return None
+    resolved: list[tuple[int, ...]] = []
+    for _name, shape in input_shapes:
+        if not shape:
+            return None
+        concrete: list[int] = []
+        for dimension in shape:
+            if not isinstance(dimension, int) or dimension <= 0:
+                return None
+            concrete.append(dimension)
+        resolved.append(tuple(concrete))
+    return tuple(resolved)
+
+
 def _read_manifest(path: Path) -> dict[str, object] | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -237,6 +268,7 @@ def _fingerprint(
         "do_quantization": settings.do_quantization,
         "dataset": dataset,
         "config": _json_value(dict(settings.config)),
+        "outputs": list(settings.output_names),
     }
 
 
@@ -284,14 +316,22 @@ def _convert(
     source: Path,
     destination: Path,
     manifest_path: Path,
+    input_shapes: tuple[tuple[str, tuple[object, ...]], ...],
     settings: _ConversionSettings,
     previous_fingerprint: Mapping[str, object] | None,
     installed_version: str | None,
 ) -> None:
     try:
         rknn_type = _rknn_api()
-    except (ImportError, ModuleNotFoundError) as exc:
-        raise ModuleNotFoundError(_TOOLKIT_INSTALL_HINT) from exc
+    except ModuleNotFoundError as exc:
+        if exc.name == "rknn" or (exc.name and exc.name.startswith("rknn.")):
+            raise ModuleNotFoundError(_TOOLKIT_INSTALL_HINT) from exc
+        raise RuntimeError(
+            f"RKNN Toolkit dependency is missing: {exc.name}; install it into "
+            "the active Python environment"
+        ) from exc
+    except ImportError as exc:
+        raise RuntimeError(f"RKNN Toolkit import failed: {exc}") from exc
 
     fingerprint = _fingerprint(
         source,
@@ -314,7 +354,18 @@ def _convert(
                 **dict(settings.config),
             ),
         )
-        _check_result("load_onnx", converter.load_onnx(model=str(source)))
+        load_arguments: dict[str, object] = {"model": str(source)}
+        input_names = [name for name, _shape in input_shapes]
+        input_size_list = _rknn_input_size_list(input_shapes)
+        if input_names:
+            load_arguments["inputs"] = input_names
+        if input_size_list is not None:
+            load_arguments["input_size_list"] = [
+                list(shape) for shape in input_size_list
+            ]
+        if settings.output_names:
+            load_arguments["outputs"] = list(settings.output_names)
+        _check_result("load_onnx", converter.load_onnx(**load_arguments))
         build_arguments: dict[str, object] = {
             "do_quantization": settings.do_quantization
         }
@@ -444,6 +495,7 @@ def prepare_rknn_artifact(artifact: RknnArtifact) -> RknnPreparation:
                 source,
                 destination,
                 manifest_path,
+                artifact.input_shapes,
                 settings,
                 previous,
                 installed_version,

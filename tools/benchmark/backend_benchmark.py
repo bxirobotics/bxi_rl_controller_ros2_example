@@ -65,6 +65,7 @@ class BenchmarkCase:
     factory: object
     artifact: object
     requested_device: str | None = None
+    output_names: tuple[str, ...] | None = None
 
 
 def _distribution_version(name: str) -> str | None:
@@ -291,6 +292,50 @@ def _inspect_model(path: Path) -> ModelInfo:
     raise RuntimeError(f"cannot inspect model I/O: {detail}")
 
 
+def _required_onnx_inputs(
+    path: Path,
+    output_names: tuple[str, ...],
+) -> tuple[str, ...] | None:
+    if importlib.util.find_spec("onnx") is None:
+        return None
+    try:
+        import onnx
+
+        model = onnx.load_model(str(path), load_external_data=False)
+    except Exception:
+        return None
+
+    graph = model.graph
+    initializer_names = {item.name for item in graph.initializer}
+    graph_inputs = [
+        item.name for item in graph.input if item.name not in initializer_names
+    ]
+    producers = {}
+    for node in graph.node:
+        for output_name in node.output:
+            if output_name:
+                producers[output_name] = node
+
+    required: set[str] = set()
+    visited: set[str] = set()
+    pending = list(output_names)
+    while pending:
+        value_name = pending.pop()
+        if not value_name or value_name in visited:
+            continue
+        visited.add(value_name)
+        if value_name in initializer_names:
+            continue
+        if value_name in graph_inputs:
+            required.add(value_name)
+            continue
+        producer = producers.get(value_name)
+        if producer is None:
+            continue
+        pending.extend(item for item in producer.input if item)
+    return tuple(name for name in graph_inputs if name in required)
+
+
 def _parse_shape_overrides(values: list[str]) -> dict[str, tuple[int, ...]]:
     result = {}
     for value in values:
@@ -361,6 +406,7 @@ def _cases_for_model(
     include_auto: bool,
     rknn_target: str | None,
     rknn_cache: Path,
+    dynamic_dimension: int,
 ) -> list[BenchmarkCase]:
     cases = []
     cpu_provider = "CPUExecutionProvider"
@@ -440,6 +486,12 @@ def _cases_for_model(
     else:
         rknn_path = _cached_rknn_path(model.path, rknn_cache)
     if adjacent_rknn.is_file() or rknn_path.is_file() or conversion_enabled:
+        rknn_outputs = tuple(item.name for item in model.outputs if item.name == "actions")
+        if not rknn_outputs and model.outputs:
+            rknn_outputs = (model.outputs[0].name,)
+        rknn_inputs = _required_onnx_inputs(model.path, rknn_outputs) or tuple(
+            item.name for item in model.inputs
+        )
         cases.append(
             BenchmarkCase(
                 "rknn",
@@ -448,16 +500,17 @@ def _cases_for_model(
                     rknn_path,
                     target=rknn_target,
                     source_onnx=model.path,
-                    input_shapes=tuple(
-                        (item.name, tuple(_json_shape(item.shape)))
-                        for item in model.inputs
-                    ),
+                    conversion_output_names=rknn_outputs,
+                    runtime_input_names=rknn_inputs,
+                    input_shapes=_artifact_input_shapes(model, dynamic_dimension),
                     output_shapes=tuple(
                         (item.name, tuple(_json_shape(item.shape)))
                         for item in model.outputs
+                        if item.name in rknn_outputs
                     ),
                 ),
                 requested_device=rknn_target,
+                output_names=rknn_outputs,
             )
         )
     return cases
@@ -468,6 +521,16 @@ def _json_shape(shape: tuple[object, ...]) -> list[object]:
         int(item) if isinstance(item, (int, np.integer)) else str(item)
         for item in shape
     ]
+
+
+def _artifact_input_shapes(
+    model: ModelInfo,
+    dynamic_dimension: int,
+) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    return tuple(
+        (tensor.name, _concrete_shape(tensor, {}, dynamic_dimension))
+        for tensor in model.inputs
+    )
 
 
 def _backend_details(case: BenchmarkCase, backend) -> dict[str, Any]:
@@ -593,7 +656,7 @@ def _run_case(
     spec = ModelSpec(
         artifacts=(case.artifact,),
         input_names=tuple(item.name for item in model.inputs),
-        output_names=tuple(item.name for item in model.outputs),
+        output_names=case.output_names or tuple(item.name for item in model.outputs),
     )
     backend = None
     try:
@@ -639,6 +702,14 @@ def _worker_case(args: argparse.Namespace, model: ModelInfo) -> BenchmarkCase:
             requested_device=device,
         )
     if args.worker_backend == "rknn":
+        output_names = tuple(args.worker_output) or tuple(
+            item.name for item in model.outputs if item.name == "actions"
+        )
+        if not output_names and model.outputs:
+            output_names = (model.outputs[0].name,)
+        input_names = _required_onnx_inputs(model.path, output_names) or tuple(
+            item.name for item in model.inputs
+        )
         return BenchmarkCase(
             "rknn",
             RknnBackendFactory(),
@@ -646,15 +717,17 @@ def _worker_case(args: argparse.Namespace, model: ModelInfo) -> BenchmarkCase:
                 path,
                 target=args.rknn_target,
                 source_onnx=model.path,
-                input_shapes=tuple(
-                    (item.name, tuple(_json_shape(item.shape))) for item in model.inputs
-                ),
+                conversion_output_names=output_names,
+                runtime_input_names=input_names,
+                input_shapes=_artifact_input_shapes(model, args.dynamic_dim),
                 output_shapes=tuple(
                     (item.name, tuple(_json_shape(item.shape)))
                     for item in model.outputs
+                    if item.name in output_names
                 ),
             ),
             requested_device=args.rknn_target,
+            output_names=output_names,
         )
     raise ValueError(f"unknown benchmark worker backend: {args.worker_backend}")
 
@@ -758,6 +831,9 @@ def _run_case_isolated(
                 command.extend(("--_worker-provider", provider))
         if args.rknn_target:
             command.extend(("--rknn-target", args.rknn_target))
+        if case.output_names:
+            for output_name in case.output_names:
+                command.extend(("--_worker-output", output_name))
         for name, shape in args.shape_overrides.items():
             command.extend(("--shape", f"{name}=" + ",".join(map(str, shape))))
 
@@ -993,6 +1069,13 @@ def _arguments() -> argparse.Namespace:
         type=Path,
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--_worker-output",
+        dest="worker_output",
+        action="append",
+        default=[],
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
     if args.quick:
         args.warmup = 10
@@ -1108,6 +1191,7 @@ def main() -> int:
             not args.no_openvino_auto,
             args.rknn_target,
             args.rknn_cache.expanduser().resolve(),
+            args.dynamic_dim,
         ):
             result, outputs = _run_case_isolated(
                 case,

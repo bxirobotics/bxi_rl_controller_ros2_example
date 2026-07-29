@@ -46,12 +46,39 @@ BXI_RKNN_CONVERT_ON_LOAD=rk3588 \
 python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 ```
 
+The benchmark converts only the policy output named `actions` by default. This
+also avoids an RKNN Toolkit 2.3.2 optimizer bug in ONNX models that expose
+several differently shaped reference-trajectory outputs. Select outputs
+explicitly when needed:
+
+```bash
+BXI_RKNN_CONVERT_ON_LOAD='{"target":"rk3588","outputs":["actions"],"force_rebuild":true}' \
+python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
+```
+
 For quantized conversion:
 
 ```bash
 BXI_RKNN_CONVERT_ON_LOAD='{"target":"rk3588","do_quantization":true,"dataset":"/data/calibration.txt"}' \
 python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 ```
+
+Use `rknn-toolkit2` on x86_64 to convert models and
+`rknn-toolkit-lite2` on RK3588 to execute and benchmark the generated models.
+An x86 run that converts successfully and then reports `rknnlite is not
+installed` has completed the conversion. Install every cached model beside its
+corresponding ONNX model in one command:
+
+```bash
+python3 tools/benchmark/install_rknn_cache.py
+```
+
+The cache mirrors repository-relative paths, so only an RKNN file with a
+matching ONNX source is copied. Existing adjacent RKNN files are atomically
+updated and identical files are skipped. Preview the operation with
+`--dry-run`, or use `--cache PATH` for a non-default cache directory. The
+adjacent `.rknn` files can then be copied to the target board with the project
+and will be selected before OpenVINO and ONNX Runtime.
 
 Keep the machine idle, use the same power mode, and use the same benchmark
 settings when comparing reports from different platforms. The first backend in
