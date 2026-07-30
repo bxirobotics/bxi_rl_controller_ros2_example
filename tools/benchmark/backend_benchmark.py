@@ -486,7 +486,9 @@ def _cases_for_model(
     else:
         rknn_path = _cached_rknn_path(model.path, rknn_cache)
     if adjacent_rknn.is_file() or rknn_path.is_file() or conversion_enabled:
-        rknn_outputs = tuple(item.name for item in model.outputs if item.name == "actions")
+        rknn_outputs = tuple(
+            item.name for item in model.outputs if item.name == "actions"
+        )
         if not rknn_outputs and model.outputs:
             rknn_outputs = (model.outputs[0].name,)
         rknn_inputs = _required_onnx_inputs(model.path, rknn_outputs) or tuple(
@@ -597,8 +599,13 @@ def _compare_outputs(
         return {"comparable": False, "reason": "no common output names"}
     maximum = 0.0
     total = 0.0
+    squared_total = 0.0
+    reference_squared_total = 0.0
+    candidate_squared_total = 0.0
+    dot_total = 0.0
     count = 0
     allclose = True
+    per_output: dict[str, dict[str, Any]] = {}
     for name in common:
         left = reference[name]
         right = candidate[name]
@@ -613,17 +620,68 @@ def _compare_outputs(
         ):
             allclose &= bool(np.array_equal(left, right))
             continue
-        difference = np.abs(left.astype(np.float64) - right.astype(np.float64))
-        if difference.size:
-            maximum = max(maximum, float(np.max(difference)))
-            total += float(np.sum(difference))
-            count += difference.size
+
+        reference_values = left.astype(np.float64, copy=False)
+        candidate_values = right.astype(np.float64, copy=False)
+        signed_difference = candidate_values - reference_values
+        absolute_difference = np.abs(signed_difference)
+        output_count = absolute_difference.size
+        if output_count:
+            output_maximum = float(np.max(absolute_difference))
+            output_total = float(np.sum(absolute_difference))
+            output_squared_total = float(np.sum(signed_difference * signed_difference))
+            output_reference_squared = float(
+                np.sum(reference_values * reference_values)
+            )
+            output_candidate_squared = float(
+                np.sum(candidate_values * candidate_values)
+            )
+            output_dot = float(np.sum(reference_values * candidate_values))
+            output_reference_norm = np.sqrt(output_reference_squared)
+            output_candidate_norm = np.sqrt(output_candidate_squared)
+
+            maximum = max(maximum, output_maximum)
+            total += output_total
+            squared_total += output_squared_total
+            reference_squared_total += output_reference_squared
+            candidate_squared_total += output_candidate_squared
+            dot_total += output_dot
+            count += output_count
+            per_output[name] = {
+                "element_count": output_count,
+                "max_abs_error": output_maximum,
+                "mean_abs_error": output_total / output_count,
+                "rmse": np.sqrt(output_squared_total / output_count),
+                "relative_l2_error": (
+                    np.sqrt(output_squared_total) / output_reference_norm
+                    if output_reference_norm > 0.0
+                    else None
+                ),
+                "cosine_similarity": (
+                    output_dot / (output_reference_norm * output_candidate_norm)
+                    if output_reference_norm > 0.0 and output_candidate_norm > 0.0
+                    else None
+                ),
+            }
         allclose &= bool(np.allclose(left, right, rtol=rtol, atol=atol))
+
+    reference_norm = np.sqrt(reference_squared_total)
+    candidate_norm = np.sqrt(candidate_squared_total)
     return {
         "comparable": True,
         "allclose": allclose,
         "max_abs_error": maximum,
         "mean_abs_error": total / count if count else 0.0,
+        "rmse": np.sqrt(squared_total / count) if count else 0.0,
+        "relative_l2_error": (
+            np.sqrt(squared_total) / reference_norm if reference_norm > 0.0 else None
+        ),
+        "cosine_similarity": (
+            dot_total / (reference_norm * candidate_norm)
+            if reference_norm > 0.0 and candidate_norm > 0.0
+            else None
+        ),
+        "per_output": per_output,
         "rtol": rtol,
         "atol": atol,
     }
@@ -955,6 +1013,32 @@ def _print_case(result: dict[str, Any]) -> None:
         f"{result['throughput_hz']:>9.1f} {str(result['stable_output_buffers']):>8} "
         f"{match:>7}"
     )
+    if comparison.get("reference") or not comparison.get("comparable", False):
+        return
+
+    def metric(name: str, values: dict[str, Any] = comparison) -> str:
+        value = values.get(name)
+        return "n/a" if value is None else f"{value:.3e}"
+
+    print(
+        f"    precision vs {comparison.get('reference_backend', 'reference')}: "
+        f"max_abs={metric('max_abs_error')}, "
+        f"mean_abs={metric('mean_abs_error')}, "
+        f"rmse={metric('rmse')}, "
+        f"rel_l2={metric('relative_l2_error')}, "
+        f"cosine={metric('cosine_similarity')}"
+    )
+    per_output = comparison.get("per_output", {})
+    if len(per_output) > 1:
+        for output_name, output_metrics in per_output.items():
+            print(
+                f"      output {output_name}: "
+                f"max_abs={metric('max_abs_error', output_metrics)}, "
+                f"mean_abs={metric('mean_abs_error', output_metrics)}, "
+                f"rmse={metric('rmse', output_metrics)}, "
+                f"rel_l2={metric('relative_l2_error', output_metrics)}, "
+                f"cosine={metric('cosine_similarity', output_metrics)}"
+            )
 
 
 def _default_report_path() -> Path:

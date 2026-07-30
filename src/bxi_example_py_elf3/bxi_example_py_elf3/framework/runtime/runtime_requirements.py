@@ -227,9 +227,41 @@ def vendor_python_paths(mod_root: Path) -> tuple[Path, ...]:
 
 
 def vendor_library_paths(mod_root: Path) -> tuple[Path, ...]:
+    paths: list[Path] = []
+
+    # Native Python wheels commonly keep their private dependency libraries
+    # beside the extension module. Put those directories before the generic
+    # vendor/lib directory so a process cannot accidentally bind the extension
+    # to an ABI-incompatible host library with the same SONAME.
+    for python_root in vendor_python_paths(mod_root):
+        private_library_directories: set[Path] = set()
+        for candidate in sorted(python_root.rglob("*")):
+            if candidate.is_file() and _is_private_shared_library(candidate.name):
+                private_library_directories.add(candidate.parent.resolve())
+        paths.extend(
+            sorted(
+                private_library_directories,
+                key=lambda path: (
+                    len(path.relative_to(python_root).parts),
+                    str(path),
+                ),
+            )
+        )
+
     root = mod_root / "vendor" / "lib"
     candidate = root / runtime_platform_tag()
-    return (candidate.resolve(),) if candidate.is_dir() else ()
+    if candidate.is_dir():
+        paths.append(candidate.resolve())
+    return tuple(dict.fromkeys(paths))
+
+
+def _is_private_shared_library(filename: str) -> bool:
+    lower = filename.lower()
+    return (
+        lower.endswith(".dll")
+        or (lower.startswith("lib") and ".so" in lower)
+        or (lower.startswith("lib") and ".dylib" in lower)
+    )
 
 
 def _read_named_entries(

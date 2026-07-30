@@ -18,6 +18,14 @@ is reported without terminating the remaining benchmark cases. Non-Intel GPUs
 accidentally enumerated by OpenVINO's Intel GPU plugin are skipped; use ONNX
 Runtime CUDA/TensorRT for NVIDIA devices.
 
+For every backend after the first successful reference backend, the terminal and
+JSON report include maximum and mean absolute error, RMSE, relative L2 error and
+cosine similarity. Models with multiple comparable outputs additionally report
+those metrics per output. `match` still uses `--rtol` and `--atol`; the numerical
+metrics remain visible when that strict boolean check fails. The default test
+input is deterministic random data, so use representative policy inputs when
+making a final deployment-accuracy decision.
+
 Useful variants:
 
 ```bash
