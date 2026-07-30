@@ -158,6 +158,47 @@ class CpuAffinityPlan:
         return f"CPU affinity roles: {role_text}"
 
 
+def configure_current_thread(
+    cpus: Sequence[int] | frozenset[int] | None,
+    *,
+    realtime_priority: int = 0,
+) -> None:
+    """Apply one complete scheduling role to the calling Linux thread."""
+
+    resolved = None if cpus is None else frozenset(cpus)
+    if resolved is not None and not resolved:
+        raise ValueError("thread CPU affinity must not be empty")
+    if not 0 <= realtime_priority <= 99:
+        raise ValueError("thread realtime priority must be in [0, 99]")
+
+    if realtime_priority == 0:
+        # Drop inherited real-time policy before moving foreign/background work.
+        os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))
+        if resolved is not None:
+            os.sched_setaffinity(0, resolved)
+        return
+
+    # Pin first so a newly promoted real-time thread cannot execute elsewhere.
+    if resolved is not None:
+        os.sched_setaffinity(0, resolved)
+    os.sched_setscheduler(
+        0,
+        os.SCHED_FIFO,
+        os.sched_param(realtime_priority),
+    )
+
+
+def bootstrap_process_scheduling() -> CpuAffinityPlan:
+    """Discover the full topology, then establish the non-control baseline."""
+
+    plan = CpuAffinityPlan.discover()
+    configure_current_thread(
+        plan.roles[CpuAffinityRole.SHARED],
+        realtime_priority=0,
+    )
+    return plan
+
+
 def read_cpu_affinity(
     value: object,
     context: str,
@@ -271,6 +312,8 @@ def _parse_cpu_list(value: str) -> frozenset[int]:
 
 
 __all__ = [
+    "bootstrap_process_scheduling",
+    "configure_current_thread",
     "CpuAffinityPlan",
     "CpuAffinityRole",
     "CpuAffinitySpec",

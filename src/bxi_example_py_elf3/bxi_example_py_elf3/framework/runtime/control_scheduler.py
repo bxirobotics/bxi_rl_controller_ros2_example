@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-import os
 from threading import current_thread, Event, Lock, Thread
 import time
 
 import numpy as np
 
 from bxi_example_py_elf3.framework.mod_api.context import LoggerLike
-from bxi_example_py_elf3.framework.platform.cpu_affinity import format_cpu_set
+from bxi_example_py_elf3.framework.platform.cpu_affinity import (
+    configure_current_thread,
+    format_cpu_set,
+)
 
 
 @dataclass(frozen=True)
@@ -420,28 +422,27 @@ class ControlScheduler:
         return dict(miss_event) if miss_event is not None else None
 
     def _configure_current_thread(self) -> None:
-        if self.cpu_affinity is not None:
-            try:
-                os.sched_setaffinity(0, self.cpu_affinity)
-            except (AttributeError, OSError) as exc:
-                self._log(
-                    "warning",
-                    "cannot set control CPU affinity to "
-                    f"{format_cpu_set(self.cpu_affinity)}: {exc}",
-                )
-        if self.realtime_priority > 0:
-            try:
-                os.sched_setscheduler(
-                    0,
-                    os.SCHED_FIFO,
-                    os.sched_param(self.realtime_priority),
-                )
-            except (AttributeError, OSError) as exc:
-                self._log(
-                    "warning",
-                    "cannot enable SCHED_FIFO for control thread; "
-                    f"using normal scheduling: {exc}",
-                )
+        cpu_description = (
+            "inherit"
+            if self.cpu_affinity is None
+            else format_cpu_set(self.cpu_affinity)
+        )
+        try:
+            configure_current_thread(
+                self.cpu_affinity,
+                realtime_priority=self.realtime_priority,
+            )
+        except (AttributeError, OSError) as exc:
+            policy = (
+                "SCHED_OTHER"
+                if self.realtime_priority == 0
+                else f"SCHED_FIFO/{self.realtime_priority}"
+            )
+            self._log(
+                "warning",
+                "cannot configure control thread scheduling: "
+                f"CPU={cpu_description}, policy={policy}: {exc}",
+            )
 
     def _reset_window_locked(self) -> None:
         self._wake_ns: list[int] = []

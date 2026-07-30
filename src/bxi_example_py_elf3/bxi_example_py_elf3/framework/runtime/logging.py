@@ -14,6 +14,9 @@ import time
 from typing import BinaryIO
 
 from bxi_example_py_elf3.framework.mod_api.context import LoggerLike
+from bxi_example_py_elf3.framework.platform.cpu_affinity import (
+    configure_current_thread,
+)
 
 
 _LEVELS = {
@@ -235,7 +238,7 @@ class SubprocessLogRouter:
         selector = selectors.DefaultSelector()
         selector.register(self._wake_read_fd, selectors.EVENT_READ, _WAKEUP)
         try:
-            os.sched_setaffinity(0, self._cpu_affinity)
+            configure_current_thread(self._cpu_affinity, realtime_priority=0)
         except BaseException as exc:
             self._startup_error = exc
         finally:

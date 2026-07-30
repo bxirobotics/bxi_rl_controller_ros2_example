@@ -15,7 +15,7 @@ import sys
 import tempfile
 from threading import Event, Thread
 import time
-from typing import Protocol
+from typing import Protocol, cast
 
 import yaml
 
@@ -25,6 +25,7 @@ from bxi_example_py_elf3.framework.mod_api.node import (
     NodeFactory,
 )
 from bxi_example_py_elf3.framework.platform.cpu_affinity import (
+    configure_current_thread,
     CpuAffinityPlan,
     CpuAffinityRole,
     CpuAffinitySpec,
@@ -125,30 +126,30 @@ class _StoppingInstance:
 
 
 @dataclass
-class _SpawnRequest:
-    factory: Callable[..., subprocess.Popen[bytes]]
-    command: Sequence[str]
+class _WorkerRequest:
+    operation: Callable[..., object]
+    args: tuple[object, ...]
     kwargs: dict[str, object]
     cpu_affinity: frozenset[int] | None
     completed: Event = field(default_factory=Event)
-    process: subprocess.Popen[bytes] | None = None
+    result: object = None
     error: BaseException | None = None
 
 
-class _ProcessSpawner:
-    """Create children with affinity independent of the requesting thread."""
+class _ModRuntimeWorker:
+    """Run foreign lifecycle code outside the real-time control thread."""
 
     def __init__(self, baseline_affinity: frozenset[int]) -> None:
         if not baseline_affinity:
-            raise ValueError("process spawner baseline CPU affinity must not be empty")
+            raise ValueError("Mod runtime baseline CPU affinity must not be empty")
         self._baseline_affinity = baseline_affinity
-        self._requests: Queue[_SpawnRequest | None] = Queue()
+        self._requests: Queue[_WorkerRequest | None] = Queue()
         self._ready = Event()
         self._startup_error: BaseException | None = None
         self._closed = False
         self._thread = Thread(
             target=self._run,
-            name="bxi-process-spawner",
+            name="bxi-mod-runtime",
             daemon=True,
         )
         self._thread.start()
@@ -156,9 +157,30 @@ class _ProcessSpawner:
         if self._startup_error is not None:
             self._closed = True
             raise RuntimeError(
-                "cannot initialize Mod process spawner with CPU affinity "
+                "cannot initialize Mod runtime worker with CPU affinity "
                 f"{format_cpu_set(baseline_affinity)}: {self._startup_error}"
             ) from self._startup_error
+
+    def call(
+        self,
+        operation: Callable[..., object],
+        *args: object,
+        cpu_affinity: frozenset[int] | None,
+        **kwargs: object,
+    ) -> object:
+        if self._closed:
+            raise RuntimeError("Mod runtime worker is closed")
+        request = _WorkerRequest(
+            operation,
+            args,
+            kwargs,
+            cpu_affinity,
+        )
+        self._requests.put(request)
+        request.completed.wait()
+        if request.error is not None:
+            raise request.error
+        return request.result
 
     def spawn(
         self,
@@ -167,16 +189,15 @@ class _ProcessSpawner:
         kwargs: dict[str, object],
         cpu_affinity: frozenset[int] | None,
     ) -> subprocess.Popen[bytes]:
-        if self._closed:
-            raise RuntimeError("Mod process spawner is closed")
-        request = _SpawnRequest(factory, command, kwargs, cpu_affinity)
-        self._requests.put(request)
-        request.completed.wait()
-        if request.error is not None:
-            raise request.error
-        if request.process is None:
-            raise RuntimeError("Mod process spawner returned no process")
-        return request.process
+        process = self.call(
+            factory,
+            command,
+            cpu_affinity=cpu_affinity,
+            **kwargs,
+        )
+        if process is None:
+            raise RuntimeError("Mod runtime process creation returned no process")
+        return cast(subprocess.Popen[bytes], process)
 
     def close(self) -> None:
         if self._closed:
@@ -185,11 +206,11 @@ class _ProcessSpawner:
         self._requests.put(None)
         self._thread.join(timeout=5.0)
         if self._thread.is_alive():
-            raise RuntimeError("Mod process spawner did not stop within timeout")
+            raise RuntimeError("Mod runtime worker did not stop within timeout")
 
     def _run(self) -> None:
         try:
-            self._set_current_thread_affinity(self._baseline_affinity)
+            self._configure_current_thread(self._baseline_affinity)
         except BaseException as exc:
             self._startup_error = exc
         finally:
@@ -203,27 +224,24 @@ class _ProcessSpawner:
                 return
             target = request.cpu_affinity or self._baseline_affinity
             try:
-                self._set_current_thread_affinity(target)
-                request.process = request.factory(
-                    request.command,
-                    **request.kwargs,
-                )
+                self._configure_current_thread(target)
+                request.result = request.operation(*request.args, **request.kwargs)
             except BaseException as exc:
                 request.error = exc
             finally:
                 try:
-                    self._set_current_thread_affinity(self._baseline_affinity)
+                    self._configure_current_thread(self._baseline_affinity)
                 except BaseException as exc:
                     if request.error is None:
                         request.error = RuntimeError(
-                            "cannot restore Mod process spawner CPU affinity to "
+                            "cannot restore Mod runtime worker scheduling on "
                             f"{format_cpu_set(self._baseline_affinity)}: {exc}"
                         )
                 request.completed.set()
 
     @staticmethod
-    def _set_current_thread_affinity(cpus: frozenset[int]) -> None:
-        os.sched_setaffinity(0, cpus)
+    def _configure_current_thread(cpus: frozenset[int]) -> None:
+        configure_current_thread(cpus, realtime_priority=0)
 
 
 class ModNodeManager:
@@ -249,26 +267,32 @@ class ModNodeManager:
         self._process_factory = process_factory
         self._cpu_affinity_plan = cpu_affinity_plan or CpuAffinityPlan.discover()
         self._resolved_cpu_affinities = {
-            spec.id: self._cpu_affinity_plan.resolve(
-                spec.cpu_affinity,
-                context=f"Mod node '{spec.id}' scheduling.cpu_affinity",
+            spec.id: (
+                self._cpu_affinity_plan.resolve(
+                    spec.cpu_affinity,
+                    context=f"Mod node '{spec.id}' scheduling.cpu_affinity",
+                )
+                or self._cpu_affinity_plan.roles[CpuAffinityRole.SHARED]
             )
             for spec in specs
         }
         has_process_nodes = any(spec.execution == "process" for spec in specs)
-        self._process_spawner = None
+        self._runtime_worker = None
         self._log_router = None
         if has_process_nodes:
             self._log_router = SubprocessLogRouter(
                 loggers.config.subprocess,
                 cpu_affinity=self._cpu_affinity_plan.roles[CpuAffinityRole.SHARED],
             )
+        if specs:
             try:
-                self._process_spawner = _ProcessSpawner(
-                    self._cpu_affinity_plan.allowed_cpus
+                self._runtime_worker = _ModRuntimeWorker(
+                    self._cpu_affinity_plan.roles[CpuAffinityRole.SHARED]
                 )
             except BaseException:
-                self._log_router.close()
+                if self._log_router is not None:
+                    self._log_router.close()
+                    self._log_router = None
                 raise
         self._executor: ExecutorLike | None = None
         self._running: dict[str, _RunningNode] = {}
@@ -342,13 +366,22 @@ class ModNodeManager:
             for handle in self._running.values():
                 if handle.instance is None:
                     continue
-                self._add_executor_node(executor, handle.instance)
+                self._run_in_process(
+                    handle.spec,
+                    self._add_executor_node,
+                    executor,
+                    handle.instance,
+                )
                 handle.attached = True
                 attached.append(handle)
         except Exception:
             for handle in reversed(attached):
                 try:
-                    executor.remove_node(handle.instance)
+                    self._run_in_process(
+                        handle.spec,
+                        executor.remove_node,
+                        handle.instance,
+                    )
                 except Exception:
                     pass
                 handle.attached = False
@@ -364,7 +397,11 @@ class ModNodeManager:
             if not handle.attached or handle.instance is None:
                 continue
             try:
-                executor.remove_node(handle.instance)
+                self._run_in_process(
+                    handle.spec,
+                    executor.remove_node,
+                    handle.instance,
+                )
             except Exception as exc:
                 self._log(
                     "warning",
@@ -547,8 +584,8 @@ class ModNodeManager:
             shutil.rmtree(self._parameter_directory, ignore_errors=True)
             self._parameter_directory = None
             self._parameter_files.clear()
-        if self._process_spawner is not None:
-            self._process_spawner.close()
+        if self._runtime_worker is not None:
+            self._runtime_worker.close()
         if self._log_router is not None:
             self._log_router.close()
 
@@ -651,24 +688,36 @@ class ModNodeManager:
         instance: ModNode | None = None
         attached = False
         try:
-            instance = factory(context)
+            instance = cast(
+                ModNode,
+                self._run_in_process(spec, factory, context),
+            )
             if not callable(getattr(instance, "destroy_node", None)):
                 raise TypeError(
                     f"Mod node entrypoint '{spec.entrypoint}' must return "
                     "an rclpy Node"
                 )
             if self._executor is not None:
-                self._add_executor_node(self._executor, instance)
+                self._run_in_process(
+                    spec,
+                    self._add_executor_node,
+                    self._executor,
+                    instance,
+                )
                 attached = True
         except Exception:
             if attached and self._executor is not None and instance is not None:
                 try:
-                    self._executor.remove_node(instance)
+                    self._run_in_process(
+                        spec,
+                        self._executor.remove_node,
+                        instance,
+                    )
                 except Exception:
                     pass
             if instance is not None:
                 try:
-                    instance.destroy_node()
+                    self._run_in_process(spec, instance.destroy_node)
                 except Exception:
                     pass
             raise
@@ -780,10 +829,10 @@ class ModNodeManager:
         }
         if cwd is not None:
             kwargs["cwd"] = cwd
-        spawner = self._process_spawner
-        if spawner is None:
-            raise RuntimeError("Mod process spawner is not available")
-        process = spawner.spawn(
+        worker = self._runtime_worker
+        if worker is None:
+            raise RuntimeError("Mod runtime worker is not available")
+        process = worker.spawn(
             self._process_factory,
             command,
             kwargs,
@@ -833,6 +882,21 @@ class ModNodeManager:
         if added is False:
             raise RuntimeError("executor rejected Mod node")
 
+    def _run_in_process(
+        self,
+        spec: ModNodeSpec,
+        operation: Callable[..., object],
+        *args: object,
+    ) -> object:
+        worker = self._runtime_worker
+        if worker is None:
+            raise RuntimeError("Mod runtime worker is not available")
+        return worker.call(
+            operation,
+            *args,
+            cpu_affinity=self._resolved_cpu_affinities[spec.id],
+        )
+
     def _stop_node(self, node_id: str, *, wait: bool = False) -> None:
         handle = self._running.pop(node_id, None)
         if handle is None:
@@ -840,7 +904,11 @@ class ModNodeManager:
         if handle.instance is not None:
             if handle.attached and self._executor is not None:
                 try:
-                    self._executor.remove_node(handle.instance)
+                    self._run_in_process(
+                        handle.spec,
+                        self._executor.remove_node,
+                        handle.instance,
+                    )
                 except Exception as exc:
                     self._log(
                         "warning",
@@ -906,7 +974,10 @@ class ModNodeManager:
 
     def _destroy_instance(self, node_id: str, instance: ModNode) -> None:
         try:
-            instance.destroy_node()
+            self._run_in_process(
+                self._specs[node_id],
+                instance.destroy_node,
+            )
         except Exception as exc:
             self._log(
                 "warning",

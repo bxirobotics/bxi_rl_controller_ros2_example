@@ -1,3 +1,10 @@
+from bxi_example_py_elf3.framework.platform.cpu_affinity import (
+    bootstrap_process_scheduling,
+    CpuAffinityPlan,
+)
+
+_CPU_AFFINITY_PLAN = bootstrap_process_scheduling()
+
 import rclpy
 from rclpy.node import Node
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
@@ -89,7 +96,7 @@ ELF3_COMMAND_DEFAULTS = JointCommandDefaults(
 
 
 class BxiExample(Node):
-    def __init__(self):
+    def __init__(self, *, cpu_affinity_plan: CpuAffinityPlan):
         super().__init__("bxi_example_py")
 
         self._shutting_down = Event()
@@ -127,6 +134,7 @@ class BxiExample(Node):
             command_defaults=ELF3_COMMAND_DEFAULTS,
             ros_node=self,
             platform=self,
+            cpu_affinity_plan=cpu_affinity_plan,
             fatal_callback=self._on_control_fatal,
         )
         self.state_machine_info_timer = None
@@ -442,11 +450,10 @@ class BxiExample(Node):
 
 
 def main(args=None):
-
     time.sleep(5)
 
     rclpy.init(args=args)
-    node = BxiExample()
+    node = BxiExample(cpu_affinity_plan=_CPU_AFFINITY_PLAN)
 
     executor = MultiThreadedExecutor(num_threads=3)
     try:

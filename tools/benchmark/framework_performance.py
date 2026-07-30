@@ -38,6 +38,7 @@ try:
         JointStateBuffer,
     )
     from bxi_example_py_elf3.framework.platform import (
+        CpuAffinityPlan,
         RobotControlRuntime,
         RobotObservation,
     )
@@ -249,6 +250,7 @@ def _measure_cycles(
 ) -> dict[str, object]:
     repeat_results: list[dict[str, object]] = []
     setup_samples: list[int] = []
+    cpu_affinity_plan = CpuAffinityPlan.discover()
     with tempfile.TemporaryDirectory(prefix="bxi-framework-benchmark-") as temp:
         mod_root = _write_fixture(Path(temp))
         for _repeat in range(repeats):
@@ -260,6 +262,7 @@ def _measure_cycles(
                 command_defaults=JointCommandDefaults(),
                 ros_node=_FakeNode(),
                 platform=benchmark_platform,
+                cpu_affinity_plan=cpu_affinity_plan,
             )
             setup_samples.append(time.perf_counter_ns() - setup_started)
             try:

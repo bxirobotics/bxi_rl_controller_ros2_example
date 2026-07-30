@@ -173,6 +173,7 @@ class RobotControlRuntime:
         command_defaults: JointCommandDefaults,
         ros_node: object,
         platform: ControlPlatformAdapter,
+        cpu_affinity_plan: CpuAffinityPlan,
         fatal_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.config = ControlRuntimeConfig.from_mapping(
@@ -204,7 +205,7 @@ class RobotControlRuntime:
         self._last_reported_total_deadline_misses = 0
         self._last_reported_total_skipped_periods = 0
 
-        self.cpu_affinity_plan = CpuAffinityPlan.discover()
+        self.cpu_affinity_plan = cpu_affinity_plan
         control_cpus = self.cpu_affinity_plan.resolve(
             self.config.cpu_affinity,
             context="control_runtime.cpu_affinity",

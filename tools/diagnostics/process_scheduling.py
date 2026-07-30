@@ -255,6 +255,92 @@ def _format_cpu_set(cpus: Iterable[int]) -> str:
     return ",".join(ranges)
 
 
+def _parse_cpu_set(value: str | None) -> frozenset[int]:
+    if not value:
+        return frozenset()
+    cpus: set[int] = set()
+    for raw_part in value.split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            raw_start, raw_end = part.split("-", 1)
+            start = int(raw_start)
+            end = int(raw_end)
+            cpus.update(range(start, end + 1))
+        else:
+            cpus.add(int(part))
+    return frozenset(cpus)
+
+
+def _physical_core_cpus(cpu: int) -> frozenset[int]:
+    siblings = _read(SYS_CPU / f"cpu{cpu}/topology/thread_siblings_list")
+    try:
+        return _parse_cpu_set(siblings) or frozenset((cpu,))
+    except ValueError:
+        return frozenset((cpu,))
+
+
+def _scheduling_analysis(sample: dict[str, object]) -> dict[str, object]:
+    tasks = [
+        task
+        for process in sample["processes"]
+        for task in process["tasks"]
+    ]
+    realtime = [
+        task
+        for task in tasks
+        if task["policy"] in {"FIFO", "RR", "DEADLINE"}
+        or int(task["rt_priority"]) > 0
+    ]
+    control_cpus = frozenset(
+        cpu for task in realtime for cpu in task["affinity"]
+    )
+    reserved_cpus = frozenset().union(
+        *(_physical_core_cpus(cpu) for cpu in control_cpus)
+    )
+    realtime_keys = {(int(task["pid"]), int(task["tid"])) for task in realtime}
+    overlaps = []
+    for task in tasks:
+        key = (int(task["pid"]), int(task["tid"]))
+        overlap = reserved_cpus & frozenset(task["affinity"])
+        if key in realtime_keys or not overlap:
+            continue
+        overlaps.append(
+            {
+                "pid": key[0],
+                "tid": key[1],
+                "name": task["name"],
+                "policy": task["policy"],
+                "affinity": list(task["affinity"]),
+                "reserved_overlap": sorted(overlap),
+            }
+        )
+    if not realtime:
+        status = "inactive"
+    elif len(realtime) == 1 and not overlaps:
+        status = "pass"
+    else:
+        status = "warning"
+    return {
+        "status": status,
+        "realtime_threads": [
+            {
+                "pid": int(task["pid"]),
+                "tid": int(task["tid"]),
+                "name": task["name"],
+                "policy": task["policy"],
+                "rt_priority": int(task["rt_priority"]),
+                "affinity": list(task["affinity"]),
+            }
+            for task in realtime
+        ],
+        "control_cpus": sorted(control_cpus),
+        "reserved_physical_core_cpus": sorted(reserved_cpus),
+        "non_control_reserved_overlaps": overlaps,
+    }
+
+
 def _limits(pid: int) -> dict[str, str]:
     raw = _read(PROC / str(pid) / "limits")
     if raw is None:
@@ -368,12 +454,14 @@ def _sample(root_pid: int) -> dict[str, object]:
         for pid in pids
         if (process := _process_snapshot(pid, index[pid])) is not None
     ]
-    return {
+    sample = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "monotonic_ns": time.monotonic_ns(),
         "root_pid": root_pid,
         "processes": processes,
     }
+    sample["scheduling_analysis"] = _scheduling_analysis(sample)
+    return sample
 
 
 def _add_rates(
@@ -425,6 +513,7 @@ def _print_system(sample: dict[str, object]) -> None:
         for task in process["tasks"]
         for cpu in task["affinity"]
     }
+    used_cpus.update(sample["scheduling_analysis"]["reserved_physical_core_cpus"])
     kernel = _kernel_scheduler_info()
     print(
         "Kernel scheduling: "
@@ -503,6 +592,34 @@ def _print_sample(sample: dict[str, object], *, show_threads: bool) -> None:
                 f"{_format_optional(task['involuntary_context_switches'], 8)} "
                 f"{_format_optional(task['migrations'], 7)}"
             )
+
+    analysis = sample["scheduling_analysis"]
+    realtime = analysis["realtime_threads"]
+    overlaps = analysis["non_control_reserved_overlaps"]
+    if analysis["status"] == "inactive":
+        print("\nScheduling isolation: INACTIVE (no real-time control thread found)")
+        return
+    label = "PASS" if analysis["status"] == "pass" else "WARNING"
+    control_text = ", ".join(
+        f"{item['pid']}/{item['tid']} {item['policy']}/{item['rt_priority']}"
+        for item in realtime
+    )
+    print(
+        f"\nScheduling isolation: {label}; control={control_text}; "
+        f"CPU={_format_cpu_set(analysis['control_cpus'])}; "
+        "reserved physical core="
+        f"{_format_cpu_set(analysis['reserved_physical_core_cpus'])}; "
+        f"non-control overlaps={len(overlaps)}"
+    )
+    for item in overlaps[:10]:
+        print(
+            "  overlap: "
+            f"PID/TID={item['pid']}/{item['tid']} thread={item['name']} "
+            f"policy={item['policy']} affinity={_format_cpu_set(item['affinity'])} "
+            f"reserved={_format_cpu_set(item['reserved_overlap'])}"
+        )
+    if len(overlaps) > 10:
+        print(f"  ... {len(overlaps) - 10} more overlapping threads")
 
 
 def main() -> None:
@@ -589,5 +706,4 @@ if __name__ == "__main__":
     main()
 
     
-
 

@@ -849,11 +849,7 @@ def _load_mod_node_specs(
         cpu_affinity = read_cpu_affinity(
             scheduling.get("cpu_affinity"),
             f"{context}.scheduling.cpu_affinity",
-            default=(
-                CpuAffinityRole.SHARED
-                if execution == "process"
-                else CpuAffinityRole.INHERIT
-            ),
+            default=CpuAffinityRole.SHARED,
         )
         lifecycle = node.get("lifecycle", "mod")
         if lifecycle not in ("mod", "state"):
