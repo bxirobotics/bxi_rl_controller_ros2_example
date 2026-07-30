@@ -18,7 +18,7 @@ from bxi_example_py_elf3.framework.mod_api.transition import (
 )
 
 if TYPE_CHECKING:
-    from bxi_example_py_elf3.framework.mod_api import RobotControlContext
+    from bxi_example_py_elf3.framework.mod_api import LoggerLike, RobotControlContext
 
 
 ConfigMap = dict[str, object]
@@ -140,6 +140,7 @@ class RobotStateMachine:
         action_handlers: Mapping[str, Callable[[], None]] | None = None,
         node_lifecycle: StateNodeLifecycle | None = None,
         *,
+        logger: LoggerLike,
         enter_initial: bool = True,
     ) -> None:
         self._ctx = ctx
@@ -147,6 +148,7 @@ class RobotStateMachine:
         self._states = dict(states)
         self._actions = dict(action_handlers or {})
         self._node_lifecycle = node_lifecycle
+        self._logger = logger
         self._profile_configs = self._parse_profile_configs(
             self._mapping(config.get("transition_profiles"), "transition_profiles")
         )
@@ -312,9 +314,10 @@ class RobotStateMachine:
             except Exception as exc:
                 self._report_node_start_failure(to_state.name, exc)
                 return False
-        print(
-            f"switch {self.current.name} -> {to_state.name} "
-            f"via {transition.name} ({trigger})"
+        self._logger.info(
+            "state transition: "
+            f"from={self.current.name}, to={to_state.name}, "
+            f"plan={transition.name}, trigger={trigger}"
         )
         try:
             to_state.on_prepare(self._ctx, self.current)
@@ -407,23 +410,14 @@ class RobotStateMachine:
 
     def _report_node_start_failure(self, state_name: str, exc: Exception) -> None:
         message = f"cannot enter state '{state_name}': Mod node startup failed: {exc}"
-        logger_factory = getattr(self._ctx, "get_logger", None)
-        if callable(logger_factory):
-            logger = logger_factory()
-            logger.error(message)
-        else:
-            print(f"error: {message}")
+        self._logger.error(message)
 
     def _report_unavailable_state(self, state_name: str, trigger: str) -> None:
         message = (
             "state transition rejected because target is unavailable: "
             f"from={self.current.name}, target={state_name}, trigger={trigger}"
         )
-        logger_factory = getattr(self._ctx, "get_logger", None)
-        if callable(logger_factory):
-            logger_factory().warning(message)
-        else:
-            print(f"warning: {message}")
+        self._logger.warning(message)
 
     def _run_action(self, action_name: str) -> None:
         handler = self._actions.get(action_name)
@@ -660,17 +654,12 @@ class RobotStateMachine:
             )
 
     def _report_graph_diagnostic(self, diagnostic: GraphDiagnostic) -> None:
-        logger_factory = getattr(self._ctx, "get_logger", None)
-        if callable(logger_factory):
-            logger = logger_factory()
-            if diagnostic.severity == "warning":
-                logger.warning(diagnostic.message)
-            elif diagnostic.severity == "error":
-                logger.error(diagnostic.message)
-            else:
-                logger.info(diagnostic.message)
+        if diagnostic.severity == "warning":
+            self._logger.warning(diagnostic.message)
+        elif diagnostic.severity == "error":
+            self._logger.error(diagnostic.message)
         else:
-            print(f"{diagnostic.severity}: {diagnostic.message}")
+            self._logger.info(diagnostic.message)
 
     def _graph_edges(self) -> list[tuple[str, str | None, str, TransitionRule]]:
         edges: list[tuple[str, str | None, str, TransitionRule]] = []

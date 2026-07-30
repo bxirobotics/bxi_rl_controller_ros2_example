@@ -127,7 +127,6 @@ class BxiExample(Node):
             command_defaults=ELF3_COMMAND_DEFAULTS,
             ros_node=self,
             platform=self,
-            logger=self.get_logger(),
             fatal_callback=self._on_control_fatal,
         )
         self.state_machine_info_timer = None

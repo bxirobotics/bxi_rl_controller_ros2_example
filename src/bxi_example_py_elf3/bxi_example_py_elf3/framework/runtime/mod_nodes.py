@@ -30,6 +30,10 @@ from bxi_example_py_elf3.framework.platform.cpu_affinity import (
     CpuAffinitySpec,
     format_cpu_set,
 )
+from bxi_example_py_elf3.framework.runtime.logging import (
+    ScopedLoggers,
+    SubprocessLogRouter,
+)
 from bxi_example_py_elf3.framework.runtime.runtime_profiles import ResolvedRuntime
 
 
@@ -229,7 +233,7 @@ class ModNodeManager:
         self,
         specs: Sequence[ModNodeSpec],
         *,
-        logger: object | None = None,
+        loggers: ScopedLoggers,
         process_factory: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
         cpu_affinity_plan: CpuAffinityPlan | None = None,
     ) -> None:
@@ -237,7 +241,11 @@ class ModNodeManager:
         if len(self._specs) != len(specs):
             raise ValueError("duplicate Mod node ids")
         self._ordered_ids = self._dependency_order(specs)
-        self._logger = logger
+        self._loggers = loggers
+        self._logger = loggers.framework("mod_nodes")
+        self._node_loggers = {
+            spec.id: loggers.node(spec.mod_id, spec.local_name) for spec in specs
+        }
         self._process_factory = process_factory
         self._cpu_affinity_plan = cpu_affinity_plan or CpuAffinityPlan.discover()
         self._resolved_cpu_affinities = {
@@ -247,11 +255,21 @@ class ModNodeManager:
             )
             for spec in specs
         }
-        self._process_spawner = (
-            _ProcessSpawner(self._cpu_affinity_plan.allowed_cpus)
-            if any(spec.execution == "process" for spec in specs)
-            else None
-        )
+        has_process_nodes = any(spec.execution == "process" for spec in specs)
+        self._process_spawner = None
+        self._log_router = None
+        if has_process_nodes:
+            self._log_router = SubprocessLogRouter(
+                loggers.config.subprocess,
+                cpu_affinity=self._cpu_affinity_plan.roles[CpuAffinityRole.SHARED],
+            )
+            try:
+                self._process_spawner = _ProcessSpawner(
+                    self._cpu_affinity_plan.allowed_cpus
+                )
+            except BaseException:
+                self._log_router.close()
+                raise
         self._executor: ExecutorLike | None = None
         self._running: dict[str, _RunningNode] = {}
         self._faults: dict[str, str] = {}
@@ -268,12 +286,13 @@ class ModNodeManager:
         for node_id in self._ordered_ids:
             spec = self._specs[node_id]
             for warning in spec.warnings:
-                self._log("warning", warning)
+                self._log("warning", warning, node_id=node_id)
             if spec.unavailable_error is not None:
                 self._log(
                     "warning",
                     f"Mod node '{spec.id}' is unavailable: "
                     f"{spec.unavailable_error}",
+                    node_id=node_id,
                 )
         try:
             self._reconcile()
@@ -348,7 +367,9 @@ class ModNodeManager:
                 executor.remove_node(handle.instance)
             except Exception as exc:
                 self._log(
-                    "warning", f"failed to detach Mod node '{handle.spec.id}': {exc}"
+                    "warning",
+                    f"failed to detach Mod node '{handle.spec.id}': {exc}",
+                    node_id=handle.spec.id,
                 )
             handle.attached = False
 
@@ -386,7 +407,7 @@ class ModNodeManager:
                 self._faults[node_id] = message
                 self._fault_attempts[node_id] = handle.restart_attempts
                 self._running.pop(node_id, None)
-                self._log("error", message)
+                self._log("error", message, node_id=node_id)
                 self._fault_dependents(node_id, message)
                 continue
             if handle.restart_attempts >= handle.spec.restart_max_attempts:
@@ -397,7 +418,7 @@ class ModNodeManager:
                 self._faults[node_id] = message
                 self._fault_attempts[node_id] = handle.restart_attempts
                 self._running.pop(node_id, None)
-                self._log("error", message)
+                self._log("error", message, node_id=node_id)
                 self._fault_dependents(node_id, message)
                 continue
             handle.restart_attempts += 1
@@ -407,6 +428,7 @@ class ModNodeManager:
                 f"Mod node '{node_id}' exited with code {exit_code}; "
                 f"restart {handle.restart_attempts}/"
                 f"{handle.spec.restart_max_attempts} scheduled",
+                node_id=node_id,
             )
 
         for node_id in self._ordered_ids:
@@ -424,19 +446,23 @@ class ModNodeManager:
             try:
                 self._ensure_dependencies_running(handle.spec)
                 handle.process = self._spawn_process(handle.spec)
-                self._log("info", f"restarted Mod node '{node_id}'")
+                self._log("info", f"restarted Mod node '{node_id}'", node_id=node_id)
             except Exception as exc:
                 if handle.restart_attempts >= handle.spec.restart_max_attempts:
                     message = f"Mod node '{node_id}' restart failed: {exc}"
                     self._faults[node_id] = message
                     self._fault_attempts[node_id] = handle.restart_attempts
                     self._running.pop(node_id, None)
-                    self._log("error", message)
+                    self._log("error", message, node_id=node_id)
                     self._fault_dependents(node_id, message)
                 else:
                     handle.restart_attempts += 1
                     handle.next_restart_at = now + handle.spec.restart_delay
-                    self._log("warning", f"Mod node '{node_id}' restart failed: {exc}")
+                    self._log(
+                        "warning",
+                        f"Mod node '{node_id}' restart failed: {exc}",
+                        node_id=node_id,
+                    )
 
     def snapshot(self) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
@@ -507,6 +533,7 @@ class ModNodeManager:
                     "error",
                     f"Mod node '{stopping.node_id}' still has live processes "
                     "after SIGKILL",
+                    node_id=stopping.node_id,
                 )
         self._stopping_processes.clear()
         for stopping in tuple(self._stopping_instances.values()):
@@ -522,6 +549,8 @@ class ModNodeManager:
             self._parameter_files.clear()
         if self._process_spawner is not None:
             self._process_spawner.close()
+        if self._log_router is not None:
+            self._log_router.close()
 
     def _desired_node_ids(self) -> set[str]:
         scoped_states = self._active_states | self._prepared_states
@@ -599,7 +628,11 @@ class ModNodeManager:
                     f"code {exit_code}"
                 )
             self._running[spec.id] = _RunningNode(spec=spec, process=process)
-            self._log("info", f"started process Mod node '{spec.id}'")
+            self._log(
+                "info",
+                f"started process Mod node '{spec.id}'",
+                node_id=spec.id,
+            )
             return
 
         factory = spec.factory
@@ -644,11 +677,21 @@ class ModNodeManager:
             instance=instance,
             attached=attached,
         )
-        self._log("info", f"started in-process Mod node '{spec.id}'")
+        self._log(
+            "info",
+            f"started in-process Mod node '{spec.id}'",
+            node_id=spec.id,
+        )
 
     def _spawn_process(self, spec: ModNodeSpec) -> subprocess.Popen[bytes]:
         environment = os.environ.copy()
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        environment["PYTHONUNBUFFERED"] = "1"
+        environment["BXI_MOD_ID"] = spec.mod_id
+        environment["BXI_NODE_ID"] = spec.id
+        environment["BXI_LOG_SCOPE"] = (
+            f"mod.{spec.mod_id}.node.{spec.local_name}"
+        )
         spec.resolved_runtime.apply_environment(environment)
         if spec.runtime == "python" or not spec.resolved_runtime.isolated:
             inherited_paths: list[str] = []
@@ -731,18 +774,29 @@ class ModNodeManager:
         kwargs: dict[str, object] = {
             "env": environment,
             "start_new_session": True,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "bufsize": 0,
         }
         if cwd is not None:
             kwargs["cwd"] = cwd
         spawner = self._process_spawner
         if spawner is None:
             raise RuntimeError("Mod process spawner is not available")
-        return spawner.spawn(
+        process = spawner.spawn(
             self._process_factory,
             command,
             kwargs,
             self._resolved_cpu_affinities[spec.id],
         )
+        if self._log_router is None:
+            raise RuntimeError("Mod subprocess log router is not available")
+        self._log_router.register(
+            process,
+            mod_id=spec.mod_id,
+            node_name=spec.local_name,
+        )
+        return process
 
     def _parameter_file(self, spec: ModNodeSpec) -> Path:
         existing = self._parameter_files.get(spec.id)
@@ -789,7 +843,9 @@ class ModNodeManager:
                     self._executor.remove_node(handle.instance)
                 except Exception as exc:
                     self._log(
-                        "warning", f"failed to remove Mod node '{node_id}': {exc}"
+                        "warning",
+                        f"failed to remove Mod node '{node_id}': {exc}",
+                        node_id=node_id,
                     )
             if wait or self._executor is None:
                 self._destroy_instance(node_id, handle.instance)
@@ -817,10 +873,11 @@ class ModNodeManager:
                     self._log(
                         "error",
                         f"Mod node '{node_id}' still has live processes after SIGKILL",
+                        node_id=node_id,
                     )
             else:
                 self._stopping_processes[node_id] = stopping
-        self._log("info", f"stopped Mod node '{node_id}'")
+        self._log("info", f"stopped Mod node '{node_id}'", node_id=node_id)
 
     def _poll_stopping_processes(self, now: float) -> None:
         for node_id, stopping in tuple(self._stopping_processes.items()):
@@ -834,7 +891,11 @@ class ModNodeManager:
                 continue
             self._signal_stopping_process(stopping, signal.SIGKILL)
             stopping.kill_at = float("inf")
-            self._log("warning", f"killed unresponsive Mod node '{node_id}'")
+            self._log(
+                "warning",
+                f"killed unresponsive Mod node '{node_id}'",
+                node_id=node_id,
+            )
 
     def _poll_stopping_instances(self, now: float) -> None:
         for node_id, stopping in tuple(self._stopping_instances.items()):
@@ -847,7 +908,11 @@ class ModNodeManager:
         try:
             instance.destroy_node()
         except Exception as exc:
-            self._log("warning", f"failed to destroy Mod node '{node_id}': {exc}")
+            self._log(
+                "warning",
+                f"failed to destroy Mod node '{node_id}': {exc}",
+                node_id=node_id,
+            )
 
     @classmethod
     def _wait_for_stopping_process(cls, stopping: _StoppingProcess) -> bool:
@@ -992,7 +1057,7 @@ class ModNodeManager:
             )
             self._faults[node_id] = message
             self._fault_attempts[node_id] = 0
-            self._log("error", message)
+            self._log("error", message, node_id=node_id)
 
     @staticmethod
     def _dependency_order(specs: Sequence[ModNodeSpec]) -> tuple[str, ...]:
@@ -1115,33 +1180,24 @@ class ModNodeManager:
                 result.append(str(path))
         return tuple(dict.fromkeys(result))
 
-    def _log(self, level: str, message: str) -> None:
-        logger = self._logger
-        if logger is not None:
-            # rclpy identifies a Python log call by its source location and
-            # rejects later calls from that location with a different severity.
-            # Keep every supported severity on its own call line.
-            if level == "info":
-                method = getattr(logger, "info", None)
-                if callable(method):
-                    method(message)
-                    return
-            elif level == "warning":
-                method = getattr(logger, "warning", None)
-                if callable(method):
-                    method(message)
-                    return
-            elif level == "error":
-                method = getattr(logger, "error", None)
-                if callable(method):
-                    method(message)
-                    return
-            else:
-                method = getattr(logger, level, None)
-                if callable(method):
-                    method(message)
-                    return
-        print(f"{level}: {message}")
+    def _log(
+        self,
+        level: str,
+        message: str,
+        *,
+        node_id: str | None = None,
+    ) -> None:
+        logger = self._logger if node_id is None else self._node_loggers[node_id]
+        # rclpy identifies a Python log call by its source location and rejects
+        # later calls from that location with a different severity.
+        if level == "info":
+            logger.info(message)
+        elif level == "warning":
+            logger.warning(message)
+        elif level == "error":
+            logger.error(message)
+        else:
+            raise ValueError(f"unsupported Mod node log level: {level}")
 
 
 __all__ = ["EnvironmentEdit", "ExecutorLike", "ModNodeManager", "ModNodeSpec"]

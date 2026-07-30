@@ -18,9 +18,9 @@ from bxi_example_py_elf3.framework.mod_api import TransitionSpec
 from bxi_example_py_elf3.framework.runtime.control_scheduler import (
     ControlCycleMetrics,
     ControlScheduler,
-    LoggerLike,
 )
 from bxi_example_py_elf3.framework.runtime.controller import RobotControlFramework
+from bxi_example_py_elf3.framework.runtime.logging import LoggingConfig, ScopedLoggers
 from bxi_example_py_elf3.framework.runtime.mod_nodes import ExecutorLike
 from .api import ControlPlatformAdapter
 from .cpu_affinity import (
@@ -173,19 +173,21 @@ class RobotControlRuntime:
         command_defaults: JointCommandDefaults,
         ros_node: object,
         platform: ControlPlatformAdapter,
-        logger: LoggerLike | None = None,
         fatal_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.config = ControlRuntimeConfig.from_mapping(
             system_config.get("control_runtime")
         )
+        self.logging_config = LoggingConfig.from_mapping(system_config.get("logging"))
         framework_config = {
             key: value
             for key, value in system_config.items()
-            if key != "control_runtime"
+            if key not in {"control_runtime", "logging"}
         }
         self._platform = platform
-        self._logger = logger
+        root_logger = ros_node.get_logger()
+        self.loggers = ScopedLoggers(root_logger, self.logging_config)
+        self._logger = self.loggers.framework("runtime")
         self._external_fatal_callback = fatal_callback
         self._framework_lock = Lock()
         self._stop_event = Event()
@@ -213,6 +215,7 @@ class RobotControlRuntime:
             built_in_mod_root=built_in_mod_root,
             command_defaults=command_defaults,
             ros_node=ros_node,
+            loggers=self.loggers,
             control_period=self.config.period_sec,
             cpu_affinity_plan=self.cpu_affinity_plan,
         )
@@ -224,13 +227,12 @@ class RobotControlRuntime:
             spin_wait_us=self.config.spin_wait_us,
             cpu_affinity=control_cpus,
             realtime_priority=self.config.realtime_priority,
-            logger=logger,
+            logger=self.loggers.framework("scheduler"),
             fatal_callback=self._on_control_fatal,
             deadline_miss_callback=self._enqueue_deadline_miss,
         )
         self._log("info", self.cpu_affinity_plan.describe())
-        for message in self.framework.startup_messages():
-            self._log("info", message)
+        self.framework.log_startup()
 
     @property
     def is_running(self) -> bool:
@@ -607,8 +609,6 @@ class RobotControlRuntime:
 
     def _log(self, level: str, message: str) -> bool:
         logger = self._logger
-        if logger is None:
-            return False
         try:
             # rclpy binds severity to the Python source location of a log call.
             # Keep each severity on a distinct call line instead of using one

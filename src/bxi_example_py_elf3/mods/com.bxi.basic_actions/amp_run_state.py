@@ -70,7 +70,7 @@ class AmpRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
             raise RuntimeError("AMP policy did not provide estimated velocity")
         self.max_vel = max(self.max_vel, float(velocity[0]))
         if ctx.loop_count >= 100 + int(0.3 / ctx.dt):
-            print(self.max_vel)
+            self.logger.debug(f"maximum estimated velocity: {self.max_vel:.6f}")
             ctx.loop_count = int(0.3 / ctx.dt)
             self.max_vel = 0.0
         return self._motor_frame_from_target(ctx, output.joints)

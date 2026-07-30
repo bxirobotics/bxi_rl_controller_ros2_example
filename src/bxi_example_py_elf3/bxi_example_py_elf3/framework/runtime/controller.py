@@ -25,6 +25,7 @@ from bxi_example_py_elf3.framework.mod_api.geometry import quaternion_to_euler_a
 from bxi_example_py_elf3.framework.platform.cpu_affinity import CpuAffinityPlan
 
 from .mod_loader import ModRuntime, load_mod_runtime
+from .logging import ScopedLoggers
 from .mod_nodes import ExecutorLike, ModNodeManager
 from .state_builder import build_robot_states
 from .state_machine import RemoteEventAdapter, RobotStateMachine
@@ -44,10 +45,13 @@ class RobotControlFramework:
         extra_mod_roots: Sequence[Path] | None = None,
         command_defaults: JointCommandDefaults,
         ros_node: Node,
+        loggers: ScopedLoggers,
         control_period: float = 0.02,
         cpu_affinity_plan: CpuAffinityPlan | None = None,
     ) -> None:
         self._ros_node = ros_node
+        self._loggers = loggers
+        self._logger = loggers.framework("controller")
         self._closed = True
         if control_period <= 0.0:
             raise ValueError("control_period must be greater than zero")
@@ -94,18 +98,15 @@ class RobotControlFramework:
             self.speed_profiles = self.config.get("speed_profiles", {})
             node_manager = ModNodeManager(
                 runtime.node_specs,
-                logger=self._ros_node.get_logger(),
+                loggers=loggers,
                 cpu_affinity_plan=cpu_affinity_plan,
             )
             self.node_manager = node_manager
             node_manager.start()
             for mod in (*runtime.mods, *runtime.unavailable_mods):
+                mod_logger = loggers.mod(mod.id)
                 for warning in mod.warnings:
-                    self._ros_node.get_logger().warning(warning)
-            for mod in runtime.unavailable_mods:
-                self._ros_node.get_logger().warning(
-                    f"Mod '{mod.id}' is unavailable: {mod.error}"
-                )
+                    mod_logger.warning(warning)
 
             states = build_robot_states(self.config, runtime.state_factories)
             self.robot_states = states
@@ -127,6 +128,7 @@ class RobotControlFramework:
                 self.config,
                 states,
                 node_lifecycle=node_manager,
+                logger=loggers.framework("state_machine"),
                 enter_initial=False,
             )
             self._initial_state_entered = False
@@ -323,30 +325,33 @@ class RobotControlFramework:
         )
         return info
 
-    def startup_messages(self) -> tuple[str, ...]:
+    def log_startup(self) -> None:
         events = self.config.get("remote_events")
         event_count = len(events) if isinstance(events, Mapping) else 0
         node_count = len(self.mod_runtime.node_specs)
-        messages = [
+        self._logger.info(
             f"loaded {len(self.mod_runtime.mods)} Mods, "
             f"{len(self.mod_runtime.unavailable_mods)} unavailable, "
             f"{len(self.mod_runtime.disabled_mods)} disabled, "
             f"{len(self.mod_runtime.state_factories)} states, "
             f"{node_count} nodes, "
             f"{event_count} remote events; input conflicts validated"
-        ]
+        )
         for mod in self.mod_runtime.mods:
             dependencies = (
                 f"; requires={','.join(mod.requires)}" if mod.requires else ""
             )
-            messages.append(f"Mod {mod.id}@{mod.version}: {mod.root}{dependencies}")
-        for mod in self.mod_runtime.disabled_mods:
-            messages.append(f"Mod {mod.id}@{mod.version}: disabled; {mod.root}")
-        for mod in self.mod_runtime.unavailable_mods:
-            messages.append(
-                f"Mod {mod.id}@{mod.version}: unavailable; {mod.error}; {mod.root}"
+            self._loggers.mod(mod.id).info(
+                f"loaded {mod.id}@{mod.version}: {mod.root}{dependencies}"
             )
-        return tuple(messages)
+        for mod in self.mod_runtime.disabled_mods:
+            self._loggers.mod(mod.id).info(
+                f"disabled {mod.id}@{mod.version}: {mod.root}"
+            )
+        for mod in self.mod_runtime.unavailable_mods:
+            self._loggers.mod(mod.id).warning(
+                f"unavailable {mod.id}@{mod.version}: {mod.error}; {mod.root}"
+            )
 
     def is_orientation_unsafe(self, quat_xyzw: object) -> bool:
         angles = quaternion_to_euler_array(quat_xyzw)
@@ -373,9 +378,6 @@ class RobotControlFramework:
         # Exactly one non-advancing run initializes lazy backend allocations
         # and history without moving the policy timeline.
         model.step(self.inference_frame, self.dt, advance=False)
-
-    def get_logger(self):
-        return self._ros_node.get_logger()
 
     def close(self) -> None:
         if self._closed:
@@ -411,7 +413,7 @@ class RobotControlFramework:
 
     def _warn_cleanup_failure(self, component: str, exc: Exception) -> None:
         try:
-            self.get_logger().warning(f"{component} cleanup also failed: {exc}")
+            self._logger.warning(f"{component} cleanup also failed: {exc}")
         except Exception:
             pass
 
@@ -450,7 +452,7 @@ class RobotControlFramework:
         self._command_resolver = JointCommandResolver(
             layout,
             self._command_defaults,
-            warning_callback=self.get_logger().warning,
+            warning_callback=self._logger.warning,
         )
         self._resolved_motor_frame = MotorFrame.empty(layout)
         self._last_motor_frame = MotorFrame.empty(layout)
@@ -479,6 +481,7 @@ class RobotControlFramework:
         bound: list[RobotControlState] = []
         try:
             for state in states.values():
+                state._bind_logger(self._loggers.state(state.name))
                 state.on_bind(self)
                 bound.append(state)
         except BaseException:

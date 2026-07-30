@@ -102,8 +102,4 @@ class RobotControlContext(Protocol):
     def is_orientation_unsafe(self, quat_xyzw: object) -> bool:
         ...
 
-    def get_logger(self) -> LoggerLike:
-        ...
-
-
 __all__ = ["LoggerLike", "RobotControlContext"]

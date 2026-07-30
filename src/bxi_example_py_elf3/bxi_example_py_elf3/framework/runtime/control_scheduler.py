@@ -7,22 +7,11 @@ from dataclasses import dataclass
 import os
 from threading import current_thread, Event, Lock, Thread
 import time
-from typing import Protocol
 
 import numpy as np
 
+from bxi_example_py_elf3.framework.mod_api.context import LoggerLike
 from bxi_example_py_elf3.framework.platform.cpu_affinity import format_cpu_set
-
-
-class LoggerLike(Protocol):
-    def info(self, message: str) -> None:
-        ...
-
-    def warning(self, message: str) -> None:
-        ...
-
-    def error(self, message: str) -> None:
-        ...
 
 
 @dataclass(frozen=True)
@@ -96,7 +85,7 @@ class ControlScheduler:
         spin_wait_us: int = -1,
         cpu_affinity: int | Iterable[int] | None = None,
         realtime_priority: int = 0,
-        logger: LoggerLike | None = None,
+        logger: LoggerLike,
         fatal_callback: Callable[[str], None] | None = None,
         deadline_miss_callback: Callable[[dict[str, object]], None] | None = None,
         thread_name: str = "bxi-control",
@@ -469,8 +458,6 @@ class ControlScheduler:
 
     def _log(self, level: str, message: str) -> None:
         logger = self._logger
-        if logger is None:
-            return
         try:
             # rclpy binds severity to a Python log call's source location.
             # A shared dynamic call line can emit INFO once and then reject a
@@ -487,4 +474,4 @@ class ControlScheduler:
             pass
 
 
-__all__ = ["ControlCycleMetrics", "ControlScheduler", "LoggerLike"]
+__all__ = ["ControlCycleMetrics", "ControlScheduler"]
