@@ -80,7 +80,16 @@ class RobotControlContext(Protocol):
         trigger: str,
         transition: "TransitionSpec" = None,
         delay: float = 0.0,
-    ) -> None:
+        force: bool = False,
+    ) -> bool:
+        """Request a state change and report whether it was accepted.
+
+        ``True`` means the transition started or was queued.  It does not mean
+        that a non-instant transition has already finished.  ``False`` means
+        the target is unavailable or its Mod node could not be started, so no
+        switch was started.  ``force=True`` bypasses only the target's
+        availability check and should be reserved for exceptional operations.
+        """
         ...
 
     def preheat_model(

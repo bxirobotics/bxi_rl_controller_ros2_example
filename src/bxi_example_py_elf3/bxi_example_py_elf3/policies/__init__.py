@@ -14,10 +14,6 @@ from .beyondmimic import (
     DanceMotionPolicyGravityMjlab,
     DanceMotionPolicyMjlab,
 )
-from .depth import (
-    HumanoidGaitDepthPolicyIsaaclab,
-    HumanoidGaitOriginCameraPolicyIsaaclab,
-)
 from .normal import NormalMotionPolicyMjlab
 
 __all__ = [
@@ -31,7 +27,5 @@ __all__ = [
     "ELF3_LOWER_BODY_JOINTS",
     "ELF3_POLICY_JOINTS",
     "HumanoidGaitPolicyLiteIsaaclab",
-    "HumanoidGaitDepthPolicyIsaaclab",
-    "HumanoidGaitOriginCameraPolicyIsaaclab",
     "NormalMotionPolicyMjlab",
 ]

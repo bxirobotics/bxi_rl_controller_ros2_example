@@ -67,7 +67,7 @@ class RobotControlFramework:
         self._direct_motor_layout: JointLayout | None = None
         self._motor_target: MotorFrame | None = None
         self._pending_state_requests: list[
-            tuple[str, str, TransitionSpec, float]
+            tuple[str, str, TransitionSpec, float, bool]
         ] = []
 
         runtime: ModRuntime | None = None
@@ -232,17 +232,21 @@ class RobotControlFramework:
         trigger: str,
         transition: TransitionSpec = None,
         delay: float = 0.0,
-    ) -> None:
+        force: bool = False,
+    ) -> bool:
+        if not isinstance(force, bool):
+            raise TypeError("state request force must be a bool")
         if self._robot_layout is None:
             self._pending_state_requests.append(
-                (state_name, trigger, transition, float(delay))
+                (state_name, trigger, transition, float(delay), force)
             )
-            return
-        self.state_machine.request_transition(
+            return True
+        return self.state_machine.request_transition(
             state_name,
             trigger=trigger,
             transition=transition,
             delay=delay,
+            force=force,
         )
 
     def _apply_pending_state_requests(self) -> None:
@@ -250,12 +254,13 @@ class RobotControlFramework:
             return
         pending = tuple(self._pending_state_requests)
         self._pending_state_requests.clear()
-        for state_name, trigger, transition, delay in pending:
+        for state_name, trigger, transition, delay, force in pending:
             self.state_machine.request_transition(
                 state_name,
                 trigger=trigger,
                 transition=transition,
                 delay=delay,
+                force=force,
             )
 
     def set_motor_target(self, frame: MotorFrame) -> None:

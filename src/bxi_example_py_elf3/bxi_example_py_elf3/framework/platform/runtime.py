@@ -309,13 +309,15 @@ class RobotControlRuntime:
         trigger: str,
         transition: TransitionSpec = None,
         delay: float = 0.0,
-    ) -> None:
+        force: bool = False,
+    ) -> bool:
         with self._framework_lock:
-            self.framework.request_state(
+            return self.framework.request_state(
                 state_name,
                 trigger=trigger,
                 transition=transition,
                 delay=delay,
+                force=force,
             )
 
     def snapshot(self, *, include_graph: bool = False) -> dict[str, object] | None:

@@ -95,7 +95,7 @@ class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
             self._composer = JointCommandComposer(
                 HELLO_OUTPUT_JOINTS,
                 (
-                    JointCommandLayer("policy", policy_target),
+                    JointCommandLayer("policy", policy_target), #这里的policy_target是policy内部的输出缓冲区，共享同一片内存
                     JointCommandLayer(
                         "wave_controller",
                         self._wave_command.view,

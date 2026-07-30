@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import importlib
+import importlib.util
 import inspect
 import io
 import json
@@ -67,10 +68,12 @@ BASELINE_SOURCE_CANDIDATES = {
         "src/bxi_example_py_elf3/bxi_example_py_elf3/inference/beyondmimic.py",
     ),
     "depth_cached": (
+        "src/bxi_example_py_elf3/mods/com.bxi.normal_depth/depth.py",
         "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/depth.py",
         "src/bxi_example_py_elf3/mods/com.bxi.normal_depth/amp_depth.py",
     ),
     "depth_fresh": (
+        "src/bxi_example_py_elf3/mods/com.bxi.normal_depth/depth.py",
         "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/depth.py",
         "src/bxi_example_py_elf3/mods/com.bxi.normal_depth/amp_depth.py",
     ),
@@ -145,6 +148,18 @@ def _find_baseline_source(case: str, baseline_ref: str) -> str:
     )
 
 
+def _load_current_depth_policy() -> type:
+    source = DEPTH_ASSETS.parent / "depth.py"
+    module_name = "_bxi_benchmark_normal_depth_policy"
+    spec = importlib.util.spec_from_file_location(module_name, source)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load current depth policy: {source}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module.HumanoidGaitDepthPolicyIsaaclab
+
+
 def _construct_baseline(cls, *args, **kwargs):
     """Construct a historical policy without assuming today's keywords.
 
@@ -186,10 +201,10 @@ def _make_runner(case: str, version: str):
     def inference_frame_for(policy):
         from bxi_example_py_elf3.framework.inference import InferenceFrame
         from bxi_example_py_elf3.framework.joints import JointStateView
+        from bxi_example_py_elf3.policies.joints import ELF3_POLICY_JOINTS
 
-        layout = policy.joint_contract.observation
         return InferenceFrame(
-            joints=JointStateView(layout, q, dq),
+            joints=JointStateView(ELF3_POLICY_JOINTS, q, dq),
             quat_wxyz=wxyz,
             angular_velocity=omega,
             command=command,
@@ -316,7 +331,6 @@ def _make_runner(case: str, version: str):
         DanceMotionPolicyGravityIsaaclab,
         DanceMotionPolicyGravityIsaaclabV3,
         DanceMotionPolicyMjlab,
-        HumanoidGaitDepthPolicyIsaaclab,
         HumanoidGaitPolicyLiteIsaaclab,
         NormalMotionPolicyMjlab,
     )
@@ -375,7 +389,8 @@ def _make_runner(case: str, version: str):
         policy.reset(inference_frame)
         return policy, lambda: policy.step(inference_frame, 0.02, advance=False)
 
-    policy = HumanoidGaitDepthPolicyIsaaclab(
+    depth_policy_type = _load_current_depth_policy()
+    policy = depth_policy_type(
         str((DEPTH_ASSETS / "normal_depth.onnx").resolve()),
         runtime=runtime,
         backend="onnxruntime",

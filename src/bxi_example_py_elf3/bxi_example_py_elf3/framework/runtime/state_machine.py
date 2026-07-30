@@ -94,6 +94,7 @@ class TransitionRule:
     delay: float = 0.0
     action: str | None = None
     transition: ResolvedTransition | None = None
+    force: bool = False
 
 
 @dataclass
@@ -110,6 +111,7 @@ class ActiveTransition:
     transition: ResolvedTransition
     session: TransitionSession
     trigger: str
+    force: bool
 
 
 @dataclass(frozen=True)
@@ -221,20 +223,26 @@ class RobotStateMachine:
         trigger: str = "code",
         transition: TransitionSpec = None,
         delay: float = 0.0,
-    ) -> None:
+        force: bool = False,
+    ) -> bool:
         if delay < 0.0:
             raise ValueError("transition delay must be >= 0")
+        if not isinstance(force, bool):
+            raise TypeError("transition force must be a bool")
         resolved = self._resolve_transition(transition, f"request:{trigger}:{to_state}")
         rule = TransitionRule(
             to_state=to_state,
             delay=delay,
             transition=resolved,
+            force=force,
         )
         if delay > 0.0:
+            if not self._can_enter_transition(rule, trigger):
+                return False
             self._cancel_active_transition()
             self._pending = PendingTransition(rule, trigger)
-        else:
-            self._begin_transition(rule, trigger)
+            return True
+        return self._begin_transition(rule, trigger)
 
     def snapshot(self, include_graph: bool = False) -> dict[str, object]:
         result: dict[str, object] = {
@@ -262,6 +270,8 @@ class RobotStateMachine:
             if not rule.to_state:
                 return
             if rule.delay > 0.0:
+                if not self._can_enter_transition(rule, rule.event or ""):
+                    return
                 self._cancel_active_transition()
                 self._pending = PendingTransition(rule, rule.event or "")
             else:
@@ -282,27 +292,26 @@ class RobotStateMachine:
                 self._begin_transition(rule, f"after:{rule.after}")
             return
 
-    def _begin_transition(self, rule: TransitionRule, trigger: str) -> None:
+    def _begin_transition(self, rule: TransitionRule, trigger: str) -> bool:
         if rule.to_state is None:
             if rule.action:
                 self._run_action(rule.action)
-            return
-        if rule.to_state not in self._states:
-            raise ValueError(f"unknown transition target: {rule.to_state}")
+            return True
+        if not self._can_enter_transition(rule, trigger):
+            return False
         if rule.to_state == self.current.name:
             if self._active is not None:
                 self._cancel_active_transition()
-            return
-        self._cancel_active_transition()
+            return True
         transition = rule.transition or self._default_transition
         to_state = self._states[rule.to_state]
-        transition.plan.validate_states(self.current, to_state)
+        self._cancel_active_transition()
         if self._node_lifecycle is not None:
             try:
                 self._node_lifecycle.prepare_state(to_state.name)
             except Exception as exc:
                 self._report_node_start_failure(to_state.name, exc)
-                return
+                return False
         print(
             f"switch {self.current.name} -> {to_state.name} "
             f"via {transition.name} ({trigger})"
@@ -328,6 +337,7 @@ class RobotStateMachine:
             transition=transition,
             session=session,
             trigger=trigger,
+            force=rule.force,
         )
         if session.duration <= 0.0:
             try:
@@ -336,6 +346,24 @@ class RobotStateMachine:
                 self._cancel_active_transition()
                 raise
             self._finish_active_transition()
+        return True
+
+    def _can_enter_transition(self, rule: TransitionRule, trigger: str) -> bool:
+        target_name = rule.to_state
+        if target_name is None:
+            return True
+        if target_name not in self._states:
+            raise ValueError(f"unknown transition target: {target_name}")
+        if target_name == self.current.name:
+            return True
+
+        to_state = self._states[target_name]
+        if not rule.force and not to_state.is_available(self._ctx):
+            self._report_unavailable_state(to_state.name, trigger)
+            return False
+        transition = rule.transition or self._default_transition
+        transition.plan.validate_states(self.current, to_state)
+        return True
 
     def _update_active_transition(self, dt: float) -> None:
         active = self._active
@@ -385,6 +413,17 @@ class RobotStateMachine:
             logger.error(message)
         else:
             print(f"error: {message}")
+
+    def _report_unavailable_state(self, state_name: str, trigger: str) -> None:
+        message = (
+            "state transition rejected because target is unavailable: "
+            f"from={self.current.name}, target={state_name}, trigger={trigger}"
+        )
+        logger_factory = getattr(self._ctx, "get_logger", None)
+        if callable(logger_factory):
+            logger_factory().warning(message)
+        else:
+            print(f"warning: {message}")
 
     def _run_action(self, action_name: str) -> None:
         handler = self._actions.get(action_name)
@@ -775,6 +814,7 @@ class RobotStateMachine:
             "profile": active.transition.name,
             "type": active.transition.plan.type_name,
             "trigger": active.trigger,
+            "force": active.force,
             "elapsed": active.session.elapsed,
             "duration": active.session.duration,
             "progress": active.session.progress,
@@ -795,6 +835,7 @@ class RobotStateMachine:
             "trigger": pending.trigger,
             "elapsed": pending.elapsed,
             "delay": pending.rule.delay,
+            "force": pending.rule.force,
             "progress": progress,
             "action": pending.rule.action,
             "transition": pending.rule.transition.name

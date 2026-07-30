@@ -37,6 +37,16 @@ class StateBehavior(Generic[CtxT]):
         """Release subscriptions, timers, or other state-owned handles."""
         pass
 
+    def is_available(self, ctx: CtxT) -> bool:
+        """Return whether this state can be entered right now.
+
+        Implementations must be non-blocking and must not load resources or
+        mutate control state.  The state machine calls this immediately before
+        preparing a transition; delayed transitions are checked both when the
+        request is accepted and again when their delay expires.
+        """
+        return True
+
     def on_prepare(self, ctx: CtxT, from_state: "StateBehavior[CtxT]") -> None:
         pass
 
