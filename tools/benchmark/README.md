@@ -39,7 +39,8 @@ python3 tools/benchmark/backend_benchmark.py --json results/my-platform.json
 ```
 
 RKNN conversion remains opt-in. Converted models are stored in the ignored
-benchmark cache instead of beside source assets:
+benchmark cache instead of beside source assets. An unquantized conversion can
+still be requested directly:
 
 ```bash
 BXI_RKNN_CONVERT_ON_LOAD=rk3588 \
@@ -56,7 +57,65 @@ BXI_RKNN_CONVERT_ON_LOAD='{"target":"rk3588","outputs":["actions"],"force_rebuil
 python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 ```
 
-For quantized conversion:
+### Capture and build a representative INT8 model
+
+Do not calibrate a control policy with the benchmark's random tensors. Capture
+the final, preprocessed tensors seen by the policy on the robot instead. The
+depth policy has a non-blocking recorder for this purpose: the control thread
+only takes an in-memory snapshot, while a background thread writes the `.npy`
+files and ordered `dataset.txt`.
+
+Build and source the package, then start the hardware launch with:
+
+```bash
+BXI_RKNN_CALIBRATION_DIR=/tmp/bxi_rknn_calibration \
+BXI_RKNN_CALIBRATION_EVERY=5 \
+BXI_RKNN_CALIBRATION_MAX=500 \
+ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py
+```
+
+Enter depth walking and exercise representative standing, forward, turning,
+obstacle and open-space situations. The default `origin_camera` mode writes:
+
+```text
+/tmp/bxi_rknn_calibration/dagger2/dataset.txt
+```
+
+Only the active policy is sampled. To capture the legacy `normal_depth` model,
+change the Mod state's mode to `depth_walk`, rebuild/restart, and perform a
+second run. Existing samples are resumed until `BXI_RKNN_CALIBRATION_MAX` is
+reached. Use a new empty root when intentionally starting a new dataset.
+
+Copy the calibration root to the x86_64 RKNN Toolkit2 machine. Validate both
+datasets without converting:
+
+```bash
+python3 tools/benchmark/quantize_rknn.py \
+  src/bxi_example_py_elf3/mods/com.bxi.normal_depth/assets/dagger2.onnx \
+  src/bxi_example_py_elf3/mods/com.bxi.normal_depth/assets/normal_depth.onnx \
+  --calibration-root /path/to/bxi_rknn_calibration \
+  --validate-only
+```
+
+Then build fresh W8A8 artifacts and atomically install them beside the ONNX
+files:
+
+```bash
+PYTHONNOUSERSITE=1 python3 tools/benchmark/quantize_rknn.py \
+  src/bxi_example_py_elf3/mods/com.bxi.normal_depth/assets/dagger2.onnx \
+  src/bxi_example_py_elf3/mods/com.bxi.normal_depth/assets/normal_depth.onnx \
+  --calibration-root /path/to/bxi_rknn_calibration \
+  --install
+```
+
+The tool validates input count/order, concrete shapes, `float32`, finite values
+and a minimum of 100 samples before importing RKNN Toolkit. Conversion always
+uses `actions`, `optimization_level=3`, representative calibration, and a fresh
+cache fingerprint. `--algorithm mmse` or `--quantized-dtype w8a16` can be used
+for an accuracy-oriented follow-up build.
+
+The lower-level equivalent remains available when a manually maintained RKNN
+dataset is needed:
 
 ```bash
 BXI_RKNN_CONVERT_ON_LOAD='{"target":"rk3588","do_quantization":true,"dataset":"/data/calibration.txt"}' \

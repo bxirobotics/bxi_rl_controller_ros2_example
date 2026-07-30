@@ -487,7 +487,7 @@ def prepare_rknn_artifact(artifact: RknnArtifact) -> RknnPreparation:
 
             warnings.warn(
                 f"converting ONNX to RKNN for {settings.target}; this can make "
-                "startup significantly slower: {source} -> {destination}",
+                f"startup significantly slower: {source} -> {destination}",
                 RuntimeWarning,
                 stacklevel=2,
             )

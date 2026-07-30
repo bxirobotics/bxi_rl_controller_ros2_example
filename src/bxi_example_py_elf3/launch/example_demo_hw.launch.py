@@ -100,7 +100,9 @@ def _acquire_lock():
     except OSError:
         try:
             os.lseek(fd, 0, os.SEEK_SET)
-            holder = os.read(fd, 64).decode("utf-8", errors="replace").strip() or "unknown"
+            holder = (
+                os.read(fd, 64).decode("utf-8", errors="replace").strip() or "unknown"
+            )
         except OSError:
             holder = "unknown"
         os.close(fd)
@@ -128,7 +130,9 @@ def generate_launch_description():
     return LaunchDescription(
         declare_hardware_launch_arguments()
         + [
-            OpaqueFunction(function=lambda context: [hardware_node_from_context(context)]),
+            OpaqueFunction(
+                function=lambda context: [hardware_node_from_context(context)]
+            ),
             Node(
                 package="bxi_example_py_elf3",
                 executable="bxi_example_py_elf3_demo",
