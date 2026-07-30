@@ -39,6 +39,12 @@ from bxi_example_py_elf3.framework.runtime.runtime_requirements import (
     read_runtime_requirements,
     runtime_platform_tag,
 )
+from bxi_example_py_elf3.framework.runtime.runtime_profiles import (
+    ResolvedRuntime,
+    RuntimeProfile,
+    read_runtime_profiles,
+    resolve_runtime_profile,
+)
 from bxi_example_py_elf3.framework.mod_api.state import RobotControlState
 from bxi_example_py_elf3.framework.runtime.transition import (
     register_transition_plugin,
@@ -82,6 +88,7 @@ class _DiscoveredMod:
     requires: tuple[_Requirement, ...]
     conflicts: tuple[str, ...]
     runtime_requirements: RuntimeRequirements
+    runtime_profiles: Mapping[str, RuntimeProfile]
 
 
 @dataclass
@@ -402,6 +409,7 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
                 "routes",
                 "actions",
                 "nodes",
+                "runtime_profiles",
             }
             unknown_fields = set(manifest) - allowed_fields
             if unknown_fields:
@@ -458,6 +466,10 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
                 manifest["runtime_requirements"],
                 f"{manifest_path}: runtime_requirements",
             )
+            runtime_profiles = read_runtime_profiles(
+                manifest.get("runtime_profiles"),
+                f"{manifest_path}: runtime_profiles",
+            )
             conflicts = _read_mod_id_list(
                 manifest["conflicts"], "conflicts", manifest_path
             )
@@ -484,6 +496,7 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
                 requires=requires,
                 conflicts=conflicts,
                 runtime_requirements=runtime_requirements,
+                runtime_profiles=runtime_profiles,
             )
     if not result:
         raise ValueError(f"no Mods found in: {', '.join(map(str, roots))}")
@@ -730,6 +743,7 @@ def _load_mod_node_specs(
             "cwd",
             "depends_on",
             "shutdown",
+            "runtime_profile",
         }
         unknown_fields = set(node) - allowed_fields
         if unknown_fields:
@@ -745,6 +759,18 @@ def _load_mod_node_specs(
                 f"{context}.runtime must be 'python', 'executable', 'ros' "
                 "or 'command'"
             )
+        raw_runtime_profile = node.get("runtime_profile")
+        if raw_runtime_profile is not None and (
+            not isinstance(raw_runtime_profile, str) or not raw_runtime_profile
+        ):
+            raise ValueError(f"{context}.runtime_profile must be a non-empty string")
+        runtime_selection = resolve_runtime_profile(
+            mod.runtime_profiles,
+            cast(str | None, raw_runtime_profile),
+            mod.root,
+            context=f"{context}.runtime_profile",
+        )
+        resolved_runtime = runtime_selection.runtime
         interpreter = node.get("interpreter")
         if runtime == "command":
             if interpreter is not None and (
@@ -794,6 +820,15 @@ def _load_mod_node_specs(
             raise ValueError(
                 f"{context}.execution must be 'process' for runtime '{runtime}'"
             )
+        if (
+            execution == "in_process"
+            and resolved_runtime is not None
+            and resolved_runtime.mode == "portable"
+        ):
+            raise ValueError(
+                f"{context}.runtime_profile uses portable mode, which requires "
+                "execution: process"
+            )
         lifecycle = node.get("lifecycle", "mod")
         if lifecycle not in ("mod", "state"):
             raise ValueError(f"{context}.lifecycle must be 'mod' or 'state'")
@@ -819,15 +854,69 @@ def _load_mod_node_specs(
             if "runtime_requirements" in node
             else RuntimeRequirements((), (), ())
         )
-        requirement_report = check_runtime_requirements(
-            runtime_requirements,
-            mod.root,
+        runtime_environment = os.environ.copy()
+        if resolved_runtime is not None:
+            resolved_runtime.apply_environment(runtime_environment)
+        runtime_python = (
+            resolved_runtime.python_executable if resolved_runtime is not None else None
         )
+        if runtime_python is None and (
+            resolved_runtime is None or resolved_runtime.mode != "portable"
+        ):
+            runtime_python = Path(sys.executable)
+        if runtime_requirements.python and runtime_python is None:
+            requirement_report = RuntimeRequirementReport(
+                errors=(
+                    "runtime profile does not provide Python for declared "
+                    "Python requirements",
+                ),
+                warnings=(),
+                vendor_python_paths=(),
+                vendor_libraries=(),
+            )
+        else:
+            requirement_report = check_runtime_requirements(
+                runtime_requirements,
+                mod.root,
+                python_executable=runtime_python,
+                python_paths=(
+                    resolved_runtime.python_paths
+                    if resolved_runtime is not None
+                    else ()
+                ),
+                library_paths=(
+                    resolved_runtime.library_paths
+                    if resolved_runtime is not None
+                    else ()
+                ),
+                environment=runtime_environment,
+            )
         availability_errors = list(requirement_report.errors)
+        if runtime_selection.error is not None:
+            availability_errors.insert(0, runtime_selection.error)
+        if (
+            resolved_runtime is not None
+            and resolved_runtime.mode == "portable"
+            and runtime == "python"
+            and resolved_runtime.python_executable is None
+        ):
+            availability_errors.append(
+                "portable runtime does not provide Python for runtime 'python'"
+            )
+        if interpreter == "bundled-python" and (
+            resolved_runtime is None or resolved_runtime.python_executable is None
+        ):
+            availability_errors.append(
+                "interpreter 'bundled-python' requires a runtime profile that "
+                "provides Python"
+            )
         if executable_error is not None:
             availability_errors.append(executable_error)
         unavailable_error = "; ".join(availability_errors) or None
-        runtime_warnings = requirement_report.warnings
+        runtime_warnings = (
+            *runtime_selection.warnings,
+            *requirement_report.warnings,
+        )
         factory: NodeFactory | None = None
         should_load_factory = unavailable_error is None and (
             runtime == "python"
@@ -916,6 +1005,9 @@ def _load_mod_node_specs(
             "restart_attempts",
             "error",
             "warnings",
+            "runtime_profile",
+            "runtime_mode",
+            "runtime_root",
         }
         conflicts = set(manifest) & reserved_manifest_fields
         if conflicts:
@@ -1042,6 +1134,11 @@ def _load_mod_node_specs(
                 shutdown_kill_after=kill_after,
                 unavailable_error=unavailable_error,
                 warnings=runtime_warnings,
+                resolved_runtime=(
+                    resolved_runtime
+                    if resolved_runtime is not None
+                    else ResolvedRuntime(name="unavailable", mode="host")
+                ),
             )
         )
     return specs

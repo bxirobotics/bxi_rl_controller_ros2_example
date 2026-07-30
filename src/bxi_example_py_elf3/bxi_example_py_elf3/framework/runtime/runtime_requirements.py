@@ -109,26 +109,57 @@ def read_runtime_requirements(
 def check_runtime_requirements(
     requirements: RuntimeRequirements,
     mod_root: Path,
+    *,
+    python_executable: Path | None = None,
+    python_paths: Sequence[Path] | None = None,
+    library_paths: Sequence[Path] | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> RuntimeRequirementReport:
     """Check vendor-first, then host availability without installing anything."""
 
-    python_paths = vendor_python_paths(mod_root)
-    library_paths = vendor_library_paths(mod_root)
+    selected_python_paths = (
+        vendor_python_paths(mod_root) if python_paths is None else tuple(python_paths)
+    )
+    selected_library_paths = (
+        vendor_library_paths(mod_root)
+        if library_paths is None
+        else tuple(library_paths)
+    )
     errors: list[str] = []
     warnings: list[str] = []
     used_python_paths: list[Path] = []
     vendor_libraries: list[Path] = []
 
     for requirement in requirements.python:
+        if python_executable is not None:
+            bundled_python = any(
+                _vendor_python_module_exists(root, requirement.import_name)
+                for root in selected_python_paths
+            )
+            probe_error = _probe_python_import(
+                requirement.import_name,
+                selected_python_paths,
+                selected_library_paths,
+                executable=python_executable,
+                environment=environment,
+            )
+            if probe_error is not None:
+                errors.append(
+                    f"Python module '{requirement.import_name}' is not importable "
+                    f"with '{python_executable}': {probe_error}"
+                )
+            elif bundled_python:
+                used_python_paths.extend(selected_python_paths)
+            continue
         bundled_python = any(
             _vendor_python_module_exists(root, requirement.import_name)
-            for root in python_paths
+            for root in selected_python_paths
         )
         if bundled_python:
             probe_error = _probe_python_import(
                 requirement.import_name,
-                python_paths,
-                library_paths,
+                selected_python_paths,
+                selected_library_paths,
             )
             if probe_error is not None:
                 errors.append(
@@ -136,7 +167,7 @@ def check_runtime_requirements(
                     f"importable for target '{runtime_python_tag()}': {probe_error}"
                 )
                 continue
-            used_python_paths.extend(python_paths)
+            used_python_paths.extend(selected_python_paths)
             continue
 
         incompatible_targets = _incompatible_python_targets(
@@ -179,7 +210,7 @@ def check_runtime_requirements(
         vendor_library = next(
             (
                 library
-                for root in library_paths
+                for root in selected_library_paths
                 if (library := _find_vendor_library(root, requirement.library))
                 is not None
             ),
@@ -313,6 +344,9 @@ def _probe_python_import(
     import_name: str,
     extra_paths: Sequence[Path],
     library_paths: Sequence[Path] = (),
+    *,
+    executable: Path | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> str | None:
     script = (
         "import importlib, sys\n"
@@ -320,24 +354,24 @@ def _probe_python_import(
         "    sys.path.insert(0, path)\n"
         "importlib.import_module(sys.argv[1])\n"
     )
-    environment = os.environ.copy()
-    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    child_environment = dict(environment or os.environ)
+    child_environment["PYTHONDONTWRITEBYTECODE"] = "1"
     if library_paths:
-        inherited = environment.get("LD_LIBRARY_PATH")
+        inherited = child_environment.get("LD_LIBRARY_PATH")
         values = [*(str(path) for path in library_paths)]
         if inherited:
             values.extend(inherited.split(os.pathsep))
-        environment["LD_LIBRARY_PATH"] = os.pathsep.join(dict.fromkeys(values))
+        child_environment["LD_LIBRARY_PATH"] = os.pathsep.join(dict.fromkeys(values))
     try:
         completed = subprocess.run(
             [
-                sys.executable,
+                str(executable or sys.executable),
                 "-c",
                 script,
                 import_name,
                 *(str(path) for path in extra_paths),
             ],
-            env=environment,
+            env=child_environment,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

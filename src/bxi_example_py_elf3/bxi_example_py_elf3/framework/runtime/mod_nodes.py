@@ -22,10 +22,7 @@ from bxi_example_py_elf3.framework.mod_api.node import (
     NodeBuildContext,
     NodeFactory,
 )
-from bxi_example_py_elf3.framework.runtime.runtime_requirements import (
-    vendor_library_paths,
-    vendor_python_paths,
-)
+from bxi_example_py_elf3.framework.runtime.runtime_profiles import ResolvedRuntime
 
 
 class ExecutorLike(Protocol):
@@ -80,6 +77,9 @@ class ModNodeSpec:
     unavailable_error: str | None = None
     warnings: tuple[str, ...] = ()
     restart_non_retryable_exit_codes: tuple[int, ...] = ()
+    resolved_runtime: ResolvedRuntime = field(
+        default_factory=lambda: ResolvedRuntime(name="host", mode="host")
+    )
 
 
 @dataclass
@@ -349,6 +349,13 @@ class ModNodeManager:
                     ),
                     "error": spec.unavailable_error or self._faults.get(spec.id),
                     "warnings": list(spec.warnings),
+                    "runtime_profile": spec.resolved_runtime.name,
+                    "runtime_mode": spec.resolved_runtime.mode,
+                    "runtime_root": (
+                        str(spec.resolved_runtime.root)
+                        if spec.resolved_runtime.root is not None
+                        else None
+                    ),
                     **spec.manifest,
                 }
             )
@@ -507,27 +514,25 @@ class ModNodeManager:
     def _spawn_process(self, spec: ModNodeSpec) -> subprocess.Popen[bytes]:
         environment = os.environ.copy()
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        inherited_paths: list[str] = []
-        inherited_paths.extend(str(path) for path in vendor_python_paths(spec.mod_root))
-        inherited_paths.extend(str(path) for path in sys.path if path)
-        existing_python_path = environment.get("PYTHONPATH")
-        if existing_python_path:
-            inherited_paths.extend(existing_python_path.split(os.pathsep))
-        environment["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(inherited_paths))
-        library_paths: list[str] = []
-        library_paths.extend(str(path) for path in vendor_library_paths(spec.mod_root))
-        existing_library_path = environment.get("LD_LIBRARY_PATH")
-        if existing_library_path:
-            library_paths.extend(existing_library_path.split(os.pathsep))
-        if library_paths:
-            environment["LD_LIBRARY_PATH"] = os.pathsep.join(
-                dict.fromkeys(library_paths)
-            )
+        spec.resolved_runtime.apply_environment(environment)
+        if spec.runtime == "python" or not spec.resolved_runtime.isolated:
+            inherited_paths: list[str] = []
+            if spec.resolved_runtime.isolated:
+                inherited_paths.extend(self._framework_python_paths())
+            else:
+                inherited_paths.extend(str(path) for path in sys.path if path)
+            existing_python_path = environment.get("PYTHONPATH")
+            if existing_python_path:
+                inherited_paths.extend(existing_python_path.split(os.pathsep))
+            environment["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(inherited_paths))
         environment["BXI_MOD_ROOT"] = str(spec.mod_root)
         self._apply_environment(spec, environment)
         if spec.runtime == "python":
+            python_executable = spec.resolved_runtime.python_executable or Path(
+                sys.executable
+            )
             command = [
-                sys.executable,
+                str(python_executable),
                 "-m",
                 "bxi_example_py_elf3.framework.runtime.mod_node_runner",
                 "--manifest",
@@ -542,12 +547,23 @@ class ModNodeManager:
                 raise RuntimeError(f"Mod node '{spec.id}' has no resolved command")
             command = []
             if spec.interpreter is not None:
-                command.append(
-                    self._resolve_interpreter(
-                        self._expand_environment(spec.interpreter, environment),
-                        spec.id,
+                if spec.interpreter == "bundled-python":
+                    python_executable = spec.resolved_runtime.python_executable
+                    if python_executable is None:
+                        raise RuntimeError(
+                            f"Mod node '{spec.id}' requested bundled-python but "
+                            f"runtime profile '{spec.resolved_runtime.name}' does "
+                            "not provide Python"
+                        )
+                    command.append(str(python_executable))
+                else:
+                    command.append(
+                        self._resolve_interpreter(
+                            self._expand_environment(spec.interpreter, environment),
+                            spec.id,
+                            environment,
+                        )
                     )
-                )
             command.extend(
                 (
                     str(executable),
@@ -914,7 +930,11 @@ class ModNodeManager:
         return pattern.sub(replace, value)
 
     @staticmethod
-    def _resolve_interpreter(value: str, node_id: str) -> str:
+    def _resolve_interpreter(
+        value: str,
+        node_id: str,
+        environment: Mapping[str, str] | None = None,
+    ) -> str:
         if not value:
             raise RuntimeError(f"Mod node '{node_id}' resolved an empty interpreter")
         if os.sep in value:
@@ -924,12 +944,36 @@ class ModNodeManager:
                     f"Mod node '{node_id}' interpreter is not executable: {value}"
                 )
             return str(candidate)
-        resolved = shutil.which(value)
+        resolved = shutil.which(
+            value,
+            path=(environment or {}).get("PATH"),
+        )
         if resolved is None:
             raise RuntimeError(
                 f"Mod node '{node_id}' interpreter was not found: {value}"
             )
         return resolved
+
+    @staticmethod
+    def _framework_python_paths() -> tuple[str, ...]:
+        """Return only paths needed to import the dedicated node runner.
+
+        A portable isolated runtime must not regain the complete host
+        ``sys.path`` merely because ``runtime: python`` uses the framework's
+        process runner.
+        """
+
+        result: list[str] = []
+        relative_runner = Path(
+            "bxi_example_py_elf3/framework/runtime/mod_node_runner.py"
+        )
+        for raw_path in sys.path:
+            if not raw_path:
+                continue
+            path = Path(raw_path).resolve()
+            if (path / relative_runner).is_file():
+                result.append(str(path))
+        return tuple(dict.fromkeys(result))
 
     def _log(self, level: str, message: str) -> None:
         logger = self._logger
