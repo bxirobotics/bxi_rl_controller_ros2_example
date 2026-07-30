@@ -22,6 +22,7 @@ from bxi_example_py_elf3.framework.mod_api import (
     TransitionSpec,
 )
 from bxi_example_py_elf3.framework.mod_api.geometry import quaternion_to_euler_array
+from bxi_example_py_elf3.framework.platform.cpu_affinity import CpuAffinityPlan
 
 from .mod_loader import ModRuntime, load_mod_runtime
 from .mod_nodes import ExecutorLike, ModNodeManager
@@ -44,6 +45,7 @@ class RobotControlFramework:
         command_defaults: JointCommandDefaults,
         ros_node: Node,
         control_period: float = 0.02,
+        cpu_affinity_plan: CpuAffinityPlan | None = None,
     ) -> None:
         self._ros_node = ros_node
         self._closed = True
@@ -93,6 +95,7 @@ class RobotControlFramework:
             node_manager = ModNodeManager(
                 runtime.node_specs,
                 logger=self._ros_node.get_logger(),
+                cpu_affinity_plan=cpu_affinity_plan,
             )
             self.node_manager = node_manager
             node_manager.start()

@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 
 from .api import ControlPlatformAdapter, RobotObservation
+from .cpu_affinity import CpuAffinityPlan, CpuAffinityRole, CpuAffinitySpec
 from .joint_io import (
     FixedOrderJointCommandEncoder,
     FixedOrderJointStateSource,
@@ -26,6 +27,9 @@ def __getattr__(name: str):
 __all__ = [
     "ControlPlatformAdapter",
     "ControlRuntimeConfig",
+    "CpuAffinityPlan",
+    "CpuAffinityRole",
+    "CpuAffinitySpec",
     "FixedOrderJointCommandEncoder",
     "FixedOrderJointStateSource",
     "NamedJointCommandEncoder",

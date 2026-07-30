@@ -23,6 +23,12 @@ from bxi_example_py_elf3.framework.runtime.control_scheduler import (
 from bxi_example_py_elf3.framework.runtime.controller import RobotControlFramework
 from bxi_example_py_elf3.framework.runtime.mod_nodes import ExecutorLike
 from .api import ControlPlatformAdapter
+from .cpu_affinity import (
+    CpuAffinityPlan,
+    CpuAffinityRole,
+    CpuAffinitySpec,
+    read_cpu_affinity,
+)
 
 
 @dataclass(frozen=True)
@@ -38,7 +44,9 @@ class ControlRuntimeConfig:
     maintenance_guard_sec: float = 0.005
     python_switch_interval_sec: float = 0.001
     spin_wait_us: int = -1
-    cpu_affinity: int = -1
+    cpu_affinity: CpuAffinitySpec = CpuAffinitySpec(
+        role=CpuAffinityRole.CONTROL
+    )
     realtime_priority: int = 0
 
     @classmethod
@@ -100,7 +108,11 @@ class ControlRuntimeConfig:
                 defaults.python_switch_interval_sec,
             ),
             spin_wait_us=_integer(raw, "spin_wait_us", defaults.spin_wait_us),
-            cpu_affinity=_integer(raw, "cpu_affinity", defaults.cpu_affinity),
+            cpu_affinity=read_cpu_affinity(
+                raw.get("cpu_affinity"),
+                "control_runtime.cpu_affinity",
+                default=CpuAffinityRole.CONTROL,
+            ),
             realtime_priority=_integer(
                 raw, "realtime_priority", defaults.realtime_priority
             ),
@@ -146,8 +158,6 @@ class ControlRuntimeConfig:
                 "control_runtime.spin_wait_us must be -1 or in "
                 f"[0, {period_us})"
             )
-        if self.cpu_affinity < -1:
-            raise ValueError("control_runtime.cpu_affinity must be -1 or a CPU index")
         if not 0 <= self.realtime_priority <= 99:
             raise ValueError("control_runtime.realtime_priority must be in [0, 99]")
 
@@ -192,12 +202,19 @@ class RobotControlRuntime:
         self._last_reported_total_deadline_misses = 0
         self._last_reported_total_skipped_periods = 0
 
+        self.cpu_affinity_plan = CpuAffinityPlan.discover()
+        control_cpus = self.cpu_affinity_plan.resolve(
+            self.config.cpu_affinity,
+            context="control_runtime.cpu_affinity",
+        )
+
         self.framework = RobotControlFramework(
             framework_config,
             built_in_mod_root=built_in_mod_root,
             command_defaults=command_defaults,
             ros_node=ros_node,
             control_period=self.config.period_sec,
+            cpu_affinity_plan=self.cpu_affinity_plan,
         )
         self.scheduler = ControlScheduler(
             self._run_control_cycle,
@@ -205,12 +222,13 @@ class RobotControlRuntime:
             compute_budget_sec=self.config.compute_budget_sec,
             deadline_tolerance_sec=self.config.deadline_tolerance_sec,
             spin_wait_us=self.config.spin_wait_us,
-            cpu_affinity=self.config.cpu_affinity,
+            cpu_affinity=control_cpus,
             realtime_priority=self.config.realtime_priority,
             logger=logger,
             fatal_callback=self._on_control_fatal,
             deadline_miss_callback=self._enqueue_deadline_miss,
         )
+        self._log("info", self.cpu_affinity_plan.describe())
         for message in self.framework.startup_messages():
             self._log("info", message)
 

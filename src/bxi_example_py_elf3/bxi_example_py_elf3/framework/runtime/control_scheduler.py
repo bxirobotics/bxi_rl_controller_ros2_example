@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 import os
 from threading import current_thread, Event, Lock, Thread
@@ -10,6 +10,8 @@ import time
 from typing import Protocol
 
 import numpy as np
+
+from bxi_example_py_elf3.framework.platform.cpu_affinity import format_cpu_set
 
 
 class LoggerLike(Protocol):
@@ -51,6 +53,36 @@ def _percentile_summary(values_ns: list[int]) -> dict[str, float]:
     }
 
 
+def _normalize_cpu_affinity(
+    value: int | Iterable[int] | None,
+) -> frozenset[int] | None:
+    """Keep the legacy single-CPU form while accepting resolved CPU sets."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("control CPU affinity must contain CPU indices")
+    if isinstance(value, int):
+        if value == -1:
+            return None
+        if value < 0:
+            raise ValueError("control CPU affinity must be -1 or non-negative")
+        return frozenset((value,))
+    if isinstance(value, (str, bytes)):
+        raise ValueError("control CPU affinity must contain CPU indices")
+    try:
+        cpus = frozenset(value)
+    except TypeError as exc:
+        raise ValueError("control CPU affinity must contain CPU indices") from exc
+    if not cpus:
+        raise ValueError("control CPU affinity must not be empty")
+    if any(
+        isinstance(cpu, bool) or not isinstance(cpu, int) or cpu < 0
+        for cpu in cpus
+    ):
+        raise ValueError("control CPU affinity must contain non-negative indices")
+    return cpus
+
+
 class ControlScheduler:
     """Run all framework states on one drift-free, absolute time line."""
 
@@ -62,7 +94,7 @@ class ControlScheduler:
         compute_budget_sec: float,
         deadline_tolerance_sec: float = 0.001,
         spin_wait_us: int = -1,
-        cpu_affinity: int = -1,
+        cpu_affinity: int | Iterable[int] | None = None,
         realtime_priority: int = 0,
         logger: LoggerLike | None = None,
         fatal_callback: Callable[[str], None] | None = None,
@@ -82,8 +114,7 @@ class ControlScheduler:
             raise ValueError(
                 f"control spin wait must be -1 or in [0, {period_us}) microseconds"
             )
-        if cpu_affinity < -1:
-            raise ValueError("control CPU affinity must be -1 or a CPU index")
+        resolved_cpu_affinity = _normalize_cpu_affinity(cpu_affinity)
         if realtime_priority < 0 or realtime_priority > 99:
             raise ValueError("control realtime priority must be in [0, 99]")
 
@@ -94,7 +125,7 @@ class ControlScheduler:
             round(deadline_tolerance_sec * 1_000_000_000.0)
         )
         self.spin_wait_ns = -1 if spin_wait_us < 0 else int(spin_wait_us) * 1_000
-        self.cpu_affinity = int(cpu_affinity)
+        self.cpu_affinity = resolved_cpu_affinity
         self.realtime_priority = int(realtime_priority)
         self._logger = logger
         self._fatal_callback = fatal_callback
@@ -136,7 +167,9 @@ class ControlScheduler:
         self._thread = thread
         thread.start()
         cpu_description = (
-            "未绑定" if self.cpu_affinity < 0 else str(self.cpu_affinity)
+            "未绑定"
+            if self.cpu_affinity is None
+            else format_cpu_set(self.cpu_affinity)
         )
         priority_description = (
             "普通调度"
@@ -398,13 +431,14 @@ class ControlScheduler:
         return dict(miss_event) if miss_event is not None else None
 
     def _configure_current_thread(self) -> None:
-        if self.cpu_affinity >= 0:
+        if self.cpu_affinity is not None:
             try:
-                os.sched_setaffinity(0, {self.cpu_affinity})
+                os.sched_setaffinity(0, self.cpu_affinity)
             except (AttributeError, OSError) as exc:
                 self._log(
                     "warning",
-                    f"cannot set control CPU affinity to {self.cpu_affinity}: {exc}",
+                    "cannot set control CPU affinity to "
+                    f"{format_cpu_set(self.cpu_affinity)}: {exc}",
                 )
         if self.realtime_priority > 0:
             try:

@@ -1,7 +1,6 @@
 import atexit
 import fcntl
 import os
-import shutil
 import sys
 
 from ament_index_python.packages import get_package_share_path
@@ -15,38 +14,6 @@ from bxi_example_py_elf3.framework.mod_api.hardware_launch import (
 
 LOCK_FILE = "/tmp/bxi_example_hw.lock"
 _lock_fd = None
-RK3588_CPU_PREFIX = "taskset -c 4-7"
-RK3588_IDENTITY_FILES = (
-    "/proc/device-tree/compatible",
-    "/proc/device-tree/model",
-    "/sys/firmware/devicetree/base/compatible",
-    "/sys/firmware/devicetree/base/model",
-)
-
-
-def _is_rk3588_platform():
-    for path in RK3588_IDENTITY_FILES:
-        try:
-            with open(path, "rb") as stream:
-                if b"rk3588" in stream.read().lower():
-                    return True
-        except OSError:
-            continue
-    return False
-
-
-def _demo_process_prefix():
-    if not _is_rk3588_platform():
-        return None
-    if shutil.which("taskset") is None:
-        print(
-            "[bxi platform config] RK3588 detected but taskset is unavailable; "
-            "demo process CPU affinity was not applied.",
-            file=sys.stderr,
-        )
-        return None
-    print("[bxi platform config] RK3588 detected; demo CPU affinity=4-7")
-    return RK3588_CPU_PREFIX
 
 
 def _release_lock():
@@ -137,7 +104,6 @@ def generate_launch_description():
                 package="bxi_example_py_elf3",
                 executable="bxi_example_py_elf3_demo",
                 name="bxi_example_py_elf3_demo",
-                prefix=_demo_process_prefix(),
                 output="screen",
                 parameters=[
                     {"/topic_prefix": "hardware/"},

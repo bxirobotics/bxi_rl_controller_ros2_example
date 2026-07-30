@@ -6,12 +6,14 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+from queue import Queue
 import re
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+from threading import Event, Thread
 import time
 from typing import Protocol
 
@@ -21,6 +23,12 @@ from bxi_example_py_elf3.framework.mod_api.node import (
     ModNode,
     NodeBuildContext,
     NodeFactory,
+)
+from bxi_example_py_elf3.framework.platform.cpu_affinity import (
+    CpuAffinityPlan,
+    CpuAffinityRole,
+    CpuAffinitySpec,
+    format_cpu_set,
 )
 from bxi_example_py_elf3.framework.runtime.runtime_profiles import ResolvedRuntime
 
@@ -80,6 +88,9 @@ class ModNodeSpec:
     resolved_runtime: ResolvedRuntime = field(
         default_factory=lambda: ResolvedRuntime(name="host", mode="host")
     )
+    cpu_affinity: CpuAffinitySpec = CpuAffinitySpec(
+        role=CpuAffinityRole.SHARED
+    )
 
 
 @dataclass
@@ -109,6 +120,108 @@ class _StoppingInstance:
     destroy_at: float
 
 
+@dataclass
+class _SpawnRequest:
+    factory: Callable[..., subprocess.Popen[bytes]]
+    command: Sequence[str]
+    kwargs: dict[str, object]
+    cpu_affinity: frozenset[int] | None
+    completed: Event = field(default_factory=Event)
+    process: subprocess.Popen[bytes] | None = None
+    error: BaseException | None = None
+
+
+class _ProcessSpawner:
+    """Create children with affinity independent of the requesting thread."""
+
+    def __init__(self, baseline_affinity: frozenset[int]) -> None:
+        if not baseline_affinity:
+            raise ValueError("process spawner baseline CPU affinity must not be empty")
+        self._baseline_affinity = baseline_affinity
+        self._requests: Queue[_SpawnRequest | None] = Queue()
+        self._ready = Event()
+        self._startup_error: BaseException | None = None
+        self._closed = False
+        self._thread = Thread(
+            target=self._run,
+            name="bxi-process-spawner",
+            daemon=True,
+        )
+        self._thread.start()
+        self._ready.wait()
+        if self._startup_error is not None:
+            self._closed = True
+            raise RuntimeError(
+                "cannot initialize Mod process spawner with CPU affinity "
+                f"{format_cpu_set(baseline_affinity)}: {self._startup_error}"
+            ) from self._startup_error
+
+    def spawn(
+        self,
+        factory: Callable[..., subprocess.Popen[bytes]],
+        command: Sequence[str],
+        kwargs: dict[str, object],
+        cpu_affinity: frozenset[int] | None,
+    ) -> subprocess.Popen[bytes]:
+        if self._closed:
+            raise RuntimeError("Mod process spawner is closed")
+        request = _SpawnRequest(factory, command, kwargs, cpu_affinity)
+        self._requests.put(request)
+        request.completed.wait()
+        if request.error is not None:
+            raise request.error
+        if request.process is None:
+            raise RuntimeError("Mod process spawner returned no process")
+        return request.process
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._requests.put(None)
+        self._thread.join(timeout=5.0)
+        if self._thread.is_alive():
+            raise RuntimeError("Mod process spawner did not stop within timeout")
+
+    def _run(self) -> None:
+        try:
+            self._set_current_thread_affinity(self._baseline_affinity)
+        except BaseException as exc:
+            self._startup_error = exc
+        finally:
+            self._ready.set()
+        if self._startup_error is not None:
+            return
+
+        while True:
+            request = self._requests.get()
+            if request is None:
+                return
+            target = request.cpu_affinity or self._baseline_affinity
+            try:
+                self._set_current_thread_affinity(target)
+                request.process = request.factory(
+                    request.command,
+                    **request.kwargs,
+                )
+            except BaseException as exc:
+                request.error = exc
+            finally:
+                try:
+                    self._set_current_thread_affinity(self._baseline_affinity)
+                except BaseException as exc:
+                    if request.error is None:
+                        request.error = RuntimeError(
+                            "cannot restore Mod process spawner CPU affinity to "
+                            f"{format_cpu_set(self._baseline_affinity)}: {exc}"
+                        )
+                request.completed.set()
+
+    @staticmethod
+    def _set_current_thread_affinity(cpus: frozenset[int]) -> None:
+        os.sched_setaffinity(0, cpus)
+
+
 class ModNodeManager:
     """Starts, scopes, monitors and deterministically closes Mod nodes."""
 
@@ -118,6 +231,7 @@ class ModNodeManager:
         *,
         logger: object | None = None,
         process_factory: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
+        cpu_affinity_plan: CpuAffinityPlan | None = None,
     ) -> None:
         self._specs = {spec.id: spec for spec in specs}
         if len(self._specs) != len(specs):
@@ -125,6 +239,19 @@ class ModNodeManager:
         self._ordered_ids = self._dependency_order(specs)
         self._logger = logger
         self._process_factory = process_factory
+        self._cpu_affinity_plan = cpu_affinity_plan or CpuAffinityPlan.discover()
+        self._resolved_cpu_affinities = {
+            spec.id: self._cpu_affinity_plan.resolve(
+                spec.cpu_affinity,
+                context=f"Mod node '{spec.id}' scheduling.cpu_affinity",
+            )
+            for spec in specs
+        }
+        self._process_spawner = (
+            _ProcessSpawner(self._cpu_affinity_plan.allowed_cpus)
+            if any(spec.execution == "process" for spec in specs)
+            else None
+        )
         self._executor: ExecutorLike | None = None
         self._running: dict[str, _RunningNode] = {}
         self._faults: dict[str, str] = {}
@@ -356,6 +483,12 @@ class ModNodeManager:
                         if spec.resolved_runtime.root is not None
                         else None
                     ),
+                    "cpu_affinity": spec.cpu_affinity.label,
+                    "resolved_cpu_affinity": (
+                        format_cpu_set(self._resolved_cpu_affinities[spec.id])
+                        if self._resolved_cpu_affinities[spec.id] is not None
+                        else None
+                    ),
                     **spec.manifest,
                 }
             )
@@ -387,6 +520,8 @@ class ModNodeManager:
             shutil.rmtree(self._parameter_directory, ignore_errors=True)
             self._parameter_directory = None
             self._parameter_files.clear()
+        if self._process_spawner is not None:
+            self._process_spawner.close()
 
     def _desired_node_ids(self) -> set[str]:
         scoped_states = self._active_states | self._prepared_states
@@ -599,9 +734,14 @@ class ModNodeManager:
         }
         if cwd is not None:
             kwargs["cwd"] = cwd
-        return self._process_factory(
+        spawner = self._process_spawner
+        if spawner is None:
+            raise RuntimeError("Mod process spawner is not available")
+        return spawner.spawn(
+            self._process_factory,
             command,
-            **kwargs,
+            kwargs,
+            self._resolved_cpu_affinities[spec.id],
         )
 
     def _parameter_file(self, spec: ModNodeSpec) -> Path:

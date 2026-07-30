@@ -30,6 +30,10 @@ from bxi_example_py_elf3.framework.mod_api.mod import (
     StateFactory,
 )
 from bxi_example_py_elf3.framework.mod_api.node import NodeFactory
+from bxi_example_py_elf3.framework.platform.cpu_affinity import (
+    CpuAffinityRole,
+    read_cpu_affinity,
+)
 from bxi_example_py_elf3.framework.runtime.mod_nodes import EnvironmentEdit, ModNodeSpec
 from bxi_example_py_elf3.framework.runtime.resource_manager import ResourceManager
 from bxi_example_py_elf3.framework.runtime.runtime_requirements import (
@@ -744,6 +748,7 @@ def _load_mod_node_specs(
             "depends_on",
             "shutdown",
             "runtime_profile",
+            "scheduling",
         }
         unknown_fields = set(node) - allowed_fields
         if unknown_fields:
@@ -829,6 +834,27 @@ def _load_mod_node_specs(
                 f"{context}.runtime_profile uses portable mode, which requires "
                 "execution: process"
             )
+        scheduling = _mapping(node.get("scheduling"), f"{context}.scheduling")
+        scheduling_unknown = set(scheduling) - {"cpu_affinity"}
+        if scheduling_unknown:
+            raise ValueError(
+                f"{context}.scheduling has unknown fields: "
+                f"{sorted(scheduling_unknown)}"
+            )
+        if execution != "process" and "scheduling" in node:
+            raise ValueError(
+                f"{context}.scheduling is only valid for process execution; "
+                "in-process nodes share the framework process"
+            )
+        cpu_affinity = read_cpu_affinity(
+            scheduling.get("cpu_affinity"),
+            f"{context}.scheduling.cpu_affinity",
+            default=(
+                CpuAffinityRole.SHARED
+                if execution == "process"
+                else CpuAffinityRole.INHERIT
+            ),
+        )
         lifecycle = node.get("lifecycle", "mod")
         if lifecycle not in ("mod", "state"):
             raise ValueError(f"{context}.lifecycle must be 'mod' or 'state'")
@@ -1008,6 +1034,8 @@ def _load_mod_node_specs(
             "runtime_profile",
             "runtime_mode",
             "runtime_root",
+            "cpu_affinity",
+            "resolved_cpu_affinity",
         }
         conflicts = set(manifest) & reserved_manifest_fields
         if conflicts:
@@ -1139,6 +1167,7 @@ def _load_mod_node_specs(
                     if resolved_runtime is not None
                     else ResolvedRuntime(name="unavailable", mode="host")
                 ),
+                cpu_affinity=cpu_affinity,
             )
         )
     return specs
