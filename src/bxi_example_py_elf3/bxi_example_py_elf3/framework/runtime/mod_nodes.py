@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -16,7 +17,11 @@ from typing import Protocol
 
 import yaml
 
-from bxi_example_py_elf3.framework.mod_api.node import ModNode, NodeBuildContext, NodeFactory
+from bxi_example_py_elf3.framework.mod_api.node import (
+    ModNode,
+    NodeBuildContext,
+    NodeFactory,
+)
 from bxi_example_py_elf3.framework.runtime.runtime_requirements import (
     vendor_library_paths,
     vendor_python_paths,
@@ -29,6 +34,18 @@ class ExecutorLike(Protocol):
 
     def remove_node(self, node: object) -> object:
         ...
+
+
+@dataclass(frozen=True)
+class EnvironmentEdit:
+    """One declarative child-process environment change."""
+
+    value: str | None = None
+    prepend: tuple[str, ...] = ()
+    append: tuple[str, ...] = ()
+    separator: str = os.pathsep
+    existing_only: bool = False
+    unset: bool = False
 
 
 @dataclass(frozen=True)
@@ -53,8 +70,16 @@ class ModNodeSpec:
     remappings: Mapping[str, str] = field(default_factory=dict)
     namespace: str = ""
     executable_path: Path | None = None
+    interpreter: str | None = None
+    environment: Mapping[str, EnvironmentEdit] = field(default_factory=dict)
+    cwd: Path | None = None
+    depends_on: tuple[str, ...] = ()
+    shutdown_signal: signal.Signals = signal.SIGTERM
+    shutdown_terminate_after: float | None = None
+    shutdown_kill_after: float = 3.0
     unavailable_error: str | None = None
     warnings: tuple[str, ...] = ()
+    restart_non_retryable_exit_codes: tuple[int, ...] = ()
 
 
 @dataclass
@@ -72,6 +97,8 @@ class _RunningNode:
 class _StoppingProcess:
     node_id: str
     process: subprocess.Popen[bytes]
+    pgid: int | None
+    terminate_at: float | None
     kill_at: float
 
 
@@ -93,6 +120,9 @@ class ModNodeManager:
         process_factory: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
     ) -> None:
         self._specs = {spec.id: spec for spec in specs}
+        if len(self._specs) != len(specs):
+            raise ValueError("duplicate Mod node ids")
+        self._ordered_ids = self._dependency_order(specs)
         self._logger = logger
         self._process_factory = process_factory
         self._executor: ExecutorLike | None = None
@@ -108,7 +138,8 @@ class ModNodeManager:
         self._closed = False
 
     def start(self) -> None:
-        for spec in self._specs.values():
+        for node_id in self._ordered_ids:
+            spec = self._specs[node_id]
             for warning in spec.warnings:
                 self._log("warning", warning)
             if spec.unavailable_error is not None:
@@ -201,15 +232,36 @@ class ModNodeManager:
         now = time.monotonic()
         self._poll_stopping_processes(now)
         self._poll_stopping_instances(now)
-        for node_id, handle in tuple(self._running.items()):
+        for node_id in self._ordered_ids:
+            handle = self._running.get(node_id)
+            if handle is None:
+                continue
             process = handle.process
             if process is None or node_id not in desired:
                 continue
             exit_code = process.poll()
             if exit_code is None:
                 continue
+            stopping = self._make_stopping_process(node_id, process, handle.spec)
+            if self._stopping_process_alive(stopping):
+                self._signal_stopping_process(
+                    stopping,
+                    handle.spec.shutdown_signal,
+                )
+                self._stopping_processes[node_id] = stopping
             handle.process = None
             handle.last_exit_code = exit_code
+            if exit_code in handle.spec.restart_non_retryable_exit_codes:
+                message = (
+                    f"Mod node '{node_id}' exited with non-retryable code "
+                    f"{exit_code}; restart suppressed"
+                )
+                self._faults[node_id] = message
+                self._fault_attempts[node_id] = handle.restart_attempts
+                self._running.pop(node_id, None)
+                self._log("error", message)
+                self._fault_dependents(node_id, message)
+                continue
             if handle.restart_attempts >= handle.spec.restart_max_attempts:
                 message = (
                     f"Mod node '{node_id}' exited with code {exit_code}; "
@@ -219,6 +271,7 @@ class ModNodeManager:
                 self._fault_attempts[node_id] = handle.restart_attempts
                 self._running.pop(node_id, None)
                 self._log("error", message)
+                self._fault_dependents(node_id, message)
                 continue
             handle.restart_attempts += 1
             handle.next_restart_at = now + handle.spec.restart_delay
@@ -229,15 +282,20 @@ class ModNodeManager:
                 f"{handle.spec.restart_max_attempts} scheduled",
             )
 
-        for node_id, handle in tuple(self._running.items()):
+        for node_id in self._ordered_ids:
+            handle = self._running.get(node_id)
+            if handle is None:
+                continue
             if (
                 node_id not in desired
                 or handle.spec.execution != "process"
                 or handle.process is not None
+                or node_id in self._stopping_processes
                 or now < handle.next_restart_at
             ):
                 continue
             try:
+                self._ensure_dependencies_running(handle.spec)
                 handle.process = self._spawn_process(handle.spec)
                 self._log("info", f"restarted Mod node '{node_id}'")
             except Exception as exc:
@@ -247,6 +305,7 @@ class ModNodeManager:
                     self._fault_attempts[node_id] = handle.restart_attempts
                     self._running.pop(node_id, None)
                     self._log("error", message)
+                    self._fault_dependents(node_id, message)
                 else:
                     handle.restart_attempts += 1
                     handle.next_restart_at = now + handle.spec.restart_delay
@@ -255,7 +314,8 @@ class ModNodeManager:
     def snapshot(self) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
         desired = self._desired_node_ids()
-        for spec in self._specs.values():
+        for node_id in self._ordered_ids:
+            spec = self._specs[node_id]
             handle = self._running.get(spec.id)
             if spec.unavailable_error is not None:
                 status = "unavailable"
@@ -280,6 +340,7 @@ class ModNodeManager:
                     "execution": spec.execution,
                     "lifecycle": spec.lifecycle,
                     "states": list(spec.states),
+                    "depends_on": list(spec.depends_on),
                     "status": status,
                     "restart_attempts": (
                         handle.restart_attempts
@@ -298,10 +359,15 @@ class ModNodeManager:
             return
         self._closed = True
         self.detach_executor()
-        for node_id in reversed(tuple(self._running)):
+        for node_id in reversed(self._ordered_ids):
             self._stop_node(node_id, wait=True)
         for stopping in tuple(self._stopping_processes.values()):
-            self._wait_for_process(stopping.process)
+            if not self._wait_for_stopping_process(stopping):
+                self._log(
+                    "error",
+                    f"Mod node '{stopping.node_id}' still has live processes "
+                    "after SIGKILL",
+                )
         self._stopping_processes.clear()
         for stopping in tuple(self._stopping_instances.values()):
             self._destroy_instance(stopping.node_id, stopping.instance)
@@ -317,12 +383,23 @@ class ModNodeManager:
 
     def _desired_node_ids(self) -> set[str]:
         scoped_states = self._active_states | self._prepared_states
-        return {
+        desired = {
             spec.id
             for spec in self._specs.values()
             if spec.unavailable_error is None
             and (spec.lifecycle == "mod" or bool(set(spec.states) & scoped_states))
         }
+        pending = list(desired)
+        while pending:
+            node_id = pending.pop()
+            for dependency in self._specs[node_id].depends_on:
+                if (
+                    self._specs[dependency].unavailable_error is None
+                    and dependency not in desired
+                ):
+                    desired.add(dependency)
+                    pending.append(dependency)
+        return desired
 
     def _reconcile(self) -> None:
         if self._closed:
@@ -332,10 +409,12 @@ class ModNodeManager:
             if node_id not in desired:
                 self._faults.pop(node_id, None)
                 self._fault_attempts.pop(node_id, None)
-        for node_id in reversed(tuple(self._running)):
+        for node_id in reversed(self._ordered_ids):
             if node_id not in desired:
                 self._stop_node(node_id)
-        for node_id in desired:
+        for node_id in self._ordered_ids:
+            if node_id not in desired:
+                continue
             if node_id in self._running:
                 continue
             if node_id in self._faults:
@@ -369,6 +448,7 @@ class ModNodeManager:
         if spec.id in self._stopping_processes or spec.id in self._stopping_instances:
             raise RuntimeError(f"Mod node '{spec.id}' is still stopping")
         if spec.execution == "process":
+            self._ensure_dependencies_running(spec)
             process = self._spawn_process(spec)
             exit_code = process.poll()
             if exit_code is not None:
@@ -443,6 +523,8 @@ class ModNodeManager:
             environment["LD_LIBRARY_PATH"] = os.pathsep.join(
                 dict.fromkeys(library_paths)
             )
+        environment["BXI_MOD_ROOT"] = str(spec.mod_root)
+        self._apply_environment(spec, environment)
         if spec.runtime == "python":
             command = [
                 sys.executable,
@@ -454,6 +536,28 @@ class ModNodeManager:
                 spec.local_name,
             ]
             cwd = None
+        elif spec.runtime == "command":
+            executable = spec.executable_path
+            if executable is None:
+                raise RuntimeError(f"Mod node '{spec.id}' has no resolved command")
+            command = []
+            if spec.interpreter is not None:
+                command.append(
+                    self._resolve_interpreter(
+                        self._expand_environment(spec.interpreter, environment),
+                        spec.id,
+                    )
+                )
+            command.extend(
+                (
+                    str(executable),
+                    *(
+                        self._expand_environment(argument, environment)
+                        for argument in spec.arguments
+                    ),
+                )
+            )
+            cwd = str(spec.cwd or spec.mod_root)
         else:
             executable = spec.executable_path
             if executable is None:
@@ -540,26 +644,39 @@ class ModNodeManager:
                     destroy_at=time.monotonic() + 0.1,
                 )
         process = handle.process
-        if process is not None and process.poll() is None:
-            self._signal_process(process, signal.SIGTERM)
-            if wait:
-                self._wait_for_process(process)
+        if process is not None:
+            stopping = self._make_stopping_process(node_id, process, handle.spec)
+            if not self._stopping_process_alive(stopping):
+                stopping = None
             else:
-                self._stopping_processes[node_id] = _StoppingProcess(
-                    node_id=node_id,
-                    process=process,
-                    kill_at=time.monotonic() + 3.0,
+                self._signal_stopping_process(
+                    stopping,
+                    handle.spec.shutdown_signal,
                 )
+        else:
+            stopping = None
+        if stopping is not None:
+            if wait:
+                if not self._wait_for_stopping_process(stopping):
+                    self._log(
+                        "error",
+                        f"Mod node '{node_id}' still has live processes after SIGKILL",
+                    )
+            else:
+                self._stopping_processes[node_id] = stopping
         self._log("info", f"stopped Mod node '{node_id}'")
 
     def _poll_stopping_processes(self, now: float) -> None:
         for node_id, stopping in tuple(self._stopping_processes.items()):
-            if stopping.process.poll() is not None:
+            if not self._stopping_process_alive(stopping):
                 self._stopping_processes.pop(node_id, None)
                 continue
+            if stopping.terminate_at is not None and now >= stopping.terminate_at:
+                self._signal_stopping_process(stopping, signal.SIGTERM)
+                stopping.terminate_at = None
             if now < stopping.kill_at:
                 continue
-            self._signal_process(stopping.process, signal.SIGKILL)
+            self._signal_stopping_process(stopping, signal.SIGKILL)
             stopping.kill_at = float("inf")
             self._log("warning", f"killed unresponsive Mod node '{node_id}'")
 
@@ -577,14 +694,89 @@ class ModNodeManager:
             self._log("warning", f"failed to destroy Mod node '{node_id}': {exc}")
 
     @classmethod
-    def _wait_for_process(cls, process: subprocess.Popen[bytes]) -> None:
-        if process.poll() is not None:
-            return
+    def _wait_for_stopping_process(cls, stopping: _StoppingProcess) -> bool:
+        final_deadline: float | None = None
+        while cls._stopping_process_alive(stopping):
+            now = time.monotonic()
+            if stopping.kill_at == float("inf"):
+                if final_deadline is None:
+                    cls._signal_stopping_process(stopping, signal.SIGKILL)
+                    final_deadline = now + 3.0
+                elif now >= final_deadline:
+                    return False
+                time.sleep(0.05)
+                continue
+            if stopping.terminate_at is not None and now >= stopping.terminate_at:
+                cls._signal_stopping_process(stopping, signal.SIGTERM)
+                stopping.terminate_at = None
+                continue
+            if now >= stopping.kill_at:
+                cls._signal_stopping_process(stopping, signal.SIGKILL)
+                stopping.kill_at = float("inf")
+                final_deadline = now + 3.0
+                continue
+            deadlines = [stopping.kill_at]
+            if stopping.terminate_at is not None:
+                deadlines.append(stopping.terminate_at)
+            time.sleep(min(0.05, max(0.0, min(deadlines) - now)))
+        return True
+
+    @staticmethod
+    def _make_stopping_process(
+        node_id: str,
+        process: subprocess.Popen[bytes],
+        spec: ModNodeSpec,
+    ) -> _StoppingProcess:
+        now = time.monotonic()
+        pid = getattr(process, "pid", None)
+        pgid = (
+            pid
+            if isinstance(process, subprocess.Popen)
+            and isinstance(pid, int)
+            and pid > 1
+            and pid != os.getpgrp()
+            else None
+        )
+        return _StoppingProcess(
+            node_id=node_id,
+            process=process,
+            pgid=pgid,
+            terminate_at=(
+                now + spec.shutdown_terminate_after
+                if spec.shutdown_terminate_after is not None
+                else None
+            ),
+            kill_at=now + spec.shutdown_kill_after,
+        )
+
+    @staticmethod
+    def _stopping_process_alive(stopping: _StoppingProcess) -> bool:
+        leader_alive = stopping.process.poll() is None
+        if stopping.pgid is None:
+            return leader_alive
         try:
-            process.wait(timeout=3.0)
-        except subprocess.TimeoutExpired:
-            cls._signal_process(process, signal.SIGKILL)
-            process.wait(timeout=3.0)
+            os.killpg(stopping.pgid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+
+    @classmethod
+    def _signal_stopping_process(
+        cls,
+        stopping: _StoppingProcess,
+        value: signal.Signals,
+    ) -> None:
+        if stopping.pgid is not None:
+            try:
+                os.killpg(stopping.pgid, value)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                pass
+            return
+        cls._signal_process(stopping.process, value)
 
     @staticmethod
     def _signal_process(
@@ -595,12 +787,149 @@ class ModNodeManager:
             try:
                 os.killpg(pid, value)
                 return
-            except (ProcessLookupError, PermissionError):
-                pass
-        if value == signal.SIGTERM:
+            except ProcessLookupError:
+                return
+            except PermissionError:
+                return
+        send_signal = getattr(process, "send_signal", None)
+        if callable(send_signal):
+            send_signal(value)
+        elif value == signal.SIGTERM:
             process.terminate()
         else:
             process.kill()
+
+    def _ensure_dependencies_running(self, spec: ModNodeSpec) -> None:
+        for dependency in spec.depends_on:
+            dependency_spec = self._specs[dependency]
+            if dependency_spec.unavailable_error is not None:
+                raise RuntimeError(
+                    f"Mod node '{spec.id}' dependency '{dependency}' is unavailable: "
+                    f"{dependency_spec.unavailable_error}"
+                )
+            handle = self._running.get(dependency)
+            if handle is None:
+                raise RuntimeError(
+                    f"Mod node '{spec.id}' dependency '{dependency}' is not running"
+                )
+            if dependency_spec.execution == "process" and handle.process is None:
+                raise RuntimeError(
+                    f"Mod node '{spec.id}' dependency '{dependency}' is restarting"
+                )
+            if handle.process is not None and handle.process.poll() is not None:
+                raise RuntimeError(
+                    f"Mod node '{spec.id}' dependency '{dependency}' has exited"
+                )
+
+    def _fault_dependents(self, failed_node_id: str, reason: str) -> None:
+        affected = {failed_node_id}
+        for node_id in self._ordered_ids:
+            if set(self._specs[node_id].depends_on) & affected:
+                affected.add(node_id)
+        for node_id in reversed(self._ordered_ids):
+            if node_id == failed_node_id or node_id not in affected:
+                continue
+            self._stop_node(node_id)
+            message = (
+                f"Mod node '{node_id}' stopped because dependency "
+                f"'{failed_node_id}' faulted: {reason}"
+            )
+            self._faults[node_id] = message
+            self._fault_attempts[node_id] = 0
+            self._log("error", message)
+
+    @staticmethod
+    def _dependency_order(specs: Sequence[ModNodeSpec]) -> tuple[str, ...]:
+        by_id = {spec.id: spec for spec in specs}
+        order: list[str] = []
+        visiting: list[str] = []
+        visited: set[str] = set()
+
+        def visit(node_id: str) -> None:
+            if node_id in visited:
+                return
+            if node_id in visiting:
+                cycle = visiting[visiting.index(node_id) :] + [node_id]
+                raise ValueError("Mod node dependency cycle: " + " -> ".join(cycle))
+            visiting.append(node_id)
+            for dependency in by_id[node_id].depends_on:
+                if dependency not in by_id:
+                    raise ValueError(
+                        f"Mod node '{node_id}' depends on unknown node "
+                        f"'{dependency}'"
+                    )
+                visit(dependency)
+            visiting.pop()
+            visited.add(node_id)
+            order.append(node_id)
+
+        for spec in specs:
+            visit(spec.id)
+        return tuple(order)
+
+    @classmethod
+    def _apply_environment(
+        cls,
+        spec: ModNodeSpec,
+        environment: dict[str, str],
+    ) -> None:
+        for name, edit in spec.environment.items():
+            if edit.unset:
+                environment.pop(name, None)
+                continue
+            if edit.value is not None:
+                environment[name] = cls._expand_environment(edit.value, environment)
+            current = environment.get(name, "")
+            prepend = [
+                cls._expand_environment(value, environment) for value in edit.prepend
+            ]
+            append = [
+                cls._expand_environment(value, environment) for value in edit.append
+            ]
+            if edit.existing_only:
+                prepend = [value for value in prepend if os.path.exists(value)]
+                append = [value for value in append if os.path.exists(value)]
+            parts = [*prepend]
+            if current:
+                parts.append(current)
+            parts.extend(append)
+            if edit.prepend or edit.append:
+                environment[name] = edit.separator.join(
+                    value for value in parts if value
+                )
+
+    @staticmethod
+    def _expand_environment(value: str, environment: Mapping[str, str]) -> str:
+        pattern = re.compile(
+            r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}"
+            r"|\$([A-Za-z_][A-Za-z0-9_]*)"
+        )
+
+        def replace(match: re.Match[str]) -> str:
+            name = match.group(1) or match.group(3)
+            default = match.group(2)
+            current = environment.get(name, "")
+            return current if current else (default or "")
+
+        return pattern.sub(replace, value)
+
+    @staticmethod
+    def _resolve_interpreter(value: str, node_id: str) -> str:
+        if not value:
+            raise RuntimeError(f"Mod node '{node_id}' resolved an empty interpreter")
+        if os.sep in value:
+            candidate = Path(value).expanduser()
+            if not candidate.is_file() or not os.access(candidate, os.X_OK):
+                raise RuntimeError(
+                    f"Mod node '{node_id}' interpreter is not executable: {value}"
+                )
+            return str(candidate)
+        resolved = shutil.which(value)
+        if resolved is None:
+            raise RuntimeError(
+                f"Mod node '{node_id}' interpreter was not found: {value}"
+            )
+        return resolved
 
     def _log(self, level: str, message: str) -> None:
         logger = self._logger
@@ -631,4 +960,4 @@ class ModNodeManager:
         print(f"{level}: {message}")
 
 
-__all__ = ["ExecutorLike", "ModNodeManager", "ModNodeSpec"]
+__all__ = ["EnvironmentEdit", "ExecutorLike", "ModNodeManager", "ModNodeSpec"]

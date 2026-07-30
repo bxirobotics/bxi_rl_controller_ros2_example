@@ -327,7 +327,7 @@ outputs:
     - output: btn_1=1
       when:
         any:
-          - [shoulder.right_event, button.x_event]
+          - [shoulder.right_event, button.x_event, {released: shoulder.left_event}]
           - [keyboard.normal_event]
 
     - output: btn_2=1
@@ -347,7 +347,7 @@ outputs:
     - output: btn_5=1
       when:
         any:
-          - [shoulder.left_event, button.x_event]
+          - [shoulder.left_event, button.x_event, {released: shoulder.right_event}]
           - [keyboard.dance_event]
 
     - output: btn_6=1
@@ -419,7 +419,11 @@ outputs:
       when:
         any:
           - [trigger.right_event, button.y_event]
-          - [keyboard.normal_depth_event]
+
+    - output: btn_10=9
+      when:
+        any:
+          - [shoulder.left_event, shoulder.right_event, button.x_event]
 
 #自定义命令
 system:

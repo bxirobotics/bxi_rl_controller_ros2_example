@@ -9,6 +9,7 @@ import importlib.util
 import os
 from pathlib import Path
 import re
+import signal
 import sys
 from types import ModuleType
 from typing import cast
@@ -29,7 +30,7 @@ from bxi_example_py_elf3.framework.mod_api.mod import (
     StateFactory,
 )
 from bxi_example_py_elf3.framework.mod_api.node import NodeFactory
-from bxi_example_py_elf3.framework.runtime.mod_nodes import ModNodeSpec
+from bxi_example_py_elf3.framework.runtime.mod_nodes import EnvironmentEdit, ModNodeSpec
 from bxi_example_py_elf3.framework.runtime.resource_manager import ResourceManager
 from bxi_example_py_elf3.framework.runtime.runtime_requirements import (
     RuntimeRequirementReport,
@@ -298,6 +299,7 @@ def load_mod_runtime(
         resources.preload_eager()
         config, factories = _compose_config(base_config, ordered, definitions)
         _validate_mod_node_states(node_specs, config)
+        _validate_mod_node_dependencies(node_specs)
     except Exception:
         resources.close()
         _remove_module_prefixes(
@@ -723,6 +725,11 @@ def _load_mod_node_specs(
             "manifest",
             "restart",
             "runtime_requirements",
+            "interpreter",
+            "environment",
+            "cwd",
+            "depends_on",
+            "shutdown",
         }
         unknown_fields = set(node) - allowed_fields
         if unknown_fields:
@@ -733,9 +740,20 @@ def _load_mod_node_specs(
             raise ValueError(f"{context}.entrypoint must be a non-empty string")
 
         runtime = node.get("runtime", "python")
-        if runtime not in ("python", "executable", "ros"):
+        if runtime not in ("python", "executable", "ros", "command"):
             raise ValueError(
-                f"{context}.runtime must be 'python', 'executable' or 'ros'"
+                f"{context}.runtime must be 'python', 'executable', 'ros' "
+                "or 'command'"
+            )
+        interpreter = node.get("interpreter")
+        if runtime == "command":
+            if interpreter is not None and (
+                not isinstance(interpreter, str) or not interpreter.strip()
+            ):
+                raise ValueError(f"{context}.interpreter must be a non-empty string")
+        elif interpreter is not None:
+            raise ValueError(
+                f"{context}.interpreter is only valid for runtime 'command'"
             )
         module_name = ""
         function_name = ""
@@ -753,10 +771,17 @@ def _load_mod_node_specs(
                 entrypoint,
                 context,
             )
-        else:
+        elif runtime == "ros":
             executable_path, executable_error = _resolve_ros_executable(
                 entrypoint,
                 context,
+            )
+        else:
+            executable_path, executable_error = _resolve_mod_command(
+                mod,
+                entrypoint,
+                context,
+                require_executable=interpreter is None,
             )
 
         execution = node.get(
@@ -847,6 +872,34 @@ def _load_mod_node_specs(
             raise ValueError(
                 f"{context}.namespace must be empty or an absolute ROS namespace"
             )
+        if runtime == "command" and (params or remappings or namespace):
+            raise ValueError(
+                f"{context} command nodes do not accept params, remappings or namespace"
+            )
+        environment = _environment_edits(
+            node.get("environment"),
+            f"{context}.environment",
+        )
+        if runtime != "command" and environment:
+            raise ValueError(
+                f"{context}.environment is only valid for runtime 'command'"
+            )
+        raw_cwd = node.get("cwd")
+        if runtime == "command":
+            cwd = _resolve_mod_directory(mod, raw_cwd, f"{context}.cwd")
+        elif raw_cwd is not None:
+            raise ValueError(f"{context}.cwd is only valid for runtime 'command'")
+        else:
+            cwd = None
+        raw_dependencies = _string_list(
+            node.get("depends_on", ()),
+            f"{context}.depends_on",
+        )
+        depends_on = tuple(
+            dict.fromkeys(
+                _qualify(mod.id, dependency) for dependency in raw_dependencies
+            )
+        )
         manifest = dict(_mapping(node.get("manifest"), f"{context}.manifest"))
         label = manifest.get("label")
         if not isinstance(label, str) or not label.strip():
@@ -858,6 +911,7 @@ def _load_mod_node_specs(
             "execution",
             "lifecycle",
             "states",
+            "depends_on",
             "status",
             "restart_attempts",
             "error",
@@ -872,7 +926,11 @@ def _load_mod_node_specs(
         restart = _mapping(node.get("restart"), f"{context}.restart")
         if execution != "process" and restart:
             raise ValueError(f"{context}.restart is only valid for process execution")
-        restart_unknown = set(restart) - {"max_attempts", "delay"}
+        restart_unknown = set(restart) - {
+            "max_attempts",
+            "delay",
+            "non_retryable_exit_codes",
+        }
         if restart_unknown:
             raise ValueError(
                 f"{context}.restart has unknown fields: {sorted(restart_unknown)}"
@@ -893,6 +951,58 @@ def _load_mod_node_specs(
             or restart_delay < 0.0
         ):
             raise ValueError(f"{context}.restart.delay must be a non-negative number")
+        raw_non_retryable_exit_codes = restart.get(
+            "non_retryable_exit_codes",
+            (),
+        )
+        if not isinstance(raw_non_retryable_exit_codes, Sequence) or isinstance(
+            raw_non_retryable_exit_codes,
+            (str, bytes),
+        ):
+            raise ValueError(
+                f"{context}.restart.non_retryable_exit_codes must be a list"
+            )
+        non_retryable_exit_codes: list[int] = []
+        for exit_code in raw_non_retryable_exit_codes:
+            if (
+                isinstance(exit_code, bool)
+                or not isinstance(exit_code, int)
+                or not 1 <= exit_code <= 255
+            ):
+                raise ValueError(
+                    f"{context}.restart.non_retryable_exit_codes entries must be "
+                    "integers from 1 to 255"
+                )
+            non_retryable_exit_codes.append(exit_code)
+
+        shutdown = _mapping(node.get("shutdown"), f"{context}.shutdown")
+        if execution != "process" and shutdown:
+            raise ValueError(f"{context}.shutdown is only valid for process execution")
+        shutdown_unknown = set(shutdown) - {
+            "signal",
+            "terminate_after",
+            "kill_after",
+        }
+        if shutdown_unknown:
+            raise ValueError(
+                f"{context}.shutdown has unknown fields: {sorted(shutdown_unknown)}"
+            )
+        shutdown_signal = _shutdown_signal(
+            shutdown.get("signal", "SIGTERM"),
+            f"{context}.shutdown.signal",
+        )
+        terminate_after = _optional_nonnegative_number(
+            shutdown.get("terminate_after"),
+            f"{context}.shutdown.terminate_after",
+        )
+        kill_after = _nonnegative_number(
+            shutdown.get("kill_after", 3.0),
+            f"{context}.shutdown.kill_after",
+        )
+        if terminate_after is not None and terminate_after >= kill_after:
+            raise ValueError(
+                f"{context}.shutdown.terminate_after must be less than kill_after"
+            )
 
         node_id = _qualify(mod.id, local_name)
         node_name = re.sub(r"[^A-Za-z0-9_]", "_", node_id)
@@ -914,12 +1024,22 @@ def _load_mod_node_specs(
                 manifest=manifest,
                 restart_max_attempts=max_attempts,
                 restart_delay=float(restart_delay),
+                restart_non_retryable_exit_codes=tuple(
+                    dict.fromkeys(non_retryable_exit_codes)
+                ),
                 factory=factory,
                 runtime=runtime,
                 arguments=arguments,
                 remappings=remappings,
                 namespace=namespace,
                 executable_path=executable_path,
+                interpreter=cast(str | None, interpreter),
+                environment=environment,
+                cwd=cwd,
+                depends_on=depends_on,
+                shutdown_signal=shutdown_signal,
+                shutdown_terminate_after=terminate_after,
+                shutdown_kill_after=kill_after,
                 unavailable_error=unavailable_error,
                 warnings=runtime_warnings,
             )
@@ -948,6 +1068,54 @@ def _resolve_mod_executable(
     display_path = Path("bin") / runtime_platform_tag() / relative
     error = _executable_error(candidate, str(display_path))
     return (candidate if error is None else None), error
+
+
+def _resolve_mod_command(
+    mod: _DiscoveredMod,
+    entrypoint: str,
+    context: str,
+    *,
+    require_executable: bool,
+) -> tuple[Path | None, str | None]:
+    relative = Path(entrypoint)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in ("", ".", "..") for part in relative.parts)
+    ):
+        raise ValueError(
+            f"{context}.entrypoint must be a safe path relative to the Mod directory"
+        )
+    candidate = (mod.root / relative).resolve()
+    root = mod.root.resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError(f"{context}.entrypoint escapes the Mod directory")
+    if not candidate.is_file():
+        return None, f"missing command '{entrypoint}'"
+    if require_executable and not os.access(candidate, os.X_OK):
+        return None, f"command is not executable: '{entrypoint}'"
+    return candidate, None
+
+
+def _resolve_mod_directory(
+    mod: _DiscoveredMod,
+    value: object,
+    context: str,
+) -> Path:
+    if value is None:
+        return mod.root.resolve()
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{context} must be a non-empty relative directory")
+    relative = Path(value)
+    if relative.is_absolute() or any(part in ("", "..") for part in relative.parts):
+        raise ValueError(f"{context} must be a safe path relative to the Mod directory")
+    candidate = (mod.root / relative).resolve()
+    root = mod.root.resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError(f"{context} escapes the Mod directory")
+    if not candidate.is_dir():
+        raise ValueError(f"{context} directory does not exist: {value!r}")
+    return candidate
 
 
 def _resolve_ros_executable(
@@ -1001,6 +1169,89 @@ def _string_mapping(value: object, context: str) -> dict[str, str]:
     return result
 
 
+def _environment_edits(
+    value: object,
+    context: str,
+) -> dict[str, EnvironmentEdit]:
+    mapping = _mapping(value, context)
+    result: dict[str, EnvironmentEdit] = {}
+    for name, raw_edit in mapping.items():
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            raise ValueError(f"{context} has invalid environment name: {name!r}")
+        if isinstance(raw_edit, str):
+            result[name] = EnvironmentEdit(value=raw_edit)
+            continue
+        edit = _mapping(raw_edit, f"{context}.{name}")
+        unknown = set(edit) - {
+            "set",
+            "prepend",
+            "append",
+            "separator",
+            "existing_only",
+            "unset",
+        }
+        if unknown:
+            raise ValueError(f"{context}.{name} has unknown fields: {sorted(unknown)}")
+        set_value = edit.get("set")
+        if set_value is not None and not isinstance(set_value, str):
+            raise ValueError(f"{context}.{name}.set must be a string")
+        prepend = _string_list(
+            edit.get("prepend", ()),
+            f"{context}.{name}.prepend",
+        )
+        append = _string_list(
+            edit.get("append", ()),
+            f"{context}.{name}.append",
+        )
+        separator = edit.get("separator", os.pathsep)
+        if not isinstance(separator, str) or not separator:
+            raise ValueError(f"{context}.{name}.separator must be a non-empty string")
+        existing_only = edit.get("existing_only", False)
+        if not isinstance(existing_only, bool):
+            raise ValueError(f"{context}.{name}.existing_only must be a boolean")
+        unset = edit.get("unset", False)
+        if not isinstance(unset, bool):
+            raise ValueError(f"{context}.{name}.unset must be a boolean")
+        if unset and (set_value is not None or prepend or append):
+            raise ValueError(
+                f"{context}.{name}.unset cannot be combined with set, prepend or append"
+            )
+        if not unset and set_value is None and not prepend and not append:
+            raise ValueError(f"{context}.{name} must set, prepend, append or unset")
+        result[name] = EnvironmentEdit(
+            value=cast(str | None, set_value),
+            prepend=prepend,
+            append=append,
+            separator=separator,
+            existing_only=existing_only,
+            unset=unset,
+        )
+    return result
+
+
+def _shutdown_signal(value: object, context: str) -> signal.Signals:
+    if not isinstance(value, str) or value not in {
+        "SIGHUP",
+        "SIGINT",
+        "SIGQUIT",
+        "SIGTERM",
+    }:
+        raise ValueError(f"{context} must be SIGHUP, SIGINT, SIGQUIT or SIGTERM")
+    return signal.Signals(getattr(signal, value))
+
+
+def _nonnegative_number(value: object, context: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise ValueError(f"{context} must be a non-negative number")
+    return float(value)
+
+
+def _optional_nonnegative_number(value: object, context: str) -> float | None:
+    if value is None:
+        return None
+    return _nonnegative_number(value, context)
+
+
 def _validate_mod_module_exists(mod: _DiscoveredMod, module_name: str) -> None:
     relative_module = Path(*module_name.split("."))
     if (mod.root / relative_module.with_suffix(".py")).is_file():
@@ -1038,6 +1289,31 @@ def _validate_mod_node_states(
             raise ValueError(
                 f"Mod node '{spec.id}' references unknown states: {unknown}"
             )
+
+
+def _validate_mod_node_dependencies(specs: Sequence[ModNodeSpec]) -> None:
+    by_id = {spec.id: spec for spec in specs}
+    visiting: list[str] = []
+    visited: set[str] = set()
+
+    def visit(node_id: str) -> None:
+        if node_id in visited:
+            return
+        if node_id in visiting:
+            cycle = visiting[visiting.index(node_id) :] + [node_id]
+            raise ValueError("Mod node dependency cycle: " + " -> ".join(cycle))
+        visiting.append(node_id)
+        for dependency in by_id[node_id].depends_on:
+            if dependency not in by_id:
+                raise ValueError(
+                    f"Mod node '{node_id}' depends on unknown node '{dependency}'"
+                )
+            visit(dependency)
+        visiting.pop()
+        visited.add(node_id)
+
+    for spec in specs:
+        visit(spec.id)
 
 
 def load_process_node_spec(

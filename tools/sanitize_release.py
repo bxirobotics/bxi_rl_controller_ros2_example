@@ -113,6 +113,11 @@ def validate_node_declaration(
         "manifest",
         "restart",
         "runtime_requirements",
+        "interpreter",
+        "environment",
+        "cwd",
+        "depends_on",
+        "shutdown",
     }
     unknown_fields = set(node) - allowed_fields
     if unknown_fields:
@@ -121,15 +126,17 @@ def validate_node_declaration(
     if not isinstance(entrypoint, str) or not entrypoint:
         raise ValueError(f"{context}.entrypoint must be a non-empty string")
     runtime = node.get("runtime", "python")
-    if runtime not in ("python", "executable", "ros"):
-        raise ValueError(f"{context}.runtime must be 'python', 'executable' or 'ros'")
+    if runtime not in ("python", "executable", "ros", "command"):
+        raise ValueError(
+            f"{context}.runtime must be 'python', 'executable', 'ros' or 'command'"
+        )
     if runtime == "python" and not re.fullmatch(
         r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*:"
         r"[A-Za-z_][A-Za-z0-9_]*",
         entrypoint,
     ):
         raise ValueError(f"{context}.entrypoint must look like 'module:function'")
-    if runtime == "executable":
+    if runtime in ("executable", "command"):
         relative = Path(entrypoint)
         if (
             relative.is_absolute()
@@ -142,6 +149,14 @@ def validate_node_declaration(
         entrypoint,
     ):
         raise ValueError(f"{context}.entrypoint must look like 'package:executable'")
+    interpreter = node.get("interpreter")
+    if runtime == "command":
+        if interpreter is not None and (
+            not isinstance(interpreter, str) or not interpreter.strip()
+        ):
+            raise ValueError(f"{context}.interpreter must be a non-empty string")
+    elif interpreter is not None:
+        raise ValueError(f"{context}.interpreter requires runtime command")
     execution = node.get(
         "execution",
         "in_process" if runtime == "python" else "process",
@@ -185,7 +200,62 @@ def validate_node_declaration(
         )
     ):
         raise ValueError(f"{context}.namespace is invalid")
-    for mapping_name in ("params", "manifest", "restart"):
+    params = node.get("params", {})
+    if runtime == "command" and (params or remappings or namespace):
+        raise ValueError(
+            f"{context} command nodes do not accept params, remappings or namespace"
+        )
+    cwd = node.get("cwd")
+    if runtime == "command":
+        if cwd is not None and (
+            not isinstance(cwd, str)
+            or not cwd
+            or Path(cwd).is_absolute()
+            or any(part in ("", "..") for part in Path(cwd).parts)
+        ):
+            raise ValueError(f"{context}.cwd must be a safe relative path")
+    elif cwd is not None:
+        raise ValueError(f"{context}.cwd requires runtime command")
+    depends_on = node.get("depends_on", ())
+    if not isinstance(depends_on, Sequence) or isinstance(depends_on, (str, bytes)):
+        raise ValueError(f"{context}.depends_on must be a list")
+    if not all(isinstance(item, str) and item for item in depends_on):
+        raise ValueError(f"{context}.depends_on entries must be non-empty strings")
+    environment = node.get("environment", {})
+    if not isinstance(environment, Mapping):
+        raise ValueError(f"{context}.environment must be a map")
+    if runtime != "command" and environment:
+        raise ValueError(f"{context}.environment requires runtime command")
+    for name, edit in environment.items():
+        if not isinstance(name, str) or not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*", name
+        ):
+            raise ValueError(f"{context}.environment has an invalid name")
+        if isinstance(edit, str):
+            continue
+        if not isinstance(edit, Mapping) or set(edit) - {
+            "set",
+            "prepend",
+            "append",
+            "separator",
+            "existing_only",
+        }:
+            raise ValueError(f"{context}.environment.{name} is invalid")
+        for field in ("prepend", "append"):
+            entries = edit.get(field, ())
+            if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+                raise ValueError(f"{context}.environment.{name}.{field} is invalid")
+            if not all(isinstance(item, str) for item in entries):
+                raise ValueError(f"{context}.environment.{name}.{field} is invalid")
+        if "set" in edit and not isinstance(edit["set"], str):
+            raise ValueError(f"{context}.environment.{name}.set is invalid")
+        if "separator" in edit and (
+            not isinstance(edit["separator"], str) or not edit["separator"]
+        ):
+            raise ValueError(f"{context}.environment.{name}.separator is invalid")
+        if "existing_only" in edit and not isinstance(edit["existing_only"], bool):
+            raise ValueError(f"{context}.environment.{name}.existing_only is invalid")
+    for mapping_name in ("params", "manifest", "restart", "shutdown"):
         value = node.get(mapping_name, {})
         if not isinstance(value, Mapping):
             raise ValueError(f"{context}.{mapping_name} must be a map")
@@ -210,6 +280,32 @@ def validate_node_declaration(
     delay = restart.get("delay", 1.0)
     if isinstance(delay, bool) or not isinstance(delay, (int, float)) or delay < 0:
         raise ValueError(f"{context}.restart.delay is invalid")
+    shutdown = cast(Mapping[str, object], node.get("shutdown", {}))
+    if execution != "process" and shutdown:
+        raise ValueError(f"{context}.shutdown requires process execution")
+    if set(shutdown) - {"signal", "terminate_after", "kill_after"}:
+        raise ValueError(f"{context}.shutdown has unknown fields")
+    if shutdown.get("signal", "SIGTERM") not in {
+        "SIGHUP",
+        "SIGINT",
+        "SIGQUIT",
+        "SIGTERM",
+    }:
+        raise ValueError(f"{context}.shutdown.signal is invalid")
+    terminate_after = shutdown.get("terminate_after")
+    kill_after = shutdown.get("kill_after", 3.0)
+    for field, value in (
+        ("terminate_after", terminate_after),
+        ("kill_after", kill_after),
+    ):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0
+        ):
+            raise ValueError(f"{context}.shutdown.{field} is invalid")
+    if terminate_after is not None and terminate_after >= kill_after:
+        raise ValueError(
+            f"{context}.shutdown.terminate_after must be less than kill_after"
+        )
     if "runtime_requirements" in node:
         validate_runtime_requirements(
             node["runtime_requirements"],
