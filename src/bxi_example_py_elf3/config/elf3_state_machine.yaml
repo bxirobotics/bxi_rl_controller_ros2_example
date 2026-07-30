@@ -41,6 +41,12 @@ remote_events:
   hello_event:
     slot: btn_10
     value: 6
+  sonic_teleop_event:
+    slot: btn_10
+    value: 7
+  sonic_teleop_gripper_event:
+    slot: btn_10
+    value: 8
 transition_profiles:
   instant:
     duration: 0.0
@@ -114,6 +120,12 @@ states:
           transition: soft_switch
         normal_run_event:
           to: normal_run
+          transition: soft_switch
+        sonic_teleop_event:
+          to: sonic_teleop
+          transition: soft_switch
+        sonic_teleop_gripper_event:
+          to: sonic_teleop_gripper
           transition: soft_switch
         dance_event:
           to: dance
@@ -203,6 +215,33 @@ states:
         zero_torque_event: zero_torque
         toggle_dance_pause_event:
           action: toggle_dance_pause
+  sonic_teleop:
+    manifest:
+      label: SONIC遥操
+      index: 14
+      group: Advanced
+      icon: sports_esports
+      confirm: true
+      confirm_message: 进入后先保持idle_left站立；PICO按ABXY完成校准，再按A+X切入实时POSE
+    behavior: SonicTeleopState
+    params:
+      hardware_gripper: false
+    transitions:
+      on_event:
+        normal_event:
+          to: normal
+          transition: soft_switch
+        zero_torque_event: zero_torque
+        pd_brake_event:
+          to: pd_brake
+          transition:
+            base: first_frame_switch
+            enter_duration: 1.0
+        recover_event:
+          to: recover
+          transition: soft_switch
+        toggle_dance_pause_event:
+          action: reset_sonic_alignment
   recover:
     manifest:
       label: 起身
@@ -230,6 +269,12 @@ states:
         normal_event:
           to: normal
           transition: soft_switch
+        sonic_teleop_event:
+          to: sonic_teleop
+          transition: soft_switch
+        sonic_teleop_gripper_event:
+          to: sonic_teleop_gripper
+          transition: soft_switch
   normal_run:
     manifest:
       label: 中速奔跑
@@ -244,6 +289,12 @@ states:
       on_event:
         normal_event:
           to: normal
+          transition: soft_switch
+        sonic_teleop_event:
+          to: sonic_teleop
+          transition: soft_switch
+        sonic_teleop_gripper_event:
+          to: sonic_teleop_gripper
           transition: soft_switch
   forward_flip:
     manifest:
@@ -291,3 +342,32 @@ states:
             duration: 1.0
         toggle_dance_pause_event:
           action: toggle_dance_pause
+  sonic_teleop_gripper:
+    manifest:
+      label: SONIC遥操（夹爪）
+      index: 15
+      group: Advanced
+      icon: pan_tool
+      confirm: true
+      confirm_message: 本模式会控制真实夹爪；进入前请松开左右PICO trigger并确认夹爪周围安全；随后按ABXY校准，再按A+X切入实时POSE
+    behavior: SonicTeleopState
+    params:
+      hardware_gripper: true
+      gripper_input_timeout_s: 0.2
+      gripper_release_threshold: 0.05
+    transitions:
+      on_event:
+        normal_event:
+          to: normal
+          transition: soft_switch
+        zero_torque_event: zero_torque
+        pd_brake_event:
+          to: pd_brake
+          transition:
+            base: first_frame_switch
+            enter_duration: 1.0
+        recover_event:
+          to: recover
+          transition: soft_switch
+        toggle_dance_pause_event:
+          action: reset_sonic_alignment

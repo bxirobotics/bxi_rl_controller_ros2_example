@@ -17,7 +17,7 @@ import os
 import math
 import json
 from collections import deque
-from std_msgs.msg import Header, String
+from std_msgs.msg import Float32, Header, String
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
@@ -25,6 +25,7 @@ from ament_index_python.packages import get_package_share_directory
 from bxi_example_py_elf3.inference.beyondmimic import *
 from bxi_example_py_elf3.inference.normal import *
 from bxi_example_py_elf3.inference.amp import *
+from bxi_example_py_elf3.inference.sonic import SonicTeleopPolicy
 from bxi_example_py_elf3.utils.hot_reload import HotReloadMixin
 from bxi_example_py_elf3.utils.state_machine import (
     RobotStateMachine,
@@ -32,12 +33,50 @@ from bxi_example_py_elf3.utils.state_machine import (
     load_state_machine_config,
 )
 from bxi_example_py_elf3.utils.robot_state_builder import build_robot_states
+from bxi_example_py_elf3.utils.sonic_connection import prepare_sonic_runtime_config
 import bxi_example_py_elf3.robot_states  # 加载 State 类，供 build_robot_states() 自动发现
 from bxi_example_py_elf3.utils.tfs import quaternion_to_euler_array
 
 robot_name = "elf3"
 
 dof_num = 29
+
+
+def _environment_float(name, default, *, allow_zero=False):
+    """Read a finite, non-negative duration/threshold from the environment."""
+    try:
+        value = float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+    if not math.isfinite(value) or value < 0.0 or (value == 0.0 and not allow_zero):
+        return float(default)
+    return value
+
+
+def _environment_flag(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return bool(default)
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _sim_gripper_enabled(topic_prefix):
+    return (
+        topic_prefix == "simulation/"
+        and _environment_flag("BXI_SIM_GRIPPER_ENABLE")
+    )
+
+
+def _finite_unit_input(value, previous=0.0):
+    """Return a clipped trigger value without allowing NaN/Inf into commands."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return float(previous)
+    if not math.isfinite(value):
+        return float(previous)
+    return float(np.clip(value, 0.0, 1.0))
+
 
 joint_name = (
     "waist_y_joint",
@@ -71,6 +110,14 @@ joint_name = (
     "r_wrist_z_joint",
 )
 
+gripper_joint_name = (
+    "l_gripper_left_finger_joint",
+    "l_gripper_right_finger_joint",
+    "r_gripper_left_finger_joint",
+    "r_gripper_right_finger_joint",
+)
+
+sim_dof_num = dof_num + len(gripper_joint_name)
 joint_nominal_pos = np.array([   # 指定的固定关节角度
     0.0, 0.0, 0.0,
     -0.4,0.0,0.0,0.8,-0.4,0.0,
@@ -184,10 +231,32 @@ class BxiExample(HotReloadMixin, Node):
         # 定时器初始化
         self.step = 0
         self.dt = 0.02  # loop @50Hz
-        self.inference_period = self.dt
-        self.inference_timeout_tolerance = 0.005
-        self.last_inference_frame_time = None
-        self.inference_timeout_count = 0
+        self.control_period = self.dt
+        self.control_rate_tolerance = 0.005
+        self.control_rate_report_period = _environment_float(
+            "BXI_CONTROL_RATE_WINDOW_SECONDS", 1.0
+        )
+        self.control_rate_warning_log_period = _environment_float(
+            "BXI_CONTROL_RATE_WARNING_LOG_SECONDS", 5.0
+        )
+        self.control_rate_warn_min_hz = _environment_float(
+            "BXI_CONTROL_RATE_WARN_MIN_HZ", 45.0, allow_zero=True
+        )
+        self.control_rate_warn_max_delay = _environment_float(
+            "BXI_CONTROL_RATE_WARN_MAX_DELAY_SECONDS", 0.05, allow_zero=True
+        )
+        self.control_rate_warn_late_ratio = _environment_float(
+            "BXI_CONTROL_RATE_WARN_LATE_RATIO", 0.10, allow_zero=True
+        )
+        self.last_control_frame_time = None
+        self.control_rate_report_start_time = None
+        self.control_rate_frame_count = 0
+        self.control_rate_late_count = 0
+        self.control_rate_delay_sum = 0.0
+        self.control_rate_delay_max = 0.0
+        self.control_rate_warning_active = False
+        self.last_control_rate_warning_log_time = None
+        self.startup_release_wait_signature = None
         self.state_machine_info_elapsed = 0.0
         self.timer = self.create_timer(
             self.dt, self.timer_callback, callback_group=self.timer_callback_group_1
@@ -207,9 +276,17 @@ class BxiExample(HotReloadMixin, Node):
         self.state_machine_config_path = self.get_parameter(
             "/state_machine_config"
         ).value
-        self.state_machine_config = load_state_machine_config(
+        loaded_state_machine_config = load_state_machine_config(
             self.state_machine_config_path
         )
+        (
+            self.state_machine_config,
+            self.robot_ipv4,
+            self.sonic_connection_message,
+        ) = prepare_sonic_runtime_config(
+            loaded_state_machine_config
+        )
+        self.get_logger().info(f"SONIC连接提示：{self.sonic_connection_message}")
 
         self.declare_parameter("/state_machine_info_topic", "")
         self.state_machine_info_topic = (
@@ -226,6 +303,21 @@ class BxiExample(HotReloadMixin, Node):
         self.declare_parameter("/hot_reload", False)
         self.hot_reload_enabled = bool(self.get_parameter("/hot_reload").value)
 
+        self.declare_parameter("/startup_release_delay", 1.0)
+        self.startup_release_delay = float(
+            self.get_parameter("/startup_release_delay").value
+        )
+
+        self.declare_parameter("/startup_release_allowed_states", "")
+        allowed_states = (
+            self.get_parameter("/startup_release_allowed_states")
+            .get_parameter_value()
+            .string_value
+        )
+        self.startup_release_allowed_states = {
+            state.strip() for state in allowed_states.split(",") if state.strip()
+        }
+
     def load_models(self):
         data_dir = os.path.join(
             get_package_share_directory("bxi_example_py_elf3"),
@@ -237,6 +329,15 @@ class BxiExample(HotReloadMixin, Node):
             path = os.path.join(data_dir, file_name)
             model_file_paths.append(path)
             return path
+
+        def tracked_file(path: str) -> str:
+            model_file_paths.append(path)
+            return path
+
+        def model_file_or_env(env_name: str, file_name: str) -> str:
+            return tracked_file(
+                os.environ.get(env_name, os.path.join(data_dir, file_name))
+            )
 
         self.normal: HumanoidGaitPolicyLiteIsaaclab = HumanoidGaitPolicyLiteIsaaclab(
             model_file("isaaclab_model/amp_terrain.onnx")
@@ -268,6 +369,18 @@ class BxiExample(HotReloadMixin, Node):
         self.withoutarm: HumanoidGaitPolicyLiteIsaaclab = HumanoidGaitPolicyLiteIsaaclab(
             model_file("isaaclab_model/withoutarm.onnx")
         )
+        sonic_model_path = model_file_or_env(
+            "BXI_SONIC_MODEL_ONNX",
+            "sonic_model/elf3_step28800_smpl/model_step_028800_smpl.onnx",
+        )
+        sonic_stream_reference_path = model_file_or_env(
+            "BXI_SONIC_STREAM_REFERENCE_NPZ",
+            "sonic_reference/elf3_pico_stand_clean_001/stream_reference.npz",
+        )
+        self.sonic_teleop: SonicTeleopPolicy = SonicTeleopPolicy(
+            model_onnx_path=sonic_model_path,
+            stream_reference_npz=sonic_stream_reference_path,
+        )
         self.model_file_paths: tuple[str, ...] = tuple(model_file_paths)
         self.pd_pos: np.ndarray = self.normal.default_dof_pos
 
@@ -289,6 +402,27 @@ class BxiExample(HotReloadMixin, Node):
         self.act_pub = self.create_publisher(
             bxiMsg.ActuatorCmds, self.topic_prefix + "actuators_cmds", qos
         )  # CHANGE
+
+        # The gripper joints only exist in the dedicated simulation model.
+        # Keep hardware and the standard simulation path body-only even if a
+        # stale shell environment happens to contain the opt-in flag.
+        self.sim_gripper_enabled = _sim_gripper_enabled(self.topic_prefix)
+        self.left_gripper_input = 0.0
+        self.right_gripper_input = 0.0
+        if self.sim_gripper_enabled:
+            self.left_gripper_sub = self.create_subscription(
+                Float32,
+                "pico/left_trigger",
+                self.left_gripper_callback,
+                10,
+            )
+            self.right_gripper_sub = self.create_subscription(
+                Float32,
+                "pico/right_trigger",
+                self.right_gripper_callback,
+                10,
+            )
+
         state_machine_info_topic = self.state_machine_info_topic or (
             self.topic_prefix + "state_machine_info"
         )
@@ -339,17 +473,33 @@ class BxiExample(HotReloadMixin, Node):
             self.robot_reset(1, False)  # first reset
             print("robot reset 1!")
             self.step = 1
-            return
-        elif self.step == 1 and self.loop_count >= (1.0 / self.dt):  # 延迟2s
-            self.robot_reset(2, True)  # first reset
-            print("robot reset 2!")
             self.loop_count = 0
-            self.step = 2
-            self.reset_inference_timeout_monitor()
+            self.startup_release_wait_signature = None
             return
 
-        if self.step == 2:
-            self.check_hot_reload(self.dt)
+        if self.step == 1 and self.startup_release_delay >= 0.0:
+            release_ready = self.loop_count >= int(self.startup_release_delay / self.dt)
+            state_name = self.state_name_by_id.get(self.state, str(self.state))
+            state_allowed = (
+                not self.startup_release_allowed_states
+                or state_name in self.startup_release_allowed_states
+            )
+            if release_ready and state_allowed:
+                self.robot_reset(2, True)  # release suspension
+                print(f"robot reset 2! release from state={state_name}")
+                self.loop_count = 0
+                self.step = 2
+                self.startup_release_wait_signature = None
+                self.reset_control_rate_monitor()
+                # Match the official startup sequence: release first, then begin
+                # publishing control targets on the following timer callback.
+                return
+            elif release_ready:
+                self.log_startup_release_wait(state_name)
+
+        if self.step >= 1:
+            if self.step >= 2:
+                self.check_hot_reload(self.dt)
 
             with self.lock_in:
                 self.current_q = self.qpos.copy()
@@ -366,17 +516,14 @@ class BxiExample(HotReloadMixin, Node):
             transition_active = self.state_machine.update(self.dt, events)
             self.state = self.state_machine.current_state_id
 
-            if not transition_active:
+            if self.step < 2:
+                self.motor_target = None
+            elif not transition_active:
                 self.state_machine.update_current_state(self.dt)
                 self.state = self.state_machine.current_state_id
 
-            if self.motor_target is not None:
-                qpos, kp, kd = self.motor_target
-                self.pos_last = qpos
-                self.kp_last = kp
-                self.kd_last = kd
-                self.check_inference_frame_timeout()
-                self.send_to_motor(qpos, kp, kd)
+            if self.step >= 2:
+                self.publish_motor_target_if_released()
 
         self.loop_count += 1
         self.publish_state_machine_info_if_due(events)
@@ -385,12 +532,37 @@ class BxiExample(HotReloadMixin, Node):
         msg = bxiMsg.ActuatorCmds()
         msg.header.frame_id = robot_name
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.actuators_name = joint_name
-        msg.pos = dof_pos_target.tolist()
-        msg.vel = np.zeros(dof_num, dtype=np.float32).tolist()
-        msg.torque = np.zeros(dof_num, dtype=np.float32).tolist()
-        msg.kp = joint_kp.tolist()
-        msg.kd = joint_kd.tolist()
+
+        if self.sim_gripper_enabled:
+            gripper_open = 0.0
+            gripper_closed = 0.055
+            left_target = gripper_open + self.left_gripper_input * (
+                gripper_closed - gripper_open
+            )
+            right_target = gripper_open + self.right_gripper_input * (
+                gripper_closed - gripper_open
+            )
+            gripper_targets = [
+                left_target,
+                left_target,
+                right_target,
+                right_target,
+            ]
+
+            msg.actuators_name = list(joint_name) + list(gripper_joint_name)
+            msg.pos = dof_pos_target.tolist() + gripper_targets
+            msg.vel = np.zeros(sim_dof_num, dtype=np.float32).tolist()
+            msg.torque = np.zeros(sim_dof_num, dtype=np.float32).tolist()
+            msg.kp = joint_kp.tolist() + [500.0] * 4
+            msg.kd = joint_kd.tolist() + [5.0] * 4
+        else:
+            msg.actuators_name = list(joint_name)
+            msg.pos = dof_pos_target.tolist()
+            msg.vel = np.zeros(dof_num, dtype=np.float32).tolist()
+            msg.torque = np.zeros(dof_num, dtype=np.float32).tolist()
+            msg.kp = joint_kp.tolist()
+            msg.kd = joint_kd.tolist()
+
         self.act_pub.publish(msg)
 
     def publish_state_machine_info_if_due(self, events):
@@ -469,24 +641,95 @@ class BxiExample(HotReloadMixin, Node):
         self.sim_rest_srv.call_async(req)
 
     def joint_callback(self, msg):
-        joint_pos = msg.position
-        joint_vel = msg.velocity
-        joint_tor = msg.effort
+        if not (
+            len(msg.name) == len(msg.position) == len(msg.velocity)
+        ):
+            return
+
+        index_by_name = {
+            name: index
+            for index, name in enumerate(msg.name)
+        }
+
+        if any(name not in index_by_name for name in joint_name):
+            return
+
+        body_position = np.asarray(
+            [
+                msg.position[index_by_name[name]]
+                for name in joint_name
+            ],
+            dtype=np.float64,
+        )
+
+        body_velocity = np.asarray(
+            [
+                msg.velocity[index_by_name[name]]
+                for name in joint_name
+            ],
+            dtype=np.float64,
+        )
 
         with self.lock_in:
-            self.qpos[:] = np.array(joint_pos[:])
-            self.qvel[:] = np.array(joint_vel[:])
+            self.qpos[:] = body_position
+            self.qvel[:] = body_velocity
 
     def actuator_callback(self, msg):
-        joint_pos = msg.position
-        joint_vel = msg.velocity
-        joint_tor = msg.effort
-        drv_temperature = msg.driver_temperature
-        motor_temperature = msg.motor_temperature
+        if not (
+            len(msg.name) == len(msg.position) == len(msg.velocity)
+        ):
+            self.get_logger().error(
+                "ActuatorStates mismatch: "
+                f"{len(msg.name)} names, {len(msg.position)} positions, "
+                f"{len(msg.velocity)} velocities"
+            )
+            return
+
+        index_by_name = {
+            name: index
+            for index, name in enumerate(msg.name)
+        }
+
+        missing = [
+            name for name in joint_name
+            if name not in index_by_name
+        ]
+
+        if missing:
+            self.get_logger().error(
+                f"ActuatorStates missing body joints: {missing}"
+            )
+            return
+
+        body_position = np.asarray(
+            [
+                msg.position[index_by_name[name]]
+                for name in joint_name
+            ],
+            dtype=np.float64,
+        )
+
+        body_velocity = np.asarray(
+            [
+                msg.velocity[index_by_name[name]]
+                for name in joint_name
+            ],
+            dtype=np.float64,
+        )
 
         with self.lock_in:
-            self.qpos[:] = np.array(joint_pos[:])
-            self.qvel[:] = np.array(joint_vel[:])
+            self.qpos[:] = body_position
+            self.qvel[:] = body_velocity
+
+    def left_gripper_callback(self, msg):
+        self.left_gripper_input = _finite_unit_input(
+            msg.data, self.left_gripper_input
+        )
+
+    def right_gripper_callback(self, msg):
+        self.right_gripper_input = _finite_unit_input(
+            msg.data, self.right_gripper_input
+        )
 
     def joy_callback(self, msg):
         with self.lock_in:
@@ -496,11 +739,11 @@ class BxiExample(HotReloadMixin, Node):
                 msg.yawdot_des,
             )
             events = self.remote_event_adapter.extract_events(
-                msg, sync_only=self.step < 2
+                msg, sync_only=self.step < 1
             )
             self.pending_remote_events.extend(events)
 
-        if self.step < 2:
+        if self.step < 1:
             return
 
     def imu_callback(self, msg):
@@ -538,34 +781,131 @@ class BxiExample(HotReloadMixin, Node):
     def hold_last_motor_target(self):
         self.set_motor_target(self.pos_last, self.kp_last, self.kd_last)
 
-    def reset_inference_timeout_monitor(self):
-        self.last_inference_frame_time = None
-        self.inference_timeout_count = 0
+    def publish_motor_target_if_released(self) -> bool:
+        """Publish a pending target only after the simulator suspension is released."""
+        if self.step < 2 or self.motor_target is None:
+            return False
 
-    def check_inference_frame_timeout(self):
+        qpos, kp, kd = self.motor_target
+        self.pos_last = qpos
+        self.kp_last = kp
+        self.kd_last = kd
+        self.check_control_frame_rate()
+        self.send_to_motor(qpos, kp, kd)
+        return True
+
+    def log_startup_release_wait(self, state_name) -> bool:
+        """Log each distinct startup wait state/allowlist combination once."""
+        allowed_states = tuple(sorted(self.startup_release_allowed_states))
+        signature = (state_name, allowed_states)
+        if self.startup_release_wait_signature == signature:
+            return False
+        print(
+            "startup release waiting for allowed state: "
+            f"current={state_name}, allowed={list(allowed_states)}"
+        )
+        self.startup_release_wait_signature = signature
+        return True
+
+    def reset_control_rate_monitor(self):
+        self.last_control_frame_time = None
+        self.control_rate_report_start_time = None
+        self.control_rate_frame_count = 0
+        self.control_rate_late_count = 0
+        self.control_rate_delay_sum = 0.0
+        self.control_rate_delay_max = 0.0
+        self.control_rate_warning_active = False
+        self.last_control_rate_warning_log_time = None
+
+    def print_control_rate_summary(
+        self,
+        label,
+        elapsed,
+        frame_count,
+        late_count,
+        delay_sum,
+        delay_max,
+    ):
+        mean_delay = delay_sum / max(frame_count, 1)
+        late_ratio = late_count / max(frame_count, 1)
+        state_name = self.state_name_by_id.get(self.state, str(self.state))
+        print(
+            f"{label} "
+            f"state={state_name}, "
+            f"hz={frame_count / max(elapsed, 1e-9):.1f}, "
+            f"mean={mean_delay * 1000.0:.2f}ms, "
+            f"max={delay_max * 1000.0:.2f}ms, "
+            f"late={late_count}/{frame_count} ({late_ratio * 100.0:.1f}%)"
+        )
+
+    def check_control_frame_rate(self):
         now = time.perf_counter()
-        last = self.last_inference_frame_time
-        self.last_inference_frame_time = now
-        if last is None or self.inference_period <= 0.0:
+        last = self.last_control_frame_time
+        self.last_control_frame_time = now
+        if last is None or self.control_period <= 0.0:
+            self.control_rate_report_start_time = now
             return
 
         frame_delay = now - last
-        timeout_threshold = self.inference_period + self.inference_timeout_tolerance
-        if frame_delay <= timeout_threshold:
+        self.control_rate_frame_count += 1
+        self.control_rate_delay_sum += frame_delay
+        self.control_rate_delay_max = max(self.control_rate_delay_max, frame_delay)
+        timeout_threshold = self.control_period + self.control_rate_tolerance
+        if frame_delay > timeout_threshold:
+            self.control_rate_late_count += 1
+
+        report_start = self.control_rate_report_start_time
+        if report_start is None:
+            self.control_rate_report_start_time = now
             return
 
-        self.inference_timeout_count += 1
-        state_name = self.state_name_by_id.get(self.state, str(self.state))
-        print(
-            "[INFERENCE TIMEOUT] "
-            f"state={state_name}, "
-            f"delay={frame_delay * 1000.0:.2f}ms, "
-            f"limit={self.inference_period * 1000.0:.2f}ms "
-            f"({1.0 / self.inference_period:.1f}Hz), "
-            f"tolerance={self.inference_timeout_tolerance * 1000.0:.2f}ms, "
-            f"over={(frame_delay - self.inference_period) * 1000.0:.2f}ms, "
-            f"count={self.inference_timeout_count}"
+        elapsed = now - report_start
+        if elapsed < self.control_rate_report_period:
+            return
+
+        frame_count = self.control_rate_frame_count
+        hz = frame_count / max(elapsed, 1e-9)
+        late_ratio = self.control_rate_late_count / max(frame_count, 1)
+        warning = (
+            hz < self.control_rate_warn_min_hz
+            or self.control_rate_delay_max > self.control_rate_warn_max_delay
+            or late_ratio > self.control_rate_warn_late_ratio
         )
+
+        if warning:
+            last_warning_log = self.last_control_rate_warning_log_time
+            if (
+                not self.control_rate_warning_active
+                or last_warning_log is None
+                or now - last_warning_log >= self.control_rate_warning_log_period
+            ):
+                self.print_control_rate_summary(
+                    "[CONTROL RATE WARNING]",
+                    elapsed,
+                    frame_count,
+                    self.control_rate_late_count,
+                    self.control_rate_delay_sum,
+                    self.control_rate_delay_max,
+                )
+                self.last_control_rate_warning_log_time = now
+            self.control_rate_warning_active = True
+        else:
+            if self.control_rate_warning_active:
+                self.print_control_rate_summary(
+                    "[CONTROL RATE RECOVERED]",
+                    elapsed,
+                    frame_count,
+                    self.control_rate_late_count,
+                    self.control_rate_delay_sum,
+                    self.control_rate_delay_max,
+                )
+            self.control_rate_warning_active = False
+
+        self.control_rate_report_start_time = now
+        self.control_rate_frame_count = 0
+        self.control_rate_late_count = 0
+        self.control_rate_delay_sum = 0.0
+        self.control_rate_delay_max = 0.0
 
     def request_state(
         self, state_name, trigger="code", transition="instant", delay=0.0

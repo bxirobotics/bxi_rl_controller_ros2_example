@@ -1,0 +1,62 @@
+<mujocoinclude>
+  <body name="r_gripper_base_link" pos="0.05 0 0">
+    <inertial pos="0 0 0" mass="1.0" diaginertia="0.0001 0.0001 0.0001"/>
+    <geom name="r_gripper_base_visual_00" class="gripper_visual" mesh="elf3_gripper_base_bearing_625_5_01" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_01" class="gripper_visual" mesh="elf3_gripper_base_bearing_625_5_02" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_02" class="gripper_visual" mesh="elf3_gripper_base_bearing_625_5_03" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_03" class="gripper_visual" mesh="elf3_gripper_base_bearing_625_9_01" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_04" class="gripper_visual" mesh="elf3_gripper_base_bearing_625_9_02" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_05" class="gripper_visual" mesh="elf3_gripper_base_bearing_625_9_03" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_06" class="gripper_visual" mesh="elf3_gripper_base_bxi50_mr128" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_07" class="gripper_visual" mesh="elf3_gripper_base_bxi50_rear_cover" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_08" class="gripper_visual" mesh="elf3_gripper_base_bxi50_spur_gear" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_09" class="gripper_visual" mesh="elf3_gripper_base_bxi50_front_housing" rgba="0.16 0.17 0.18 1"/>
+    <geom name="r_gripper_base_visual_10" class="gripper_visual" mesh="elf3_gripper_base_bxi50_rear_housing" rgba="0.16 0.17 0.18 1"/>
+    <geom name="r_gripper_base_visual_11" class="gripper_visual" mesh="elf3_gripper_base_linear_rail" rgba="0.16 0.17 0.18 1"/>
+    <geom name="r_gripper_base_visual_12" class="gripper_visual" mesh="elf3_gripper_base_center_fixed_section" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_13" class="gripper_visual" mesh="elf3_gripper_base_gripper_fixed_part" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_14" class="gripper_visual" mesh="elf3_gripper_base_wrist_adapter" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_15" class="gripper_visual" mesh="elf3_gripper_base_rail_motor_adapter" rgba="0.16 0.17 0.18 1"/>
+    <geom name="r_gripper_base_visual_16" class="gripper_visual" mesh="elf3_gripper_left_shoulder_screw" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_visual_17" class="gripper_visual" mesh="elf3_gripper_right_shoulder_screw" rgba="0.72 0.74 0.76 1"/>
+    <geom name="r_gripper_base_collision" type="box" pos="0.0443 0 0" size="0.0443 0.0975 0.036" contype="1" conaffinity="1" group="3" rgba="0 0 0 0" friction="1 0.005 0.0001"/>
+
+    <body name="r_gripper_left_finger_link">
+      <inertial pos="0 0 0" mass="0.2" diaginertia="0.0001 0.0001 0.0001"/>
+      <joint name="r_gripper_left_finger_joint" type="slide" axis="0 -1 0" range="0 0.055" limited="true" actuatorfrcrange="-100 100"/>
+      <geom name="r_gripper_left_visual_00" class="gripper_visual" mesh="elf3_gripper_left_slider" rgba="0.72 0.74 0.76 1"/>
+      <geom name="r_gripper_left_visual_01" class="gripper_visual" mesh="elf3_gripper_left_finger_plate_b" rgba="0.72 0.74 0.76 1"/>
+      <geom name="r_gripper_left_visual_02" class="gripper_visual" mesh="elf3_gripper_left_rubber_finger" rgba="0.02 0.02 0.02 1"/>
+      <geom name="r_gripper_left_visual_03" class="gripper_visual" mesh="elf3_gripper_right_slider_adapter" rgba="0.72 0.74 0.76 1"/>
+      <geom name="r_gripper_left_visual_04" class="gripper_visual" mesh="elf3_gripper_right_rack" rgba="0.72 0.74 0.76 1"/>
+      <geom name="r_gripper_left_visual_05" class="gripper_visual" mesh="elf3_gripper_right_finger_mount" rgba="0.72 0.74 0.76 1"/>
+      <geom name="r_gripper_left_visual_06" class="gripper_visual" mesh="elf3_gripper_right_finger_plate_b" rgba="0.72 0.74 0.76 1"/>
+      <geom name="r_gripper_left_collision_00" class="gripper_collision" mesh="elf3_gripper_left_slider"/>
+      <geom name="r_gripper_left_collision_01" class="gripper_collision" mesh="elf3_gripper_left_finger_plate_b"/>
+      <geom name="r_gripper_left_collision_02" class="gripper_collision" mesh="elf3_gripper_left_rubber_finger"/>
+      <geom name="r_gripper_left_collision_03" class="gripper_collision" mesh="elf3_gripper_right_slider_adapter"/>
+      <geom name="r_gripper_left_collision_04" class="gripper_collision" mesh="elf3_gripper_right_rack"/>
+      <geom name="r_gripper_left_collision_05" class="gripper_collision" mesh="elf3_gripper_right_finger_mount"/>
+      <geom name="r_gripper_left_collision_06" class="gripper_collision" mesh="elf3_gripper_right_finger_plate_b"/>
+    </body>
+
+    <body name="r_gripper_right_finger_link">
+      <inertial pos="0 0 0" mass="0.2" diaginertia="0.0001 0.0001 0.0001"/>
+      <joint name="r_gripper_right_finger_joint" type="slide" axis="0 1 0" range="0 0.055" limited="true" actuatorfrcrange="-100 100"/>
+      <geom name="r_gripper_right_visual_00" class="gripper_visual" mesh="elf3_gripper_left_slider_adapter" rgba="0.72 0.74 0.76 1"/>
+      <geom name="r_gripper_right_visual_01" class="gripper_visual" mesh="elf3_gripper_left_rack" rgba="0.72 0.74 0.76 1"/>
+      <geom name="r_gripper_right_visual_02" class="gripper_visual" mesh="elf3_gripper_left_finger_mount" rgba="0.72 0.74 0.76 1"/>
+      <geom name="r_gripper_right_visual_03" class="gripper_visual" mesh="elf3_gripper_left_finger_plate_a" rgba="0.72 0.74 0.76 1"/>
+      <geom name="r_gripper_right_visual_04" class="gripper_visual" mesh="elf3_gripper_right_slider" rgba="0.72 0.74 0.76 1"/>
+      <geom name="r_gripper_right_visual_05" class="gripper_visual" mesh="elf3_gripper_right_finger_plate_a" rgba="0.72 0.74 0.76 1"/>
+      <geom name="r_gripper_right_visual_06" class="gripper_visual" mesh="elf3_gripper_right_rubber_finger" rgba="0.02 0.02 0.02 1"/>
+      <geom name="r_gripper_right_collision_00" class="gripper_collision" mesh="elf3_gripper_left_slider_adapter"/>
+      <geom name="r_gripper_right_collision_01" class="gripper_collision" mesh="elf3_gripper_left_rack"/>
+      <geom name="r_gripper_right_collision_02" class="gripper_collision" mesh="elf3_gripper_left_finger_mount"/>
+      <geom name="r_gripper_right_collision_03" class="gripper_collision" mesh="elf3_gripper_left_finger_plate_a"/>
+      <geom name="r_gripper_right_collision_04" class="gripper_collision" mesh="elf3_gripper_right_slider"/>
+      <geom name="r_gripper_right_collision_05" class="gripper_collision" mesh="elf3_gripper_right_finger_plate_a"/>
+      <geom name="r_gripper_right_collision_06" class="gripper_collision" mesh="elf3_gripper_right_rubber_finger"/>
+    </body>
+  </body>
+</mujocoinclude>

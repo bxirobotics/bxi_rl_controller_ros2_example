@@ -7,6 +7,7 @@ from threading import Lock, Thread
 
 import bxi_example_py_elf3.robot_states as robot_states_module
 from bxi_example_py_elf3.utils.robot_state_builder import build_robot_states
+from bxi_example_py_elf3.utils.sonic_connection import prepare_sonic_runtime_config
 from bxi_example_py_elf3.utils.state_machine import (
     RemoteEventAdapter,
     RobotStateMachine,
@@ -230,9 +231,14 @@ class HotReloadMixin:
         try:
             importlib.invalidate_caches()
             importlib.reload(robot_states_module)
-            state_machine_config = load_state_machine_config(
+            loaded_state_machine_config = load_state_machine_config(
                 self.state_machine_config_path
             )
+            (
+                state_machine_config,
+                robot_ipv4,
+                sonic_connection_message,
+            ) = prepare_sonic_runtime_config(loaded_state_machine_config)
 
             runtime_config = dict(state_machine_config)
             if current_state_name in (state_machine_config.get("states") or {}):
@@ -240,6 +246,10 @@ class HotReloadMixin:
 
             robot_states = build_robot_states(runtime_config)
             self.bind_robot_states(robot_states)
+            # RobotStateMachine calls the current state's on_enter() from its
+            # constructor, so expose the refreshed connection text first.
+            self.robot_ipv4 = robot_ipv4
+            self.sonic_connection_message = sonic_connection_message
             state_machine = RobotStateMachine(
                 self,
                 runtime_config,

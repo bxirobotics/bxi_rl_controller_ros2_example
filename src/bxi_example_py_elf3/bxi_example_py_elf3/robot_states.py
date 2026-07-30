@@ -1,11 +1,16 @@
 import math
 import os
 import pickle
+import time
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
+import communication.msg as bxiMsg
+import std_msgs.msg
+from rclpy.qos import QoSProfile
 
 from ament_index_python.packages import get_package_share_path
+from bxi_example_py_elf3.utils.bxi_motor import BxiMotor, JointControl as BxiJointControl
 from bxi_example_py_elf3.utils.robot_state_base import MotorFrame, RobotControlState
 from bxi_example_py_elf3.utils.state_machine import StateBehavior, TransitionProfile
 from bxi_example_py_elf3.utils.tfs import quaternion_to_euler_array
@@ -57,6 +62,357 @@ class NormalState(RobotControlState):
         frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
+
+
+class SonicTeleopState(RobotControlState):
+    def __init__(
+        self,
+        name: str,
+        state_id: int,
+        hardware_gripper: bool = False,
+        gripper_input_timeout_s: float = 0.2,
+        gripper_release_threshold: float = 0.05,
+    ) -> None:
+        super().__init__(name, state_id)
+        if isinstance(hardware_gripper, str):
+            hardware_gripper = hardware_gripper.strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+        self.hardware_gripper_requested = bool(hardware_gripper)
+        self.gripper_input_timeout_s = float(gripper_input_timeout_s)
+        if (
+            not math.isfinite(self.gripper_input_timeout_s)
+            or self.gripper_input_timeout_s <= 0.0
+        ):
+            raise ValueError("gripper_input_timeout_s must be finite and positive")
+        self.gripper_release_threshold = float(gripper_release_threshold)
+        if not math.isfinite(self.gripper_release_threshold):
+            raise ValueError("gripper_release_threshold must be finite")
+        self.gripper_release_threshold = float(
+            np.clip(self.gripper_release_threshold, 0.0, 1.0)
+        )
+        self.gripper_enabled = False
+        self.gripper_armed = False
+        self.left_trigger = 0.0
+        self.right_trigger = 0.0
+        self.left_trigger_received_at: Optional[float] = None
+        self.right_trigger_received_at: Optional[float] = None
+        self._gripper_session_active = False
+        self._gripper_session_started_at: Optional[float] = None
+        self._gripper_arm_wait_reason: Optional[str] = None
+        self._stale_trigger_sides: set[str] = set()
+
+    def on_bind(self, ctx: BxiExample) -> None:
+        super().on_bind(ctx)
+        # The state-machine mode is the only runtime opt-in.  Even the explicit
+        # gripper state is forbidden from publishing CAN outside hardware/.
+        self.gripper_enabled = (
+            self.hardware_gripper_requested
+            and getattr(ctx, "topic_prefix", "") == "hardware/"
+        )
+        if not self.gripper_enabled:
+            return
+
+        try:
+            self.gripper_left_bus = int(
+                os.environ.get("BXI_SONIC_GRIPPER_LEFT_BUS", "5")
+            )
+            self.gripper_right_bus = int(
+                os.environ.get("BXI_SONIC_GRIPPER_RIGHT_BUS", "6")
+            )
+            self.gripper_can_id = int(
+                os.environ.get("BXI_SONIC_GRIPPER_CAN_ID", "1")
+            )
+            self.gripper_kp = float(
+                os.environ.get("BXI_SONIC_GRIPPER_KP", "20")
+            )
+            self.gripper_kd = float(
+                os.environ.get("BXI_SONIC_GRIPPER_KD", "1")
+            )
+            if min(
+                self.gripper_left_bus,
+                self.gripper_right_bus,
+                self.gripper_can_id,
+            ) < 0 or not all(
+                math.isfinite(value)
+                for value in (self.gripper_kp, self.gripper_kd)
+            ):
+                raise ValueError("bus/CAN ID must be non-negative and gains finite")
+        except ValueError as exc:
+            self.gripper_enabled = False
+            ctx.get_logger().error(f"SONIC gripper disabled: invalid config: {exc}")
+            return
+        self.gripper_msg_type = getattr(
+            bxiMsg, "CANFDPacket", getattr(bxiMsg, "CanfdPacket", None)
+        )
+        if self.gripper_msg_type is None:
+            self.gripper_enabled = False
+            ctx.get_logger().error(
+                "SONIC gripper disabled: communication.msg.CANFDPacket is unavailable"
+            )
+            return
+
+        qos = QoSProfile(depth=1)
+        self.left_trigger_sub = ctx.create_subscription(
+            std_msgs.msg.Float32,
+            "pico/left_trigger",
+            self.left_trigger_callback,
+            qos,
+        )
+        self.right_trigger_sub = ctx.create_subscription(
+            std_msgs.msg.Float32,
+            "pico/right_trigger",
+            self.right_trigger_callback,
+            qos,
+        )
+        self.gripper_control_pub = ctx.create_publisher(
+            self.gripper_msg_type,
+            "canfd_packet/tx",
+            QoSProfile(depth=100),
+        )
+
+    def left_trigger_callback(self, msg: std_msgs.msg.Float32) -> None:
+        value = self._valid_trigger(msg.data)
+        if value is None or not self._gripper_session_active:
+            return
+        self.left_trigger = value
+        self.left_trigger_received_at = time.monotonic()
+
+    def right_trigger_callback(self, msg: std_msgs.msg.Float32) -> None:
+        value = self._valid_trigger(msg.data)
+        if value is None or not self._gripper_session_active:
+            return
+        self.right_trigger = value
+        self.right_trigger_received_at = time.monotonic()
+
+    @staticmethod
+    def _valid_trigger(value: float) -> Optional[float]:
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value):
+            return None
+        return float(np.clip(value, 0.0, 1.0))
+
+    @staticmethod
+    def _finite_trigger(value: float, previous: float) -> float:
+        trigger = SonicTeleopState._valid_trigger(value)
+        return float(previous) if trigger is None else trigger
+
+    def _start_gripper_session(self) -> None:
+        if not self.gripper_enabled:
+            return
+        self.left_trigger = 0.0
+        self.right_trigger = 0.0
+        self.left_trigger_received_at = None
+        self.right_trigger_received_at = None
+        self.gripper_armed = False
+        self._gripper_session_active = True
+        self._gripper_session_started_at = time.monotonic()
+        self._gripper_arm_wait_reason = None
+        self._stale_trigger_sides.clear()
+
+    def _publish_gripper_enter(self) -> None:
+        if not self.gripper_enabled or not hasattr(self, "gripper_control_pub"):
+            return
+        for bus in (self.gripper_left_bus, self.gripper_right_bus):
+            self.gripper_control_pub.publish(
+                BxiMotor.build_motor_packet(
+                    bus,
+                    self.gripper_can_id,
+                    BxiMotor.enter_motor_mode(),
+                )
+            )
+
+    def _trigger_is_fresh(self, received_at: Optional[float], now: float) -> bool:
+        return bool(
+            received_at is not None
+            and 0.0 <= now - received_at <= self.gripper_input_timeout_s
+        )
+
+    def _log_arm_wait(self, ctx: BxiExample, reason: str, message: str) -> None:
+        if self._gripper_arm_wait_reason == reason:
+            return
+        self._gripper_arm_wait_reason = reason
+        ctx.get_logger().warning(message)
+
+    def _try_arm_gripper(self, ctx: BxiExample, now: float) -> bool:
+        if self.gripper_armed:
+            return True
+
+        inputs_fresh = self._trigger_is_fresh(
+            self.left_trigger_received_at, now
+        ) and self._trigger_is_fresh(self.right_trigger_received_at, now)
+        if not inputs_fresh:
+            started_at = self._gripper_session_started_at
+            if (
+                started_at is not None
+                and now - started_at >= self.gripper_input_timeout_s
+            ):
+                self._log_arm_wait(
+                    ctx,
+                    "input",
+                    "SONIC夹爪等待PICO trigger新数据；夹爪尚未解锁",
+                )
+            return False
+
+        if (
+            self.left_trigger > self.gripper_release_threshold
+            or self.right_trigger > self.gripper_release_threshold
+        ):
+            self._log_arm_wait(
+                ctx,
+                "release",
+                "SONIC夹爪等待左右PICO trigger松开；夹爪尚未解锁",
+            )
+            return False
+
+        self._publish_gripper_enter()
+        self.gripper_armed = True
+        self._gripper_arm_wait_reason = None
+        self._stale_trigger_sides.clear()
+        ctx.get_logger().info("SONIC夹爪已解锁：左右电机进入motor mode")
+        return True
+
+    def _monitor_gripper_input(self, ctx: BxiExample, now: float) -> None:
+        received_at = {
+            "left": self.left_trigger_received_at,
+            "right": self.right_trigger_received_at,
+        }
+        stale_now = {
+            side
+            for side, timestamp in received_at.items()
+            if not self._trigger_is_fresh(timestamp, now)
+        }
+        newly_stale = stale_now - self._stale_trigger_sides
+        recovered = self._stale_trigger_sides - stale_now
+        if newly_stale:
+            sides = ",".join(sorted(newly_stale))
+            ctx.get_logger().warning(
+                f"SONIC夹爪PICO trigger断流：{sides}；保持最后位置"
+            )
+        if recovered:
+            sides = ",".join(sorted(recovered))
+            ctx.get_logger().info(f"SONIC夹爪PICO trigger已恢复：{sides}")
+        self._stale_trigger_sides = stale_now
+
+    def _publish_gripper_command(self, bus: int, trigger: float) -> None:
+        if (
+            not self.gripper_enabled
+            or not self.gripper_armed
+            or not hasattr(self, "gripper_control_pub")
+        ):
+            return
+        trigger = float(np.clip(trigger, 0.0, 1.0))
+        self.gripper_control_pub.publish(
+            BxiMotor.build_motor_packet(
+                bus,
+                self.gripper_can_id,
+                BxiMotor.pack_cmd(
+                    joint=BxiJointControl(
+                        p_des=float((1.0 - trigger) * 0.5 - 0.1),
+                        v_des=0.0,
+                        kp=self.gripper_kp,
+                        kd=self.gripper_kd,
+                        t_ff=0.0,
+                    ),
+                    p_range=(-12.5, 12.5),
+                    v_range=(-45.0, 45.0),
+                    t_range=(-40.0, 40.0),
+                    kp_range=(0.0, 500.0),
+                    kd_range=(0.0, 5.0),
+                ),
+            )
+        )
+
+    def _update_gripper(self, ctx: BxiExample) -> None:
+        if not self.gripper_enabled or not self._gripper_session_active:
+            return
+        now = time.monotonic()
+        if not self._try_arm_gripper(ctx, now):
+            return
+        self._monitor_gripper_input(ctx, now)
+        self._publish_gripper_command(self.gripper_left_bus, self.left_trigger)
+        self._publish_gripper_command(self.gripper_right_bus, self.right_trigger)
+
+    def on_prepare_enter(
+        self,
+        ctx: BxiExample,
+        from_state: StateBehavior[BxiExample],
+        transition: TransitionProfile,
+    ) -> None:
+        super().on_prepare_enter(ctx, from_state, transition)
+        self._start_gripper_session()
+        ctx.sonic_teleop.reset()
+        ctx.preheat_model(ctx.sonic_teleop)
+
+    def on_enter(self, ctx: BxiExample) -> None:
+        if self.gripper_enabled and not self._gripper_session_active:
+            self._start_gripper_session()
+        message = getattr(
+            ctx,
+            "sonic_connection_message",
+            "机器人IP：未检测到，请检查机器人网络",
+        )
+        mode = (
+            "SONIC遥操（夹爪）"
+            if self.hardware_gripper_requested
+            else "SONIC遥操"
+        )
+        ctx.get_logger().info(
+            f"{mode}已启动：{message}；PICO按ABXY完成校准，再按A+X切入实时POSE"
+        )
+
+    def on_exit(self, ctx: BxiExample) -> None:
+        self._gripper_session_active = False
+        self.gripper_armed = False
+        self._gripper_arm_wait_reason = None
+        self._stale_trigger_sides.clear()
+        super().on_exit(ctx)
+
+    def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
+        return self._motor_frame(
+            ctx.sonic_teleop.target_dof_pos,
+            ctx.sonic_teleop.kps,
+            ctx.sonic_teleop.kds,
+        )
+
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
+        qpos = ctx.sonic_teleop.inference_step(
+            ctx.current_q,
+            ctx.current_dq,
+            ctx.current_quat_wxyz,
+            ctx.current_omega,
+        )
+        return self._motor_frame(qpos, ctx.sonic_teleop.kps, ctx.sonic_teleop.kds)
+
+    def on_update(self, ctx: BxiExample, dt: float) -> None:
+        eu_ang = quaternion_to_euler_array(ctx.current_quat_xyzw)
+        eu_ang[eu_ang > math.pi] -= 2 * math.pi
+
+        orientation_limit = math.radians(180.0)
+
+        if (np.abs(eu_ang[0]) > orientation_limit or np.abs(eu_ang[1]) > orientation_limit):
+            print("sonic teleop orientation unsafe, zero_torque!")
+            ctx.request_state("zero_torque", trigger="safety")
+            return
+
+        frame = self.get_motor_frame(ctx, dt, False)
+        if frame is not None:
+            ctx.set_motor_target(*frame)
+        self._update_gripper(ctx)
+
+    def on_action(self, ctx: BxiExample, action_name: str) -> bool:
+        if action_name != "reset_sonic_alignment":
+            return False
+        ctx.sonic_teleop.reset_yaw_alignment()
+        return True
 
 
 class ZeroTorqueState(RobotControlState):

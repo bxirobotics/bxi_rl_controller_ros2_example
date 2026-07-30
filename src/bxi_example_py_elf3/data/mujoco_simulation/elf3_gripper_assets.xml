@@ -1,0 +1,35 @@
+<mujocoinclude>
+  <!-- MoCapLab gripper meshes are millimetre STL files. -->
+  <mesh name="elf3_gripper_base_bearing_625_5_01" file="gripper/base_bearing_625_5_01.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_bearing_625_5_02" file="gripper/base_bearing_625_5_02.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_bearing_625_5_03" file="gripper/base_bearing_625_5_03.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_bearing_625_9_01" file="gripper/base_bearing_625_9_01.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_bearing_625_9_02" file="gripper/base_bearing_625_9_02.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_bearing_625_9_03" file="gripper/base_bearing_625_9_03.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_bxi50_mr128" file="gripper/base_bxi50_mr128.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_bxi50_rear_cover" file="gripper/base_bxi50_rear_cover.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_bxi50_spur_gear" file="gripper/base_bxi50_spur_gear.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_bxi50_front_housing" file="gripper/base_bxi50_front_housing.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_bxi50_rear_housing" file="gripper/base_bxi50_rear_housing.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_linear_rail" file="gripper/base_linear_rail.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_center_fixed_section" file="gripper/base_center_fixed_section.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_gripper_fixed_part" file="gripper/base_gripper_fixed_part.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_wrist_adapter" file="gripper/base_wrist_adapter.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_base_rail_motor_adapter" file="gripper/base_rail_motor_adapter.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_left_shoulder_screw" file="gripper/left_shoulder_screw.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_right_shoulder_screw" file="gripper/right_shoulder_screw.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_left_slider" file="gripper/left_slider.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_left_finger_plate_b" file="gripper/left_finger_plate_b.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_left_rubber_finger" file="gripper/left_rubber_finger.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_right_slider_adapter" file="gripper/right_slider_adapter.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_right_rack" file="gripper/right_rack.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_right_finger_mount" file="gripper/right_finger_mount.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_right_finger_plate_b" file="gripper/right_finger_plate_b.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_left_slider_adapter" file="gripper/left_slider_adapter.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_left_rack" file="gripper/left_rack.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_left_finger_mount" file="gripper/left_finger_mount.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_left_finger_plate_a" file="gripper/left_finger_plate_a.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_right_slider" file="gripper/right_slider.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_right_finger_plate_a" file="gripper/right_finger_plate_a.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="elf3_gripper_right_rubber_finger" file="gripper/right_rubber_finger.stl" scale="0.001 0.001 0.001"/>
+</mujocoinclude>
