@@ -9,7 +9,13 @@ from .composition import JointCommandComposer, JointCommandLayer
 from .frame import FloatArray, MotorFrame
 from .mod import ModDefinition, ModLoadContext, StateBuildContext, StateFactory
 from .node import ModNode, NodeBuildContext, NodeFactory
-from .resource import ResourceHandle, ResourceKey, ResourceLoading, ResourceLoadContext
+from .resource import (
+    ResourceHandle,
+    ResourceKey,
+    ResourceLoadContext,
+    ResourcePolicy,
+    ResourceStatus,
+)
 from .state import RobotControlState, StateBehavior
 from .states import (
     MotionReplayState,
@@ -53,8 +59,9 @@ __all__ = [
     "ReplayPolicy",
     "ResourceHandle",
     "ResourceKey",
-    "ResourceLoading",
     "ResourceLoadContext",
+    "ResourcePolicy",
+    "ResourceStatus",
     "RobotControlContext",
     "RobotControlState",
     "RunningFrameProvider",

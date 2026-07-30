@@ -20,7 +20,7 @@ class NormalRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider
     def __init__(
         self, name: str, state_id: int, policy: ResourceHandle[NormalMotionPolicyMjlab]
     ) -> None:
-        super().__init__(name, state_id)
+        super().__init__(name, state_id, resources=(policy,))
         self._policy = policy
 
     @property

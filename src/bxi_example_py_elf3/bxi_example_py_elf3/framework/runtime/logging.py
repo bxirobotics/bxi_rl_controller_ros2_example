@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 import os
 from queue import Empty, SimpleQueue
@@ -27,6 +27,14 @@ _LEVELS = {
     "fatal": 50,
 }
 _WAKEUP = object()
+
+
+def _display_scope(scope: str) -> str:
+    if scope.startswith("framework."):
+        return "fw." + scope.removeprefix("framework.")
+    if scope.startswith("mod."):
+        return scope.removeprefix("mod.")
+    return scope
 
 
 @dataclass(frozen=True)
@@ -110,10 +118,16 @@ class LoggingConfig:
 
 
 class ScopedLoggers:
-    """Create and cache hierarchical ROS child loggers from logical scopes."""
+    """Create cached loggers with stable logical scopes and concise names."""
 
-    def __init__(self, root: LoggerLike, config: LoggingConfig) -> None:
-        self._root = root
+    def __init__(
+        self,
+        root: LoggerLike,
+        config: LoggingConfig,
+        *,
+        logger_factory: Callable[[str], LoggerLike] | None = None,
+    ) -> None:
+        self._logger_factory = logger_factory or getattr(root, "get_child")
         self.config = config
         self._cache: dict[str, LoggerLike] = {}
         self._lock = Lock()
@@ -124,8 +138,7 @@ class ScopedLoggers:
             logger = self._cache.get(normalized)
             if logger is not None:
                 return logger
-            get_child = getattr(self._root, "get_child")
-            logger = get_child(normalized)
+            logger = self._logger_factory(_display_scope(normalized))
             set_level = getattr(logger, "set_level")
             set_level(_LEVELS[self.config.level_for(normalized)])
             self._cache[normalized] = logger
@@ -162,10 +175,8 @@ class _StreamState:
 
     @property
     def prefix(self) -> bytes:
-        return (
-            f"[mod={self.mod_id} node={self.node_name} "
-            f"stream={self.stream_name}] "
-        ).encode("utf-8")
+        stream = "out" if self.stream_name == "stdout" else "err"
+        return f"[{self.mod_id}/{self.node_name}:{stream}] ".encode("utf-8")
 
 
 class SubprocessLogRouter:

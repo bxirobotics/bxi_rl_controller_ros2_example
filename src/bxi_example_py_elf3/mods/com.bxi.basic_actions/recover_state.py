@@ -22,7 +22,7 @@ class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
     def __init__(
         self, name: str, state_id: int, policy: ResourceHandle[DanceMotionPolicyMjlab]
     ) -> None:
-        super().__init__(name, state_id)
+        super().__init__(name, state_id, resources=(policy,))
         self._policy = policy
         self.playing = True
         self.motion_selected = False

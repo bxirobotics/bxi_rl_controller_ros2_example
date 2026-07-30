@@ -105,6 +105,13 @@ class PendingTransition:
 
 
 @dataclass
+class PendingResourcePreparation:
+    rule: TransitionRule
+    trigger: str
+    from_state: str
+
+
+@dataclass
 class ActiveTransition:
     from_state: StateBehavior[RobotControlContext]
     to_state: StateBehavior[RobotControlContext]
@@ -175,6 +182,7 @@ class RobotStateMachine:
         self.current = self._states[initial]
         self.state_elapsed = 0.0
         self._pending: PendingTransition | None = None
+        self._preparing: PendingResourcePreparation | None = None
         self._active: ActiveTransition | None = None
         self._fired_after_rules: set[tuple[str, int]] = set()
         if enter_initial:
@@ -197,8 +205,12 @@ class RobotStateMachine:
             self._handle_events(events)
             if self._active is not None:
                 self._update_active_transition(dt)
-            return True
-        self._handle_events(events)
+                return True
+        else:
+            self._handle_events(events)
+            if self._active is not None:
+                self._update_active_transition(dt)
+                return True
         if self._pending is not None:
             self._pending.elapsed += dt
             if self._pending.elapsed >= self._pending.rule.delay:
@@ -218,6 +230,10 @@ class RobotStateMachine:
     def update_current_state(self, dt: float) -> None:
         if self._active is None:
             self.current.on_update(self._ctx, dt)
+            # Commit READY resources only after the source state has completed
+            # this cycle. Safety or replacement requests issued by on_update()
+            # therefore always supersede a stale asynchronous preparation.
+            self._poll_resource_preparation()
 
     def request_transition(
         self,
@@ -242,6 +258,7 @@ class RobotStateMachine:
             if not self._can_enter_transition(rule, trigger):
                 return False
             self._cancel_active_transition()
+            self._cancel_resource_preparation()
             self._pending = PendingTransition(rule, trigger)
             return True
         return self._begin_transition(rule, trigger)
@@ -257,6 +274,7 @@ class RobotStateMachine:
             "in_transition": self.in_transition,
             "transition": self._active_snapshot(),
             "pending": self._pending_snapshot(),
+            "preparing": self._preparing_snapshot(),
         }
         if include_graph:
             result["graph"] = self._graph_snapshot()
@@ -275,6 +293,7 @@ class RobotStateMachine:
                 if not self._can_enter_transition(rule, rule.event or ""):
                     return
                 self._cancel_active_transition()
+                self._cancel_resource_preparation()
                 self._pending = PendingTransition(rule, rule.event or "")
             else:
                 self._begin_transition(rule, rule.event or "")
@@ -304,10 +323,39 @@ class RobotStateMachine:
         if rule.to_state == self.current.name:
             if self._active is not None:
                 self._cancel_active_transition()
+            self._cancel_resource_preparation()
             return True
         transition = rule.transition or self._default_transition
         to_state = self._states[rule.to_state]
+        resource_status = self._request_state_resources(to_state)
+        if resource_status == "failed":
+            self._report_resource_failure(to_state)
+            return False
+        if resource_status != "ready":
+            self._cancel_active_transition()
+            self._cancel_resource_preparation()
+            self._pending = None
+            self._preparing = PendingResourcePreparation(
+                rule=rule,
+                trigger=trigger,
+                from_state=self.current.name,
+            )
+            self._logger.info(
+                "state transition queued for resource preparation: "
+                f"from={self.current.name}, to={to_state.name}, trigger={trigger}"
+            )
+            return True
+        return self._commit_transition(rule, trigger, transition, to_state)
+
+    def _commit_transition(
+        self,
+        rule: TransitionRule,
+        trigger: str,
+        transition: ResolvedTransition,
+        to_state: StateBehavior[RobotControlContext],
+    ) -> bool:
         self._cancel_active_transition()
+        self._cancel_resource_preparation()
         if self._node_lifecycle is not None:
             try:
                 self._node_lifecycle.prepare_state(to_state.name)
@@ -351,6 +399,64 @@ class RobotStateMachine:
             self._finish_active_transition()
         return True
 
+    def _poll_resource_preparation(self) -> None:
+        preparing = self._preparing
+        if preparing is None:
+            return
+        target_name = preparing.rule.to_state
+        if target_name is None:
+            self._preparing = None
+            return
+        to_state = self._states[target_name]
+        resource_status = self._state_resource_status(to_state)
+        if resource_status == "loading":
+            return
+        self._preparing = None
+        if resource_status == "failed":
+            self._report_resource_failure(to_state)
+            return
+        if self.current.name != preparing.from_state:
+            self._logger.info(
+                "discarded prepared state transition because source changed: "
+                f"from={preparing.from_state}, current={self.current.name}, "
+                f"to={to_state.name}"
+            )
+            return
+        if not self._can_enter_transition(preparing.rule, preparing.trigger):
+            return
+        transition = preparing.rule.transition or self._default_transition
+        self._commit_transition(
+            preparing.rule,
+            preparing.trigger,
+            transition,
+            to_state,
+        )
+
+    @staticmethod
+    def _request_state_resources(
+        state: StateBehavior[RobotControlContext],
+    ) -> str:
+        resources = getattr(state, "required_resources", ())
+        for resource in resources:
+            if resource.status == "failed":
+                return "failed"
+        for resource in resources:
+            if resource.status == "unloaded":
+                resource.request()
+        return RobotStateMachine._state_resource_status(state)
+
+    @staticmethod
+    def _state_resource_status(
+        state: StateBehavior[RobotControlContext],
+    ) -> str:
+        resources = getattr(state, "required_resources", ())
+        statuses = tuple(resource.status for resource in resources)
+        if "failed" in statuses:
+            return "failed"
+        if all(status == "ready" for status in statuses):
+            return "ready"
+        return "loading"
+
     def _can_enter_transition(self, rule: TransitionRule, trigger: str) -> bool:
         target_name = rule.to_state
         if target_name is None:
@@ -391,6 +497,9 @@ class RobotStateMachine:
             if self._node_lifecycle is not None:
                 self._node_lifecycle.cancel_prepared_state(active.to_state.name)
 
+    def _cancel_resource_preparation(self) -> None:
+        self._preparing = None
+
     def _finish_active_transition(self) -> None:
         active = self._active
         if active is None:
@@ -411,6 +520,22 @@ class RobotStateMachine:
     def _report_node_start_failure(self, state_name: str, exc: Exception) -> None:
         message = f"cannot enter state '{state_name}': Mod node startup failed: {exc}"
         self._logger.error(message)
+
+    def _report_resource_failure(
+        self,
+        state: StateBehavior[RobotControlContext],
+    ) -> None:
+        resources = getattr(state, "required_resources", ())
+        failures = [
+            f"{resource.key.id}: {resource.error}"
+            for resource in resources
+            if resource.status == "failed"
+        ]
+        detail = "; ".join(failures) or "unknown resource error"
+        self._logger.error(
+            f"cannot enter state '{state.name}': resource preparation failed: "
+            f"{detail}"
+        )
 
     def _report_unavailable_state(self, state_name: str, trigger: str) -> None:
         message = (
@@ -832,9 +957,36 @@ class RobotStateMachine:
             else self._default_transition.name,
         }
 
+    def _preparing_snapshot(self) -> dict[str, object] | None:
+        preparing = self._preparing
+        if preparing is None:
+            return None
+        target_name = preparing.rule.to_state
+        target = self._states.get(target_name) if target_name is not None else None
+        resources = getattr(target, "required_resources", ()) if target else ()
+        return {
+            "from": preparing.from_state,
+            "to": target_name,
+            "trigger": preparing.trigger,
+            "force": preparing.rule.force,
+            "resources": [
+                {
+                    "id": resource.key.id,
+                    "status": resource.status,
+                    "error": str(resource.error) if resource.error else None,
+                }
+                for resource in resources
+            ],
+            "transition": preparing.rule.transition.name
+            if preparing.rule.transition
+            else self._default_transition.name,
+        }
+
     def _runtime_mode(self) -> str:
         if self._active is not None:
             return "transition"
+        if self._preparing is not None:
+            return "preparing"
         if self._pending is not None:
             return "pending"
         return "state"

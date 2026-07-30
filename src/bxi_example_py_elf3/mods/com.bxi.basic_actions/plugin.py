@@ -115,26 +115,20 @@ def _load_applause_clip(context: ResourceLoadContext) -> PlaybackClip:
 
 
 def create_mod(context: ModLoadContext) -> ModDefinition:
-    context.register_resource(NORMAL_POLICY, _load_normal_policy, loading="eager")
+    context.register_resource(NORMAL_POLICY, _load_normal_policy)
     context.register_resource(
-        WITHOUT_ARM_POLICY,
-        _load_without_arm_policy,
-        loading="lazy",
+        WITHOUT_ARM_POLICY, _load_without_arm_policy, policy="on_demand"
     )
-    context.register_resource(AMP_RUN_POLICY, _load_amp_run_policy, loading="eager")
+    context.register_resource(AMP_RUN_POLICY, _load_amp_run_policy, policy="on_demand")
     context.register_resource(
-        NORMAL_RUN_POLICY,
-        _load_normal_run_policy,
-        loading="lazy",
+        NORMAL_RUN_POLICY, _load_normal_run_policy, policy="on_demand"
     )
-    context.register_resource(DANCE_POLICY, _load_dance_policy, loading="eager")
+    context.register_resource(DANCE_POLICY, _load_dance_policy, policy="on_demand")
     context.register_resource(
-        LIE_DOWN_POLICY,
-        _load_lie_down_policy,
-        loading="lazy",
+        LIE_DOWN_POLICY, _load_lie_down_policy, policy="on_demand"
     )
-    context.register_resource(RECOVER_POLICY, _load_recover_policy, loading="eager")
-    context.register_resource(APPLAUSE_CLIP, _load_applause_clip, loading="eager")
+    context.register_resource(RECOVER_POLICY, _load_recover_policy, policy="on_demand")
+    context.register_resource(APPLAUSE_CLIP, _load_applause_clip, policy="on_demand")
 
     normal_policy = context.resource(NORMAL_POLICY)
     without_arm_policy = context.resource(WITHOUT_ARM_POLICY)

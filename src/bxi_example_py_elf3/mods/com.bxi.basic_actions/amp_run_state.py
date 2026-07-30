@@ -25,7 +25,7 @@ class AmpRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         state_id: int,
         policy: ResourceHandle[HumanoidGaitPolicyLiteIsaaclab],
     ) -> None:
-        super().__init__(name, state_id)
+        super().__init__(name, state_id, resources=(policy,))
         self._policy = policy
         self.max_vel = 0.0
         self.pre_cmd_vel_run = np.zeros(3, dtype=np.float32)

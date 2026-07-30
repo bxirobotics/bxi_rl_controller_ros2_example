@@ -25,7 +25,7 @@ class DanceState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         *,
         start_frame: int
     ) -> None:
-        super().__init__(name, state_id)
+        super().__init__(name, state_id, resources=(policy,))
         self._policy = policy
         self.start_frame = start_frame
         self.playing = True

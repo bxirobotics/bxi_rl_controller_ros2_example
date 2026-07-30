@@ -205,6 +205,7 @@ def load_mod_runtime(
     *,
     built_in_root: Path,
     extra_roots: Sequence[Path] = (),
+    resource_cpu_affinity: frozenset[int] | None = None,
 ) -> ModRuntime:
     # Mods can live in a deployment directory owned by a different user than
     # the runtime process. Never create __pycache__ entries beside Mod code:
@@ -282,7 +283,7 @@ def load_mod_runtime(
         raise
 
     transition_plugins = snapshot_transition_plugins()
-    resources = ResourceManager()
+    resources = ResourceManager(resource_cpu_affinity)
     definitions: dict[str, ModDefinition] = {}
     loaded_modules: list[ModuleType] = []
     node_specs: list[ModNodeSpec] = []
@@ -307,7 +308,7 @@ def load_mod_runtime(
                         f"match plugin type_name '{plugin.type_name}'"
                     )
                 register_transition_plugin(plugin)
-        resources.preload_eager()
+        resources.load_startup()
         config, factories = _compose_config(base_config, ordered, definitions)
         _validate_mod_node_states(node_specs, config)
         _validate_mod_node_dependencies(node_specs)

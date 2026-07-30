@@ -54,7 +54,7 @@ class ApplauseState(RobotControlState, EntryFrameProvider, RunningFrameProvider)
         policy: ResourceHandle[HumanoidGaitPolicyLiteIsaaclab],
         clip: ResourceHandle[PlaybackClip],
     ) -> None:
-        super().__init__(name, state_id)
+        super().__init__(name, state_id, resources=(policy, clip))
         self._policy = policy
         self._clip = clip
         self.frame = 0.0

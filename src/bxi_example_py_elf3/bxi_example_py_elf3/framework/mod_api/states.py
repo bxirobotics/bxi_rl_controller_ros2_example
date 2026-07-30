@@ -148,44 +148,23 @@ class ProceduralState(_FrameState, Generic[ParamsT], ABC):
 
 
 class PolicyState(_FrameState, Generic[PolicyT], ABC):
-    """Shared lifecycle for lazy policy resources and live inference states."""
+    """Shared lifecycle for prepared policy resources and live inference states."""
 
     def __init__(
         self,
         name: str,
         state_id: int,
-        params_or_policy: object | ResourceHandle[PolicyT] | None = None,
+        policy: ResourceHandle[PolicyT],
     ) -> None:
-        super().__init__(name, state_id)
-        self._policy_handle = (
-            params_or_policy if isinstance(params_or_policy, ResourceHandle) else None
-        )
-        self.params = None if self._policy_handle is not None else params_or_policy
-        self._policy: PolicyT | None = None
+        super().__init__(name, state_id, resources=(policy,))
+        self._policy_handle = policy
 
     @property
     def policy(self) -> PolicyT:
-        if self._policy_handle is not None:
-            return self._policy_handle.get()
-        if self._policy is None:
-            raise RuntimeError(
-                f"state '{self.name}' policy is not prepared yet; use it from "
-                "lifecycle methods or call resolve_policy(ctx)"
-            )
-        return self._policy
-
-    def create_policy(self, ctx: RobotControlContext) -> PolicyT:
-        """Override for a state-local policy; shared models should use a Resource."""
-        raise NotImplementedError(
-            f"state '{self.name}' needs create_policy() or a ResourceHandle"
-        )
+        return self._policy_handle.get()
 
     def resolve_policy(self, ctx: RobotControlContext) -> PolicyT:
-        if self._policy_handle is not None:
-            return self._policy_handle.get()
-        if self._policy is None:
-            self._policy = self.create_policy(ctx)
-        return self._policy
+        return self._policy_handle.get()
 
     def reset_policy(self, ctx: RobotControlContext, policy: PolicyT) -> None:
         """Override when a model has recurrent state or a playback cursor."""
@@ -284,7 +263,7 @@ class MotionReplayState(
         end_frame_trim: int = 0,
         end_transition: TransitionSpec = None,
     ) -> None:
-        super().__init__(name, state_id)
+        super().__init__(name, state_id, resources=(policy,))
         self._policy_handle = policy
         self.finish_state = finish_state
         self.finish_trigger = finish_trigger

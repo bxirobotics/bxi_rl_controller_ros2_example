@@ -53,7 +53,7 @@ class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         state_id: int,
         policy: ResourceHandle[HumanoidGaitPolicyLiteIsaaclab],
     ) -> None:
-        super().__init__(name, state_id)
+        super().__init__(name, state_id, resources=(policy,))
         self._policy = policy
         self.playing = True
         self.shaketime = 0

@@ -81,6 +81,7 @@ sources:
       keyboard.yaw: {from: keyboard.axis, negative: e, positive: q}
       keyboard.normal: {from: keyboard.key, key: "1", hold_ms: 200}
       keyboard.pd_break: {from: keyboard.key, key: "!"}
+      keyboard.sonic: {from: keyboard.key, key: "@"}
       keyboard.recover: {from: keyboard.key, key: "2"}
       keyboard.dance: {from: keyboard.key, key: "3"}
       keyboard.amp_run: {from: keyboard.key, key: "4"}
@@ -291,6 +292,7 @@ controls:
 
   keyboard.normal_event: {type: bool, inputs: [{source: keyboard.normal}]}
   keyboard.pd_break_event: {type: bool, inputs: [{source: keyboard.pd_break}]}
+  keyboard.sonic_event: {type: bool, inputs: [{source: keyboard.sonic}]}
   keyboard.recover_event: {type: bool, inputs: [{source: keyboard.recover}]}
   keyboard.dance_event: {type: bool, inputs: [{source: keyboard.dance}]}
   keyboard.amp_run_event: {type: bool, inputs: [{source: keyboard.amp_run}]}
@@ -425,6 +427,7 @@ outputs:
       when:
         any:
           - [shoulder.left_event, shoulder.right_event, button.x_event]
+          - [keyboard.sonic_event]
 
     - output: btn_10=10
       when:

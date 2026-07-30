@@ -8,7 +8,8 @@ from typing import Generic, Literal, Protocol, TypeAlias, TypeVar
 
 ResourceT = TypeVar("ResourceT")
 ResourceFactory = Callable[["ResourceLoadContext"], ResourceT]
-ResourceLoading: TypeAlias = Literal["lazy", "eager"]
+ResourcePolicy: TypeAlias = Literal["startup", "on_demand"]
+ResourceStatus: TypeAlias = Literal["unloaded", "loading", "ready", "failed"]
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,15 @@ class _ResourceResolver(Protocol):
     def get(self, key: ResourceKey[ResourceT]) -> ResourceT:
         ...
 
+    def request(self, key: ResourceKey[ResourceT]) -> None:
+        ...
+
+    def status(self, key: ResourceKey[ResourceT]) -> ResourceStatus:
+        ...
+
+    def error(self, key: ResourceKey[ResourceT]) -> BaseException | None:
+        ...
+
 
 class ResourceHandle(Generic[ResourceT]):
     """Typed reference to a cached resource owned by the runtime."""
@@ -61,11 +71,24 @@ class ResourceHandle(Generic[ResourceT]):
     def get(self) -> ResourceT:
         return self._manager.get(self._key)
 
+    def request(self) -> None:
+        """Request asynchronous preparation without waiting for completion."""
+        self._manager.request(self._key)
+
+    @property
+    def status(self) -> ResourceStatus:
+        return self._manager.status(self._key)
+
+    @property
+    def error(self) -> BaseException | None:
+        return self._manager.error(self._key)
+
 
 __all__ = [
     "ResourceFactory",
     "ResourceHandle",
     "ResourceKey",
-    "ResourceLoading",
+    "ResourcePolicy",
+    "ResourceStatus",
     "ResourceLoadContext",
 ]

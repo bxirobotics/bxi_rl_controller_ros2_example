@@ -22,7 +22,10 @@ from bxi_example_py_elf3.framework.mod_api import (
     TransitionSpec,
 )
 from bxi_example_py_elf3.framework.mod_api.geometry import quaternion_to_euler_array
-from bxi_example_py_elf3.framework.platform.cpu_affinity import CpuAffinityPlan
+from bxi_example_py_elf3.framework.platform.cpu_affinity import (
+    CpuAffinityPlan,
+    CpuAffinityRole,
+)
 
 from .mod_loader import ModRuntime, load_mod_runtime
 from .logging import ScopedLoggers
@@ -91,6 +94,11 @@ class RobotControlFramework:
                 base_config,
                 built_in_root=built_in_mod_root,
                 extra_roots=extra_mod_roots,
+                resource_cpu_affinity=(
+                    cpu_affinity_plan.roles[CpuAffinityRole.COMPUTE]
+                    if cpu_affinity_plan is not None
+                    else None
+                ),
             )
             self.mod_runtime = runtime
             self.resources = runtime.resources
@@ -122,6 +130,20 @@ class RobotControlFramework:
             initial_state = (
                 str(raw_initial) if raw_initial is not None else next(iter(states))
             )
+            if initial_state not in states:
+                raise ValueError(f"unknown initial_state: {initial_state}")
+            initial_resources = states[initial_state].required_resources
+            unavailable_initial_resources = [
+                resource.key.id
+                for resource in initial_resources
+                if resource.status != "ready"
+            ]
+            if unavailable_initial_resources:
+                raise ValueError(
+                    f"initial state '{initial_state}' requires resources that are "
+                    "not policy='startup': "
+                    f"{unavailable_initial_resources}"
+                )
             node_manager.activate_initial_state(initial_state)
             self.state_machine = RobotStateMachine(
                 self,
@@ -342,15 +364,15 @@ class RobotControlFramework:
                 f"; requires={','.join(mod.requires)}" if mod.requires else ""
             )
             self._loggers.mod(mod.id).info(
-                f"loaded {mod.id}@{mod.version}: {mod.root}{dependencies}"
+                f"loaded v{mod.version}: {mod.root}{dependencies}"
             )
         for mod in self.mod_runtime.disabled_mods:
             self._loggers.mod(mod.id).info(
-                f"disabled {mod.id}@{mod.version}: {mod.root}"
+                f"disabled v{mod.version}: {mod.root}"
             )
         for mod in self.mod_runtime.unavailable_mods:
             self._loggers.mod(mod.id).warning(
-                f"unavailable {mod.id}@{mod.version}: {mod.error}; {mod.root}"
+                f"unavailable v{mod.version}: {mod.error}; {mod.root}"
             )
 
     def is_orientation_unsafe(self, quat_xyzw: object) -> bool:

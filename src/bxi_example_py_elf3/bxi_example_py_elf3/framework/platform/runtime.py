@@ -12,6 +12,8 @@ from threading import current_thread, Event, Lock, Thread
 import time
 from typing import Callable
 
+from rclpy.logging import get_logger
+
 from bxi_example_py_elf3.framework.joints import JointCommandDefaults
 from bxi_example_py_elf3.framework.mod_api import TransitionSpec
 
@@ -187,7 +189,11 @@ class RobotControlRuntime:
         }
         self._platform = platform
         root_logger = ros_node.get_logger()
-        self.loggers = ScopedLoggers(root_logger, self.logging_config)
+        self.loggers = ScopedLoggers(
+            root_logger,
+            self.logging_config,
+            logger_factory=get_logger,
+        )
         self._logger = self.loggers.framework("runtime")
         self._external_fatal_callback = fatal_callback
         self._framework_lock = Lock()

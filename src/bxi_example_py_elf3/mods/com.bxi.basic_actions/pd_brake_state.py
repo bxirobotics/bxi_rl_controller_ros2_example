@@ -22,7 +22,7 @@ class PdBrakeState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         state_id: int,
         policy: ResourceHandle[HumanoidGaitPolicyLiteIsaaclab],
     ) -> None:
-        super().__init__(name, state_id)
+        super().__init__(name, state_id, resources=(policy,))
         self._policy = policy
 
     def _frame(self, ctx: RobotControlContext) -> MotorFrame:
