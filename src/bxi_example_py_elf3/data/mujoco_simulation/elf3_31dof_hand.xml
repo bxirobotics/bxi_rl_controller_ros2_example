@@ -1,4 +1,4 @@
-<mujoco model="elf3">
+<mujoco model="elf3_31dof_hand">
   <compiler angle="radian" meshdir="./meshes/"/>
 
   <size nkey="1"/>
@@ -49,6 +49,8 @@
     <mesh name="r_wrist_x_link" content_type="model/stl" file="r_wrist_x_link.STL"/>
     <mesh name="r_wrist_y_link" content_type="model/stl" file="r_wrist_y_link.STL"/>
     <mesh name="r_wrist_z_link" content_type="model/stl" file="r_hand.STL"/>
+    <mesh name="head_z_link" content_type="model/stl" file="head_z_link.STL"/>
+    <mesh name="head_y_link" content_type="model/stl" file="head_y_link.STL"/>
   </asset>
 
   <worldbody>
@@ -62,6 +64,16 @@
       <site name="imu_in_torso" pos="0 0 0" size="0.01"/>
       <camera name="tracking" pos="1.734 -1.135 0.35" quat="0.683353 0.555871 0.298684 0.367183" mode="trackcom"/>
       <light pos="0 0 2" dir="0 0 -1" mode="trackcom"/>
+      <body name="head_z_link" pos="0 0 0.2995">
+        <inertial pos="2.48e-06 -2.072e-05 -0.07141233" mass="0.37665142" fullinertia="0.00192005 0.00110511 0.00095156 -1.6e-07 1.7e-07 7e-08"/>
+        <joint name="head_z_joint" pos="0 0 0" axis="0 0 1" range="-1.57 1.57" actuatorfrcrange="-21 21" armature="0.00424198"/>
+        <geom rgba="0.752941 0.752941 0.752941 1" mesh="head_z_link"/>
+        <body name="head_y_link">
+          <inertial pos="0.00693497 0.00114433 -0.00987703" mass="1.57425673" fullinertia="0.00294861 0.0032495 0.00265366 8.37e-06 0.00021043 -1.401e-05"/>
+          <joint name="head_y_joint" pos="0 0 0" axis="0 1 0" range="-0.785 0.785" actuatorfrcrange="-21 21" armature="0.00424198"/>
+          <geom rgba="0.752941 0.752941 0.752941 1" mesh="head_y_link"/>
+        </body>
+      </body>
       <body name="waist_y_link" pos="0 0 -0.2265">
         <inertial pos="0 0 0" quat="0 0.707107 0 0.707107" mass="0.0661518" diaginertia="2.799e-05 1.845e-05 1.104e-05"/>
         <joint name="waist_y_joint" pos="0 0 0" axis="0 1 0" range="-0.5236 0.5236" actuatorfrcrange="-100 100" armature="0.0274702"/>
@@ -314,6 +326,9 @@
     <motor name="r_wrist_x_joint" joint="r_wrist_x_joint" gear="1" ctrllimited='true' ctrlrange='-25 25'/>
     <motor name="r_wrist_y_joint" joint="r_wrist_y_joint" gear="1" ctrllimited='true' ctrlrange='-25 25'/>
     <motor name="r_wrist_z_joint" joint="r_wrist_z_joint" gear="1" ctrllimited='true' ctrlrange='-25 25'/>
+
+    <motor name="head_z_joint" joint="head_z_joint" gear="1" ctrllimited='true' ctrlrange='-21 21'/>
+    <motor name="head_y_joint" joint="head_y_joint" gear="1" ctrllimited='true' ctrlrange='-21 21'/>
   </actuator>
 
   <sensor>
