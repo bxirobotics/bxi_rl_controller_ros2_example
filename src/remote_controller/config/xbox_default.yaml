@@ -342,7 +342,7 @@ outputs:
     - output: btn_4=1
       when:
         any:
-          - [shoulder.right_event, button.y_event]
+          - [shoulder.right_event, button.y_event, {released: shoulder.right_event}]
 
     - output: btn_5=1
       when:
@@ -365,7 +365,7 @@ outputs:
     - output: btn_8=1
       when:
         any:
-          - [shoulder.left_event, button.y_event]
+          - [shoulder.left_event, button.y_event, {released: shoulder.right_event}]
           - [keyboard.amp_run_event]
 
     - output: btn_9=1
@@ -414,6 +414,7 @@ outputs:
       when:
         any:
           - [trigger.right_event, button.x_event]
+          - [keyboard.normal_depth_event]
 
     - output: btn_10=8
       when:
@@ -424,6 +425,11 @@ outputs:
       when:
         any:
           - [shoulder.left_event, shoulder.right_event, button.x_event]
+
+    - output: btn_10=10
+      when:
+        any:
+          - [shoulder.left_event, shoulder.right_event, button.y_event]
 
 #自定义命令
 system:
