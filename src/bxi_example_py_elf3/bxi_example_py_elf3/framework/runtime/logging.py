@@ -23,6 +23,7 @@ _LEVELS = {
     "error": 40,
     "fatal": 50,
 }
+_WAKEUP = object()
 
 
 @dataclass(frozen=True)
@@ -179,6 +180,9 @@ class SubprocessLogRouter:
         self._stop = Event()
         self._ready = Event()
         self._startup_error: BaseException | None = None
+        self._wake_read_fd, self._wake_write_fd = os.pipe2(
+            os.O_NONBLOCK | os.O_CLOEXEC
+        )
         self._thread = Thread(
             target=self._run,
             name="bxi-subprocess-logs",
@@ -187,6 +191,8 @@ class SubprocessLogRouter:
         self._thread.start()
         self._ready.wait()
         if self._startup_error is not None:
+            os.close(self._wake_read_fd)
+            os.close(self._wake_write_fd)
             raise RuntimeError(
                 f"cannot initialize subprocess log router: {self._startup_error}"
             ) from self._startup_error
@@ -214,15 +220,20 @@ class SubprocessLogRouter:
                     output_fd,
                 )
             )
+        self._wake()
 
     def close(self) -> None:
         self._stop.set()
+        self._wake()
         self._thread.join(timeout=5.0)
         if self._thread.is_alive():
             raise RuntimeError("subprocess log router did not stop within timeout")
+        os.close(self._wake_read_fd)
+        os.close(self._wake_write_fd)
 
     def _run(self) -> None:
         selector = selectors.DefaultSelector()
+        selector.register(self._wake_read_fd, selectors.EVENT_READ, _WAKEUP)
         try:
             os.sched_setaffinity(0, self._cpu_affinity)
         except BaseException as exc:
@@ -236,13 +247,32 @@ class SubprocessLogRouter:
         try:
             while not self._stop.is_set():
                 self._register_pending(selector)
-                for key, _mask in selector.select(timeout=0.05):
-                    self._read_stream(selector, key.data)
+                for key, _mask in selector.select():
+                    if key.data is _WAKEUP:
+                        self._drain_wakeup()
+                        self._register_pending(selector)
+                    else:
+                        self._read_stream(selector, key.data)
             self._register_pending(selector)
             for key in tuple(selector.get_map().values()):
-                self._drain_and_close(selector, key.data)
+                if key.data is not _WAKEUP:
+                    self._drain_and_close(selector, key.data)
         finally:
             selector.close()
+
+    def _wake(self) -> None:
+        try:
+            os.write(self._wake_write_fd, b"\0")
+        except BlockingIOError:
+            pass
+
+    def _drain_wakeup(self) -> None:
+        while True:
+            try:
+                if not os.read(self._wake_read_fd, 4096):
+                    return
+            except BlockingIOError:
+                return
 
     def _register_pending(self, selector: selectors.BaseSelector) -> None:
         while True:

@@ -230,8 +230,7 @@ setup(
         (
             "share/" + package_name,
             ["package.xml"],
-        ),
-        ("bin", ["../../tools/bxi-mod"]),
+        )
     ]
     + get_data_files()
     + get_launch_files()

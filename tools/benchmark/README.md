@@ -191,3 +191,53 @@ cross-platform report (the report directory remains ignored):
 python3 tools/benchmark/joint_mapping_benchmark.py \
   --json tools/benchmark/results/joints-my-platform.json
 ```
+
+## Framework cycle overhead
+
+Measure the fixed cost of the production control-cycle boundaries without adding
+profiling hooks to the framework:
+
+```bash
+source /opt/ros/humble/setup.bash
+python3 tools/benchmark/framework_performance.py \
+  --json tools/benchmark/results/framework-my-platform.json
+```
+
+The script creates a temporary API-3 Mod with one allocation-free hold state and
+calls the same cycle boundary used by `RobotControlRuntime`. It reports platform
+input snapshot, framework update, actuator publication, their accounted sum and
+the complete wall-clock call. This deliberately measures the framework's fixed
+overhead; model inference belongs in `inference_benchmark.py`, and hardware/ROS
+message conversion remains visible in the running controller's periodic timing
+report.
+
+The report also compares sleeping-process CPU time with and without an idle
+`SubprocessLogRouter`, making the background cost of process log collection
+visible. Use identical affinity, governor, power mode and command arguments when
+comparing machines or revisions.
+
+## Live process scheduling inspection
+
+Inspect the main controller, all descendants and every Linux thread without
+changing or importing anything in the target process:
+
+```bash
+python3 tools/diagnostics/process_scheduling.py --pid PID
+
+# Two samples are needed for CPU percentages.
+python3 tools/diagnostics/process_scheduling.py \
+  --pid PID --count 10 --interval 1 \
+  --json tools/benchmark/results/scheduling-my-platform.json
+
+# PID discovery is also available when the regular expression matches once.
+python3 tools/diagnostics/process_scheduling.py \
+  --match 'bxi_example_py_elf3.*mod_node_runner'
+```
+
+Linux affinity and scheduling policy are per-thread. The table therefore shows
+each TID separately, including last CPU, effective affinity, `SCHED_*` policy,
+reset-on-fork, RT priority, nice value, kernel priority, context switches and
+CPU migrations. Process sections add PID/PPID/PGRP/session, cgroup CPU/cpuset
+limits, OOM adjustment and realtime/nice resource limits. The first snapshot
+also prints topology, frequency/governor information and the kernel RT runtime
+limit for every CPU available to the observed tree.

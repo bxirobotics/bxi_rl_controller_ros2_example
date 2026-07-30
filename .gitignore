@@ -6,8 +6,8 @@ install/
 log/
 benchmarks/results/
 benchmarks/cache/
-tools/benchmark/results/
-tools/benchmark/cache/
+tools/**/results/
+tools/**/cache/
 .cache/
 !.gitignore
 # proxsuite/
