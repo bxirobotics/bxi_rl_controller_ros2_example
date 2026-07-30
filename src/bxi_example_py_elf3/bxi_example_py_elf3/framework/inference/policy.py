@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-import time
 
 import numpy as np
 from numpy.typing import NDArray
@@ -160,26 +159,10 @@ class Policy:
         *,
         advance: bool = True,
     ) -> PolicyOutput:
-        monitor = self.runtime.options.monitor_enabled
-        if monitor:
-            started = time.perf_counter_ns()
         joints = self._joint_binding.bind(frame.joints)
         self.input_builder.build_into(frame, joints, dt, advance=advance)
-        if monitor:
-            input_done = time.perf_counter_ns()
         outputs = self.backend.run(self.input_builder.inputs)
-        if monitor:
-            backend_done = time.perf_counter_ns()
         self.output_decoder.decode_into(outputs)
-        if monitor:
-            done = time.perf_counter_ns()
-            self.runtime.monitor.record(
-                self.name,
-                input_done - started,
-                backend_done - input_done,
-                done - backend_done,
-                done - started,
-            )
         return self.output_decoder.output
 
     def close(self) -> None:

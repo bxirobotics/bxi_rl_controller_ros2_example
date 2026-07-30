@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Measure the real framework cycle boundaries without modifying the runtime.
+"""Measure the real framework cycle boundaries without instrumenting the runtime.
 
 The benchmark creates a temporary API-4 Mod with one allocation-free hold state,
 then invokes the existing ``RobotControlRuntime._run_control_cycle`` boundary.
-That boundary already returns the timings collected by the production runtime:
-platform snapshot, framework update, and actuator publication.  No benchmark
-hooks or conditionals are added to the framework itself.
+Its fake platform timestamps calls at the outside of the production runtime, so
+no benchmark fields, hooks or conditionals are added to framework code.
 """
 
 from __future__ import annotations
@@ -176,18 +175,36 @@ class _BenchmarkPlatform:
         self.published_position = np.zeros(dof, dtype=np.float64)
         self.published_kp = np.zeros(dof, dtype=np.float64)
         self.published_kd = np.zeros(dof, dtype=np.float64)
+        self.snapshot_started_ns = 0
+        self.snapshot_finished_ns = 0
+        self.publish_started_ns = 0
+        self.publish_finished_ns = 0
+
+    def reset_timings(self) -> None:
+        self.snapshot_started_ns = 0
+        self.snapshot_finished_ns = 0
+        self.publish_started_ns = 0
+        self.publish_finished_ns = 0
 
     def startup_step(self, _now: float) -> bool:
         return True
 
     def snapshot_control_inputs(self):
-        self.joints.view.timestamp_ns = time.monotonic_ns()
-        return self._snapshot
+        self.snapshot_started_ns = time.perf_counter_ns()
+        try:
+            self.joints.view.timestamp_ns = time.monotonic_ns()
+            return self._snapshot
+        finally:
+            self.snapshot_finished_ns = time.perf_counter_ns()
 
     def publish_motor_frame(self, frame) -> None:
-        np.copyto(self.published_position, frame.qpos, casting="same_kind")
-        np.copyto(self.published_kp, frame.kp, casting="same_kind")
-        np.copyto(self.published_kd, frame.kd, casting="same_kind")
+        self.publish_started_ns = time.perf_counter_ns()
+        try:
+            np.copyto(self.published_position, frame.qpos, casting="same_kind")
+            np.copyto(self.published_kp, frame.kp, casting="same_kind")
+            np.copyto(self.published_kd, frame.kd, casting="same_kind")
+        finally:
+            self.publish_finished_ns = time.perf_counter_ns()
 
 
 def _percentile(values: np.ndarray, percentile: float) -> float:
@@ -281,17 +298,28 @@ def _measure_cycles(
                 accounted_ns: list[int] = []
                 wall_ns: list[int] = []
                 for _ in range(iterations):
+                    benchmark_platform.reset_timings()
                     started_ns = time.perf_counter_ns()
-                    metrics = runtime._run_control_cycle()
+                    runtime._run_control_cycle()
                     finished_ns = time.perf_counter_ns()
-                    snapshot_ns.append(metrics.snapshot_ns)
-                    framework_ns.append(metrics.framework_ns)
-                    publish_ns.append(metrics.publish_ns)
-                    accounted_ns.append(
-                        metrics.snapshot_ns
-                        + metrics.framework_ns
-                        + metrics.publish_ns
+                    snapshot = (
+                        benchmark_platform.snapshot_finished_ns
+                        - benchmark_platform.snapshot_started_ns
                     )
+                    framework = (
+                        benchmark_platform.publish_started_ns
+                        - benchmark_platform.snapshot_finished_ns
+                    )
+                    publish = (
+                        benchmark_platform.publish_finished_ns
+                        - benchmark_platform.publish_started_ns
+                    )
+                    if min(snapshot, framework, publish) < 0:
+                        raise RuntimeError("incomplete framework timing boundary")
+                    snapshot_ns.append(snapshot)
+                    framework_ns.append(framework)
+                    publish_ns.append(publish)
+                    accounted_ns.append(snapshot + framework + publish)
                     wall_ns.append(finished_ns - started_ns)
                 repeat_results.append(
                     {
@@ -451,7 +479,6 @@ def _measure_resource_loading(
                 options=RuntimeOptions(
                     backend="onnxruntime",
                     warmup_runs=0,
-                    monitor_enabled=False,
                     warn_on_fallback=False,
                 )
             )

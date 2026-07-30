@@ -250,7 +250,7 @@ def _install(source: Path, model_path: Path) -> Path:
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Validate calibration tensors captured by the inference framework and "
+            "Validate calibration tensors captured by the external capture tool and "
             "build INT8 RKNN models."
         )
     )
@@ -259,7 +259,7 @@ def _arguments() -> argparse.Namespace:
         "--calibration-root",
         required=True,
         type=Path,
-        help="root written by BXI_RKNN_CALIBRATION_DIR",
+        help="root written by collect_calibration.py --output",
     )
     parser.add_argument("--target", default="rk3588")
     parser.add_argument("--output", default="actions")

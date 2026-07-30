@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import numpy as np
 
 from bxi_example_py_elf3.framework.mod_api.geometry import (
@@ -158,9 +156,6 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
         if not advance and alignment_samples:
             np.copyto(self._alignment_checkpoint, self.init_to_world)
         joints = self.bind_joints(frame)
-        monitor = self._runtime.options.monitor_enabled
-        if monitor:
-            started = time.perf_counter_ns()
         self._build_input(
             joints.position,
             joints.velocity,
@@ -168,11 +163,7 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
             frame.angular_velocity,
         )
         self._time_input[0, 0] = int(self._frame)
-        if monitor:
-            input_finished = time.perf_counter_ns()
         raw = self._backend.run(self._inputs)["actions"]
-        if monitor:
-            backend_finished = time.perf_counter_ns()
         np.copyto(self._action, np.asarray(raw).reshape(-1))
         if advance:
             np.copyto(self._previous_action, self._action)
@@ -193,9 +184,6 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
             self._alignment_samples = alignment_samples
             if alignment_samples:
                 np.copyto(self.init_to_world, self._alignment_checkpoint)
-        if monitor:
-            finished = time.perf_counter_ns()
-            self._record(started, input_finished, backend_finished, finished)
         self._policy_output.completed = self.finished()
         return self.output
 
@@ -255,16 +243,6 @@ class _LegacyMotionPolicy(_MotionGeometry, JointPolicy):
 
     def finished(self, trim: int = 0) -> bool:
         return self._frame > self._end_frame - trim
-
-    def _record(self, start, input_done, backend_done, done):
-        if self._runtime.options.monitor_enabled:
-            self._runtime.monitor.record(
-                self._policy_name,
-                input_done - start,
-                backend_done - input_done,
-                done - backend_done,
-                done - start,
-            )
 
     def close(self):
         self._backend.close()
@@ -466,9 +444,6 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
         if not advance and alignment_samples:
             np.copyto(self._alignment_checkpoint, self.init_to_world)
         joints = self.bind_joints(frame)
-        monitor = self._runtime.options.monitor_enabled
-        if monitor:
-            started = time.perf_counter_ns()
         self._build_input(
             joints.position,
             joints.velocity,
@@ -479,11 +454,7 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
             advance_history=advance,
         )
         self._time_input[0, 0] = int(self._frame)
-        if monitor:
-            input_done = time.perf_counter_ns()
         outputs = self._backend.run(self._inputs)
-        if monitor:
-            backend_done = time.perf_counter_ns()
         np.copyto(self._action, np.asarray(outputs["actions"]).reshape(-1))
         if advance:
             np.copyto(self._previous_action, self._action)
@@ -507,15 +478,6 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
             self._alignment_samples = alignment_samples
             if alignment_samples:
                 np.copyto(self.init_to_world, self._alignment_checkpoint)
-        if monitor:
-            done = time.perf_counter_ns()
-            self._runtime.monitor.record(
-                self._policy_name,
-                input_done - started,
-                backend_done - input_done,
-                done - backend_done,
-                done - started,
-            )
         self._policy_output.completed = self.finished()
         return self.output
 

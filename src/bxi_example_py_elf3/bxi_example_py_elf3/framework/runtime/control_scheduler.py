@@ -17,14 +17,11 @@ from bxi_example_py_elf3.framework.platform.cpu_affinity import (
 
 
 @dataclass(frozen=True)
-class ControlCycleMetrics:
-    """Measurements produced by one platform-specific control cycle."""
+class ControlCycleResult:
+    """State produced by one platform-specific control cycle."""
 
     state: str
     active: bool = True
-    snapshot_ns: int = 0
-    framework_ns: int = 0
-    publish_ns: int = 0
 
 
 def _percentile_summary(values_ns: list[int]) -> dict[str, float]:
@@ -79,7 +76,7 @@ class ControlScheduler:
 
     def __init__(
         self,
-        cycle: Callable[[], ControlCycleMetrics],
+        cycle: Callable[[], ControlCycleResult],
         *,
         period_sec: float,
         compute_budget_sec: float,
@@ -198,9 +195,6 @@ class ControlScheduler:
             wake = list(self._wake_ns)
             cycle = list(self._cycle_ns)
             frame_interval = list(self._frame_interval_ns)
-            snapshot = list(self._snapshot_ns)
-            framework = list(self._framework_ns)
-            publish = list(self._publish_ns)
             finish_late = list(self._finish_late_ns)
             window_cycles = self._window_cycles
             window_budget_overruns = self._window_budget_overruns
@@ -230,9 +224,6 @@ class ControlScheduler:
             "wake_late_ms": _percentile_summary(wake),
             "cycle_ms": _percentile_summary(cycle),
             "frame_interval_ms": _percentile_summary(frame_interval),
-            "snapshot_ms": _percentile_summary(snapshot),
-            "framework_ms": _percentile_summary(framework),
-            "publish_ms": _percentile_summary(publish),
             "finish_late_ms": _percentile_summary(finish_late),
             "last_miss": last_miss,
             "fatal_error": fatal_error,
@@ -272,9 +263,9 @@ class ControlScheduler:
             wake_ns = time.monotonic_ns()
             cycle_started_ns = wake_ns
             try:
-                metrics = self._cycle()
-                if not isinstance(metrics, ControlCycleMetrics):
-                    raise TypeError("control cycle must return ControlCycleMetrics")
+                result = self._cycle()
+                if not isinstance(result, ControlCycleResult):
+                    raise TypeError("control cycle must return ControlCycleResult")
             except BaseException as exc:
                 message = f"control scheduler stopped after cycle failure: {exc}"
                 with self._stats_lock:
@@ -292,7 +283,7 @@ class ControlScheduler:
                 break
             finished_ns = time.monotonic_ns()
 
-            if not metrics.active:
+            if not result.active:
                 last_active_started_ns = None
                 release_ns = self._next_release_after(release_ns, finished_ns)
                 continue
@@ -331,7 +322,7 @@ class ControlScheduler:
                 next_release_ns += skipped_periods * self.period_ns
 
             miss_event = self._record_cycle(
-                metrics,
+                result,
                 wake_late_ns=wake_late_ns,
                 cycle_ns=cycle_ns,
                 frame_interval_ns=frame_interval_ns,
@@ -381,7 +372,7 @@ class ControlScheduler:
 
     def _record_cycle(
         self,
-        metrics: ControlCycleMetrics,
+        result: ControlCycleResult,
         *,
         wake_late_ns: int,
         cycle_ns: int,
@@ -395,13 +386,10 @@ class ControlScheduler:
         with self._stats_lock:
             self._window_cycles += 1
             self._total_cycles += 1
-            self._last_state = metrics.state
+            self._last_state = result.state
             self._wake_ns.append(wake_late_ns)
             self._cycle_ns.append(cycle_ns)
             self._frame_interval_ns.append(frame_interval_ns)
-            self._snapshot_ns.append(max(0, int(metrics.snapshot_ns)))
-            self._framework_ns.append(max(0, int(metrics.framework_ns)))
-            self._publish_ns.append(max(0, int(metrics.publish_ns)))
             self._finish_late_ns.append(finish_late_ns)
             if budget_overrun:
                 self._window_budget_overruns += 1
@@ -412,7 +400,7 @@ class ControlScheduler:
                 self._window_deadline_misses += 1
                 self._total_deadline_misses += 1
                 miss_event = {
-                    "state": metrics.state,
+                    "state": result.state,
                     "wake_late_ms": wake_late_ns / 1_000_000.0,
                     "cycle_ms": cycle_ns / 1_000_000.0,
                     "finish_late_ms": finish_late_ns / 1_000_000.0,
@@ -448,9 +436,6 @@ class ControlScheduler:
         self._wake_ns: list[int] = []
         self._cycle_ns: list[int] = []
         self._frame_interval_ns: list[int] = []
-        self._snapshot_ns: list[int] = []
-        self._framework_ns: list[int] = []
-        self._publish_ns: list[int] = []
         self._finish_late_ns: list[int] = []
         self._window_cycles = 0
         self._window_budget_overruns = 0
@@ -475,4 +460,4 @@ class ControlScheduler:
             pass
 
 
-__all__ = ["ControlCycleMetrics", "ControlScheduler"]
+__all__ = ["ControlCycleResult", "ControlScheduler"]

@@ -1,4 +1,3 @@
-import time
 import numpy as np
 from bxi_example_py_elf3.framework.mod_api.geometry import get_gravity_orientation
 from bxi_example_py_elf3.framework.joints import CompiledJointMap, JointTargetView
@@ -201,9 +200,6 @@ class HumanoidGaitPolicyLiteIsaaclab(JointPolicy):
         cmd_vel = frame.command
         if cmd_vel is None:
             raise ValueError("HumanoidGaitPolicyLiteIsaaclab requires frame.command")
-        monitor = self._runtime.options.monitor_enabled
-        if monitor:
-            total_started = time.perf_counter_ns()
         # 如果启用了额外观测（步态），先更新步态相位，使观测包含当前相位
         if self.extra_obs_dim > 0 and advance:
             # 计数并计算当前相位
@@ -220,11 +216,7 @@ class HumanoidGaitPolicyLiteIsaaclab(JointPolicy):
             cmd_vel,
             advance=advance,
         )
-        if monitor:
-            input_finished = time.perf_counter_ns()
         raw_action = self._backend.run(self._inputs)["actions"]
-        if monitor:
-            backend_finished = time.perf_counter_ns()
         np.copyto(self._action, np.asarray(raw_action).reshape(-1))
 
         out_len = self._action.shape[0]
@@ -287,16 +279,6 @@ class HumanoidGaitPolicyLiteIsaaclab(JointPolicy):
             np.copyto(
                 self._previous_model_action,
                 self._previous_model_action_checkpoint,
-            )
-
-        if monitor:
-            output_finished = time.perf_counter_ns()
-            self._runtime.monitor.record(
-                self._policy_name,
-                input_finished - total_started,
-                backend_finished - input_finished,
-                output_finished - backend_finished,
-                output_finished - total_started,
             )
 
         return self.output

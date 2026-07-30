@@ -18,7 +18,7 @@ from bxi_example_py_elf3.framework.joints import JointCommandDefaults
 from bxi_example_py_elf3.framework.mod_api import TransitionSpec
 
 from bxi_example_py_elf3.framework.runtime.control_scheduler import (
-    ControlCycleMetrics,
+    ControlCycleResult,
     ControlScheduler,
 )
 from bxi_example_py_elf3.framework.runtime.controller import RobotControlFramework
@@ -361,17 +361,14 @@ class RobotControlRuntime:
         info["events"] = list(self._last_control_events)
         return info
 
-    def _run_control_cycle(self) -> ControlCycleMetrics:
+    def _run_control_cycle(self) -> ControlCycleResult:
         if not self._platform.startup_step(time.monotonic()):
-            return ControlCycleMetrics(state="startup", active=False)
+            return ControlCycleResult(state="startup", active=False)
 
-        snapshot_started_ns = time.monotonic_ns()
         observation, events = self._platform.snapshot_control_inputs()
         events = tuple(events)
         self._last_control_events = events
-        snapshot_finished_ns = time.monotonic_ns()
 
-        framework_started_ns = snapshot_finished_ns
         with self._framework_lock:
             frame = self.framework.update(
                 observation,
@@ -379,18 +376,10 @@ class RobotControlRuntime:
                 self.config.period_sec,
             )
             state_name = self.framework.current_state_name
-        framework_finished_ns = time.monotonic_ns()
 
-        publish_started_ns = framework_finished_ns
         if frame is not None:
             self._platform.publish_motor_frame(frame)
-        publish_finished_ns = time.monotonic_ns()
-        return ControlCycleMetrics(
-            state=state_name,
-            snapshot_ns=snapshot_finished_ns - snapshot_started_ns,
-            framework_ns=framework_finished_ns - framework_started_ns,
-            publish_ns=publish_finished_ns - publish_started_ns,
-        )
+        return ControlCycleResult(state=state_name)
 
     def _maintenance_loop(self) -> None:
         period_sec = 1.0 / self.config.maintenance_hz

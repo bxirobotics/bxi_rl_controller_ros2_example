@@ -27,7 +27,6 @@ class AmpRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
     ) -> None:
         super().__init__(name, state_id, resources=(policy,))
         self._policy = policy
-        self.max_vel = 0.0
         self.pre_cmd_vel_run = np.zeros(3, dtype=np.float32)
         self.cmd_vel_run = np.zeros(3, dtype=np.float32)
 
@@ -41,7 +40,6 @@ class AmpRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         ctx.preheat_model(self.policy, command=self.get_cmd_vel(ctx))
 
     def on_enter(self, ctx: RobotControlContext) -> None:
-        self.max_vel = 0.0
         self.pre_cmd_vel_run.fill(0.0)
         self.cmd_vel_run.fill(0.0)
 
@@ -68,11 +66,6 @@ class AmpRunState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         velocity = output.estimated_velocity
         if velocity is None:
             raise RuntimeError("AMP policy did not provide estimated velocity")
-        self.max_vel = max(self.max_vel, float(velocity[0]))
-        if ctx.loop_count >= 100 + int(0.3 / ctx.dt):
-            self.logger.debug(f"maximum estimated velocity: {self.max_vel:.6f}")
-            ctx.loop_count = int(0.3 / ctx.dt)
-            self.max_vel = 0.0
         return self._motor_frame_from_target(ctx, output.joints)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:

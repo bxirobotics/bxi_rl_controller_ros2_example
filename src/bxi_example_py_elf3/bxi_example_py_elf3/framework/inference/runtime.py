@@ -14,7 +14,6 @@ from .backends import (
     RknnBackendFactory,
 )
 from .model import ModelSpec
-from .monitor import InferenceMonitor
 
 
 class BackendUnavailableError(RuntimeError):
@@ -41,7 +40,6 @@ class BackendRegistry:
 class RuntimeOptions:
     backend: str = "auto"
     warmup_runs: int = 1
-    monitor_enabled: bool = False
     warn_on_fallback: bool = True
 
 
@@ -53,13 +51,11 @@ class InferenceRuntime:
         *,
         registry: BackendRegistry | None = None,
         options: RuntimeOptions | None = None,
-        monitor: InferenceMonitor | None = None,
     ) -> None:
         self.registry = registry or BackendRegistry(
             (RknnBackendFactory(), OpenVinoBackendFactory(), OnnxBackendFactory())
         )
         self.options = options or RuntimeOptions()
-        self.monitor = monitor or InferenceMonitor()
         self._warned_fallbacks: set[tuple[tuple[str, ...], str]] = set()
 
     def open_backend(

@@ -68,31 +68,43 @@ python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 ### Capture and build a representative INT8 model
 
 Do not calibrate a control policy with the benchmark's random tensors. Capture
-the final, preprocessed tensors seen by the policy on the robot instead. The
-depth policy has a non-blocking recorder for this purpose: the control thread
-only takes an in-memory snapshot, while a background thread writes the `.npy`
-files and ordered `dataset.txt`.
+the final, preprocessed tensors seen by the policy on the robot instead.
+`collect_calibration.py` launches the application with a tool-side proxy around
+every inference backend opened through `InferenceRuntime`. It therefore works
+for every framework policy and every registered backend without adding capture
+branches or lifecycle code to production policies.
 
 Build and source the package, then start the hardware launch with:
 
 ```bash
-BXI_RKNN_CALIBRATION_DIR=/tmp/bxi_rknn_calibration \
-BXI_RKNN_CALIBRATION_EVERY=5 \
-BXI_RKNN_CALIBRATION_MAX=500 \
-ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py
+python3 tools/benchmark/collect_calibration.py \
+  --output /tmp/bxi_rknn_calibration \
+  --every 5 \
+  --max-samples 500 \
+  --skip-first 10 \
+  -- ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py
 ```
 
-Enter depth walking and exercise representative standing, forward, turning,
-obstacle and open-space situations. The default `origin_camera` mode writes:
+The proxy records the ordered input mapping passed to `backend.run()`, after all
+policy preprocessing and history assembly. The initial calls are skipped so
+model warmup does not contaminate the dataset. Each model receives its own
+directory named after its source model. For example, default `origin_camera`
+depth walking writes:
 
 ```text
 /tmp/bxi_rknn_calibration/dagger2/dataset.txt
 ```
 
-Only the active policy is sampled. To capture the legacy `normal_depth` model,
-change the Mod state's mode to `depth_walk`, rebuild/restart, and perform a
-second run. Existing samples are resumed until `BXI_RKNN_CALIBRATION_MAX` is
-reached. Use a new empty root when intentionally starting a new dataset.
+Only backends that actually execute are sampled. Exercise representative states
+and commands for every model being calibrated. Existing samples are resumed
+until `--max-samples` is reached; model hashes and input contracts prevent an
+unrelated model from being appended to the same directory. Use a new empty root
+when intentionally starting a new dataset.
+
+This launcher affects only Python processes started by that command and leaves
+the installed framework unchanged. Collection intentionally copies inputs on
+the inference thread and must be used for dataset generation, not latency or
+real-time performance measurements.
 
 Copy the calibration root to the x86_64 RKNN Toolkit2 machine. Validate both
 datasets without converting:

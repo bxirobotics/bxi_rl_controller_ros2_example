@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import time
 
 import numpy as np
 
@@ -112,9 +111,6 @@ class NormalMotionPolicyMjlab(JointPolicy):
         command = frame.command
         if command is None:
             raise ValueError("NormalMotionPolicyMjlab requires frame.command")
-        monitor = self._runtime.options.monitor_enabled
-        if monitor:
-            total_started = time.perf_counter_ns()
         obs = self._obs[0]
         obs[0:3] = frame.angular_velocity
         self._project_gravity(frame.quat_wxyz, self._gravity)
@@ -127,12 +123,7 @@ class NormalMotionPolicyMjlab(JointPolicy):
         obs[35:64] = joints.velocity
         obs[64:93] = self._action
         obs[93:96] = command
-        if monitor:
-            input_finished = time.perf_counter_ns()
-
         outputs = self._backend.run(self._inputs)
-        if monitor:
-            backend_finished = time.perf_counter_ns()
         np.copyto(self._action, np.asarray(outputs["actions"]).reshape(-1))
         np.multiply(
             self._action,
@@ -146,17 +137,6 @@ class NormalMotionPolicyMjlab(JointPolicy):
         )
         if not advance:
             np.copyto(self._action, self._action_checkpoint)
-        if monitor:
-            output_finished = time.perf_counter_ns()
-
-        if monitor:
-            self._runtime.monitor.record(
-                self._policy_name,
-                input_finished - total_started,
-                backend_finished - input_finished,
-                output_finished - backend_finished,
-                output_finished - total_started,
-            )
         return self.output
 
     @staticmethod

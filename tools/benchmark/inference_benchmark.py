@@ -42,6 +42,43 @@ CASES = (
     "depth_cached",
     "depth_fresh",
 )
+
+
+class _TimedBackend:
+    """Benchmark-only proxy; production policies keep the original backend."""
+
+    def __init__(self, backend) -> None:
+        self._backend = backend
+        self.elapsed_ns = 0
+        self.calls = 0
+
+    def begin_sample(self) -> None:
+        self.elapsed_ns = 0
+        self.calls = 0
+
+    def run(self, *args, **kwargs):
+        started = time.perf_counter_ns()
+        try:
+            return self._backend.run(*args, **kwargs)
+        finally:
+            self.elapsed_ns += time.perf_counter_ns() - started
+            self.calls += 1
+
+    def __getattr__(self, name: str):
+        return getattr(self._backend, name)
+
+
+def _install_backend_timer(policy) -> _TimedBackend | None:
+    for attribute in ("backend", "_backend"):
+        backend = getattr(policy, attribute, None)
+        if backend is None or not callable(getattr(backend, "run", None)):
+            continue
+        timer = _TimedBackend(backend)
+        setattr(policy, attribute, timer)
+        return timer
+    return None
+
+
 BASELINE_SOURCE_CANDIDATES = {
     "normal": (
         "src/bxi_example_py_elf3/bxi_example_py_elf3/policies/normal.py",
@@ -180,6 +217,21 @@ def _construct_baseline(cls, *args, **kwargs):
     return cls(*args, **supported)
 
 
+def _baseline_runtime():
+    """Supply removed options only to historical code in the benchmark worker."""
+
+    from bxi_example_py_elf3.framework.inference import InferenceRuntime
+
+    runtime = InferenceRuntime()
+    runtime.options = types.SimpleNamespace(
+        backend="auto",
+        warmup_runs=1,
+        warn_on_fallback=True,
+        monitor_enabled=False,
+    )
+    return runtime
+
+
 def _inputs():
     return {
         # Distinct values make a joint-order regression visible in model output.
@@ -216,6 +268,7 @@ def _make_runner(case: str, version: str):
             policy = _construct_baseline(
                 module.NormalMotionPolicyMjlab,
                 str((ASSETS / "model_normal.onnx").resolve()),
+                runtime=_baseline_runtime(),
                 backend="onnxruntime",
             )
             infer = getattr(policy, "infer_step", None)
@@ -232,6 +285,7 @@ def _make_runner(case: str, version: str):
             policy = _construct_baseline(
                 module.HumanoidGaitPolicyLiteIsaaclab,
                 str((ASSETS / model_name).resolve()),
+                runtime=_baseline_runtime(),
                 backend="onnxruntime",
             )
             infer = getattr(policy, "inference_step", None)
@@ -246,6 +300,7 @@ def _make_runner(case: str, version: str):
                 module.DanceMotionPolicyMjlab,
                 str((ASSETS / "recover.npz").resolve()),
                 str((ASSETS / "recover.onnx").resolve()),
+                runtime=_baseline_runtime(),
                 backend="onnxruntime",
             )
             infer = getattr(policy, "inference_step", None)
@@ -259,6 +314,7 @@ def _make_runner(case: str, version: str):
                 module.DanceMotionPolicyGravityIsaaclab,
                 str((BACK_FLIP_ASSETS / "back_flip.npz").resolve()),
                 str((BACK_FLIP_ASSETS / "back_flip.onnx").resolve()),
+                runtime=_baseline_runtime(),
                 backend="onnxruntime",
             )
             infer = getattr(policy, "inference_step", None)
@@ -272,6 +328,7 @@ def _make_runner(case: str, version: str):
                 module.DanceMotionPolicyGravityIsaaclabV3,
                 str((ASSETS / "shuishou.npz").resolve()),
                 str((ASSETS / "shuishou.onnx").resolve()),
+                runtime=_baseline_runtime(),
                 backend="onnxruntime",
             )
             infer = getattr(policy, "inference_step", None)
@@ -283,6 +340,7 @@ def _make_runner(case: str, version: str):
         policy = _construct_baseline(
             module.HumanoidGaitDepthPolicyIsaaclab,
             str((DEPTH_ASSETS / "normal_depth.onnx").resolve()),
+            runtime=_baseline_runtime(),
             backend="onnxruntime",
         )
         depth = np.ones((policy.depth_h, policy.depth_w), dtype=np.float32)
@@ -325,7 +383,6 @@ def _make_runner(case: str, version: str):
     from bxi_example_py_elf3.framework.inference import (
         InferenceFrame,
         InferenceRuntime,
-        RuntimeOptions,
     )
     from bxi_example_py_elf3.policies import (
         DanceMotionPolicyGravityIsaaclab,
@@ -337,7 +394,7 @@ def _make_runner(case: str, version: str):
     from bxi_example_py_elf3.framework.joints import JointStateView
     from bxi_example_py_elf3.policies.joints import ELF3_POLICY_JOINTS
 
-    runtime = InferenceRuntime(options=RuntimeOptions(monitor_enabled=False))
+    runtime = InferenceRuntime()
     inference_frame = InferenceFrame(
         joints=JointStateView(ELF3_POLICY_JOINTS, q, dq),
         quat_wxyz=wxyz,
@@ -459,6 +516,21 @@ def _worker(
             started = time.perf_counter_ns()
             output = step()
             samples[index] = time.perf_counter_ns() - started
+
+        backend_timer = _install_backend_timer(policy)
+        profiled_samples = np.empty(iterations, dtype=np.int64)
+        backend_samples = np.zeros(iterations, dtype=np.int64)
+        backend_measured = backend_timer is not None
+        for index in range(iterations):
+            if backend_timer is not None:
+                backend_timer.begin_sample()
+            started = time.perf_counter_ns()
+            step()
+            profiled_samples[index] = time.perf_counter_ns() - started
+            if backend_timer is not None:
+                backend_samples[index] = backend_timer.elapsed_ns
+                backend_measured = backend_measured and backend_timer.calls > 0
+        policy_samples = np.maximum(profiled_samples - backend_samples, 0)
         if final_semantic_output is None:
             final_semantic_output = _semantic_output(output).copy()
         repeat_results.append(
@@ -468,6 +540,19 @@ def _worker(
                 "p99_us": float(np.percentile(samples, 99) / 1_000.0),
                 "mean_us": float(np.mean(samples) / 1_000.0),
                 "max_us": float(np.max(samples) / 1_000.0),
+                "backend_measured": backend_measured,
+                "backend_p50_us": float(
+                    np.percentile(backend_samples, 50) / 1_000.0
+                ),
+                "backend_p99_us": float(
+                    np.percentile(backend_samples, 99) / 1_000.0
+                ),
+                "policy_overhead_p50_us": float(
+                    np.percentile(policy_samples, 50) / 1_000.0
+                ),
+                "policy_overhead_p99_us": float(
+                    np.percentile(policy_samples, 99) / 1_000.0
+                ),
             }
         )
         _close(policy)
@@ -492,6 +577,21 @@ def _worker(
         "p99_us": statistics.median(item["p99_us"] for item in repeat_results),
         "mean_us": statistics.median(item["mean_us"] for item in repeat_results),
         "max_us": statistics.median(item["max_us"] for item in repeat_results),
+        "backend_measured": all(
+            item["backend_measured"] for item in repeat_results
+        ),
+        "backend_p50_us": statistics.median(
+            item["backend_p50_us"] for item in repeat_results
+        ),
+        "backend_p99_us": statistics.median(
+            item["backend_p99_us"] for item in repeat_results
+        ),
+        "policy_overhead_p50_us": statistics.median(
+            item["policy_overhead_p50_us"] for item in repeat_results
+        ),
+        "policy_overhead_p99_us": statistics.median(
+            item["policy_overhead_p99_us"] for item in repeat_results
+        ),
         "traced_net_bytes": current - before,
         "traced_peak_bytes": peak - before,
         "checksum": checksum,
@@ -566,6 +666,27 @@ def _print_results(results):
         )
     if mismatches:
         raise RuntimeError(f"semantic joint output mismatch: {', '.join(mismatches)}")
+
+    print()
+    print(
+        f"{'current case':<16} {'total p50':>11} {'backend p50':>13} "
+        f"{'policy p50':>12} {'backend p99':>13} {'policy p99':>12}"
+    )
+    print("-" * 84)
+    for result in results:
+        if result["version"] != "current":
+            continue
+        if not result["backend_measured"]:
+            print(f"{result['case']:<16} backend timing unavailable")
+            continue
+        print(
+            f"{result['case']:<16} "
+            f"{result['p50_us']:>10.1f}µ "
+            f"{result['backend_p50_us']:>12.1f}µ "
+            f"{result['policy_overhead_p50_us']:>11.1f}µ "
+            f"{result['backend_p99_us']:>12.1f}µ "
+            f"{result['policy_overhead_p99_us']:>11.1f}µ"
+        )
 
 
 def main() -> None:
