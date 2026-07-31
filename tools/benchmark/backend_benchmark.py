@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import importlib.metadata
 import importlib.util
 import json
@@ -354,6 +355,28 @@ def _parse_shape_overrides(values: list[str]) -> dict[str, tuple[int, ...]]:
     return result
 
 
+def _parse_input_ranges(values: list[str]) -> dict[str, tuple[float, float]]:
+    result: dict[str, tuple[float, float]] = {}
+    for value in values:
+        try:
+            name, raw_range = value.split("=", 1)
+            raw_low, raw_high = raw_range.split(",", 1)
+            low = float(raw_low)
+            high = float(raw_high)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"invalid input range '{value}', expected NAME=LOW,HIGH"
+            ) from exc
+        if not name or not np.isfinite(low) or not np.isfinite(high) or low >= high:
+            raise argparse.ArgumentTypeError(
+                f"invalid input range '{value}', bounds must be finite and LOW < HIGH"
+            )
+        if name in result:
+            raise argparse.ArgumentTypeError(f"duplicate input range for '{name}'")
+        result[name] = (low, high)
+    return result
+
+
 def _concrete_shape(
     tensor: TensorInfo,
     overrides: dict[str, tuple[int, ...]],
@@ -374,21 +397,83 @@ def _make_inputs(
     overrides: dict[str, tuple[int, ...]],
     dynamic_dimension: int,
     seed: int,
+    input_ranges: dict[str, tuple[float, float]],
+    input_npz: Path | None,
 ) -> dict[str, np.ndarray]:
+    if input_npz is not None:
+        return _load_input_npz(model, overrides, dynamic_dimension, input_npz)
+
     rng = np.random.default_rng(seed)
-    inputs = {}
+    inputs: dict[str, np.ndarray] = {}
     for tensor in model.inputs:
         shape = _concrete_shape(tensor, overrides, dynamic_dimension)
         if np.issubdtype(tensor.dtype, np.floating):
-            value = rng.standard_normal(shape).astype(tensor.dtype)
+            low, high = input_ranges.get(tensor.name, (-1.0, 1.0))
+            value = rng.uniform(low, high, size=shape).astype(tensor.dtype)
         elif np.issubdtype(tensor.dtype, np.integer):
+            if tensor.name in input_ranges:
+                raise ValueError(
+                    f"--input-range only supports floating input '{tensor.name}'"
+                )
             value = np.zeros(shape, dtype=tensor.dtype)
         elif np.issubdtype(tensor.dtype, np.bool_):
+            if tensor.name in input_ranges:
+                raise ValueError(
+                    f"--input-range only supports floating input '{tensor.name}'"
+                )
             value = np.zeros(shape, dtype=np.bool_)
         else:
             raise TypeError(f"unsupported input dtype {tensor.dtype} for {tensor.name}")
         inputs[tensor.name] = np.ascontiguousarray(value)
     return inputs
+
+
+def _load_input_npz(
+    model: ModelInfo,
+    overrides: dict[str, tuple[int, ...]],
+    dynamic_dimension: int,
+    path: Path,
+) -> dict[str, np.ndarray]:
+    expected_names = tuple(tensor.name for tensor in model.inputs)
+    try:
+        archive = np.load(path, allow_pickle=False)
+    except Exception as exc:
+        raise ValueError(f"cannot load benchmark input NPZ {path}: {exc}") from exc
+    with archive:
+        actual_names = tuple(archive.files)
+        missing = set(expected_names) - set(actual_names)
+        extra = set(actual_names) - set(expected_names)
+        if missing or extra:
+            raise ValueError(
+                f"benchmark input NPZ names do not match model: "
+                f"missing={sorted(missing)}, extra={sorted(extra)}"
+            )
+        inputs: dict[str, np.ndarray] = {}
+        for tensor in model.inputs:
+            value = np.asarray(archive[tensor.name])
+            expected_shape = _concrete_shape(tensor, overrides, dynamic_dimension)
+            if value.shape != expected_shape:
+                raise ValueError(
+                    f"benchmark input {tensor.name!r} shape is {value.shape}, "
+                    f"expected {expected_shape}"
+                )
+            if value.dtype != tensor.dtype:
+                raise ValueError(
+                    f"benchmark input {tensor.name!r} dtype is {value.dtype}, "
+                    f"expected {tensor.dtype}"
+                )
+            if np.issubdtype(value.dtype, np.number) and not np.isfinite(value).all():
+                raise ValueError(
+                    f"benchmark input {tensor.name!r} contains NaN or infinity"
+                )
+            inputs[tensor.name] = np.ascontiguousarray(value)
+    return inputs
+
+
+def _model_seed(base_seed: int, path: Path) -> int:
+    identity = _relative_path(path).encode("utf-8")
+    offset = int.from_bytes(hashlib.sha256(identity).digest()[:8], "big")
+    return (base_seed + offset) % (1 << 64)
 
 
 def _cached_rknn_path(source: Path, cache_root: Path) -> Path:
@@ -407,6 +492,7 @@ def _cases_for_model(
     rknn_target: str | None,
     rknn_cache: Path,
     dynamic_dimension: int,
+    shape_overrides: dict[str, tuple[int, ...]],
 ) -> list[BenchmarkCase]:
     cases = []
     cpu_provider = "CPUExecutionProvider"
@@ -504,7 +590,11 @@ def _cases_for_model(
                     source_onnx=model.path,
                     conversion_output_names=rknn_outputs,
                     runtime_input_names=rknn_inputs,
-                    input_shapes=_artifact_input_shapes(model, dynamic_dimension),
+                    input_shapes=_artifact_input_shapes(
+                        model,
+                        dynamic_dimension,
+                        shape_overrides,
+                    ),
                     output_shapes=tuple(
                         (item.name, tuple(_json_shape(item.shape)))
                         for item in model.outputs
@@ -528,9 +618,13 @@ def _json_shape(shape: tuple[object, ...]) -> list[object]:
 def _artifact_input_shapes(
     model: ModelInfo,
     dynamic_dimension: int,
+    shape_overrides: dict[str, tuple[int, ...]],
 ) -> tuple[tuple[str, tuple[int, ...]], ...]:
     return tuple(
-        (tensor.name, _concrete_shape(tensor, {}, dynamic_dimension))
+        (
+            tensor.name,
+            _concrete_shape(tensor, shape_overrides, dynamic_dimension),
+        )
         for tensor in model.inputs
     )
 
@@ -777,7 +871,11 @@ def _worker_case(args: argparse.Namespace, model: ModelInfo) -> BenchmarkCase:
                 source_onnx=model.path,
                 conversion_output_names=output_names,
                 runtime_input_names=input_names,
-                input_shapes=_artifact_input_shapes(model, args.dynamic_dim),
+                input_shapes=_artifact_input_shapes(
+                    model,
+                    args.dynamic_dim,
+                    args.shape_overrides,
+                ),
                 output_shapes=tuple(
                     (item.name, tuple(_json_shape(item.shape)))
                     for item in model.outputs
@@ -798,6 +896,8 @@ def _worker_main(args: argparse.Namespace) -> int:
             args.shape_overrides,
             args.dynamic_dim,
             args.seed,
+            args.input_ranges,
+            args.input_npz,
         )
         case = _worker_case(args, model)
         result, outputs = _run_case(
@@ -894,6 +994,10 @@ def _run_case_isolated(
                 command.extend(("--_worker-output", output_name))
         for name, shape in args.shape_overrides.items():
             command.extend(("--shape", f"{name}=" + ",".join(map(str, shape))))
+        for name, (low, high) in args.input_ranges.items():
+            command.extend(("--input-range", f"{name}={low!r},{high!r}"))
+        if args.input_npz is not None:
+            command.extend(("--input-npz", str(args.input_npz)))
 
         try:
             completed = subprocess.run(
@@ -971,13 +1075,39 @@ def _print_environment(environment: dict[str, Any]) -> None:
     print()
 
 
-def _print_model_header(model: ModelInfo, inputs: dict[str, np.ndarray]) -> None:
+def _input_statistics(value: np.ndarray) -> dict[str, float | int | None]:
+    if not value.size or not np.issubdtype(value.dtype, np.number):
+        return {"minimum": None, "maximum": None}
+    return {
+        "minimum": float(np.min(value)),
+        "maximum": float(np.max(value)),
+    }
+
+
+def _format_input_range(value: np.ndarray) -> str:
+    statistics = _input_statistics(value)
+    minimum = statistics["minimum"]
+    maximum = statistics["maximum"]
+    if minimum is None or maximum is None:
+        return "n/a"
+    return f"{minimum:.3g},{maximum:.3g}"
+
+
+def _print_model_header(
+    model: ModelInfo,
+    inputs: dict[str, np.ndarray],
+    *,
+    input_source: str,
+    effective_seed: int,
+) -> None:
     input_text = ", ".join(
-        f"{name}:{tuple(value.shape)}:{value.dtype}" for name, value in inputs.items()
+        f"{name}:{tuple(value.shape)}:{value.dtype}" f"[{_format_input_range(value)}]"
+        for name, value in inputs.items()
     )
     print(
         f"Model: {_relative_path(model.path)} ({model.path.stat().st_size / 1e6:.2f} MB)"
     )
+    print(f"  input source: {input_source}; effective seed: {effective_seed}")
     print(f"  inputs: {input_text}")
     print(
         f"  {'backend':<28} {'setup':>10} {'p50':>10} {'p95':>10} "
@@ -1071,6 +1201,24 @@ def _arguments() -> argparse.Namespace:
         default=[],
         metavar="NAME=D1,D2",
         help="override a dynamic input shape; repeat for multiple inputs",
+    )
+    parser.add_argument(
+        "--input-range",
+        action="append",
+        default=[],
+        metavar="NAME=LOW,HIGH",
+        help=(
+            "override the default [-1,1] uniform range for a floating input; "
+            "repeat for multiple inputs"
+        ),
+    )
+    parser.add_argument(
+        "--input-npz",
+        type=Path,
+        help=(
+            "load named model inputs from one NPZ file; requires exactly one model "
+            "and cannot be combined with --input-range"
+        ),
     )
     parser.add_argument(
         "--dynamic-dim",
@@ -1169,14 +1317,23 @@ def _arguments() -> argparse.Namespace:
         or args.iterations <= 0
         or args.dynamic_dim <= 0
         or args.case_timeout <= 0
+        or args.seed < 0
     ):
         parser.error(
-            "warmup must be non-negative; iterations, dynamic-dim and timeout positive"
+            "warmup and seed must be non-negative; iterations, dynamic-dim and "
+            "timeout positive"
         )
     try:
         args.shape_overrides = _parse_shape_overrides(args.shape)
+        args.input_ranges = _parse_input_ranges(args.input_range)
     except argparse.ArgumentTypeError as exc:
         parser.error(str(exc))
+    if args.input_npz is not None:
+        if args.input_range:
+            parser.error("--input-npz cannot be combined with --input-range")
+        args.input_npz = args.input_npz.expanduser().resolve()
+        if not args.input_npz.is_file():
+            parser.error(f"input NPZ does not exist: {args.input_npz}")
     return args
 
 
@@ -1198,6 +1355,9 @@ def main() -> int:
     if not models:
         print("no ONNX models found", file=sys.stderr)
         return 2
+    if args.input_npz is not None and len(models) != 1:
+        print("--input-npz requires exactly one discovered model", file=sys.stderr)
+        return 2
 
     environment, openvino_devices = _environment()
     _print_environment(environment)
@@ -1215,7 +1375,16 @@ def main() -> int:
             "shape_overrides": {
                 name: list(shape) for name, shape in args.shape_overrides.items()
             },
+            "input_source": (
+                str(args.input_npz) if args.input_npz is not None else "generated"
+            ),
+            "default_float_distribution": "uniform[-1,1]",
+            "input_ranges": {
+                name: [low, high] for name, (low, high) in args.input_ranges.items()
+            },
             "seed": args.seed,
+            "base_seed": args.seed,
+            "seed_derivation": "base_seed + first_u64(sha256(model_path))",
             "rtol": args.rtol,
             "atol": args.atol,
         },
@@ -1223,14 +1392,21 @@ def main() -> int:
     }
     successful_cases = 0
 
-    for model_index, path in enumerate(models):
+    used_input_ranges: set[str] = set()
+    for path in models:
+        effective_seed = _model_seed(args.seed, path)
         try:
             model = _inspect_model(path)
+            used_input_ranges.update(
+                args.input_ranges.keys() & {tensor.name for tensor in model.inputs}
+            )
             inputs = _make_inputs(
                 model,
                 args.shape_overrides,
                 args.dynamic_dim,
-                args.seed + model_index,
+                effective_seed,
+                args.input_ranges,
+                args.input_npz,
             )
         except Exception as exc:
             print(f"Model: {_relative_path(path)}\n  inspect error: {exc}\n")
@@ -1246,12 +1422,17 @@ def main() -> int:
         model_result: dict[str, Any] = {
             "path": _relative_path(path),
             "size_bytes": path.stat().st_size,
+            "input_source": (
+                str(args.input_npz) if args.input_npz is not None else "generated"
+            ),
+            "effective_seed": effective_seed,
             "inputs": [
                 {
                     "name": item.name,
                     "model_shape": _json_shape(item.shape),
                     "benchmark_shape": list(inputs[item.name].shape),
                     "dtype": str(item.dtype),
+                    **_input_statistics(inputs[item.name]),
                 }
                 for item in model.inputs
             ],
@@ -1265,7 +1446,14 @@ def main() -> int:
             ],
             "benchmarks": [],
         }
-        _print_model_header(model, inputs)
+        _print_model_header(
+            model,
+            inputs,
+            input_source=(
+                str(args.input_npz) if args.input_npz is not None else "generated"
+            ),
+            effective_seed=effective_seed,
+        )
         reference_outputs = None
         reference_backend = None
         for case in _cases_for_model(
@@ -1276,12 +1464,13 @@ def main() -> int:
             args.rknn_target,
             args.rknn_cache.expanduser().resolve(),
             args.dynamic_dim,
+            args.shape_overrides,
         ):
             result, outputs = _run_case_isolated(
                 case,
                 model,
                 args,
-                args.seed + model_index,
+                effective_seed,
             )
             if result["status"] == "ok":
                 successful_cases += 1
@@ -1311,6 +1500,14 @@ def main() -> int:
             )
         print()
         report["models"].append(model_result)
+
+    unused_input_ranges = set(args.input_ranges) - used_input_ranges
+    if unused_input_ranges:
+        print(
+            "warning: input range names did not match any model input: "
+            + ", ".join(sorted(unused_input_ranges)),
+            file=sys.stderr,
+        )
 
     if not args.no_json:
         report_path = (args.json or _default_report_path()).expanduser().resolve()
