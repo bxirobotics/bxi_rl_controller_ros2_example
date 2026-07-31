@@ -51,6 +51,7 @@ benchmark cache instead of beside source assets. An unquantized conversion can
 still be requested directly:
 
 ```bash
+PYTHONNOUSERSITE=1 \
 BXI_RKNN_CONVERT_ON_LOAD=rk3588 \
 python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 ```
