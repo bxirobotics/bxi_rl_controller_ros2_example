@@ -47,6 +47,7 @@ REQUIRED_MOD_FIELDS = {
 }
 ALLOWED_MOD_FIELDS = REQUIRED_MOD_FIELDS | {
     "events",
+    "runtime_profiles",
     "speed_profiles",
     "transition_profiles",
     "states",
@@ -96,6 +97,95 @@ def validate_runtime_requirements(value: object, context: str) -> None:
                 raise ValueError(f"{context}.{category}[{index}].{field} is invalid")
 
 
+def validate_runtime_profiles(value: object, context: str) -> set[str]:
+    """Validate the manifest subset parsed by runtime_profiles.py.
+
+    The release sanitizer intentionally stays independent from ROS runtime
+    imports, so this mirrors the language-neutral profile schema used by the
+    framework loader.
+    """
+
+    if value is None:
+        return set()
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{context} must be a map")
+
+    names: set[str] = set()
+    for name, raw_profile in value.items():
+        if not isinstance(name, str) or not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_.-]*", name
+        ):
+            raise ValueError(f"{context} has invalid profile name: {name!r}")
+        profile_context = f"{context}.{name}"
+        if not isinstance(raw_profile, Mapping):
+            raise ValueError(f"{profile_context} must be a map")
+        if "candidates" in raw_profile:
+            if set(raw_profile) != {"candidates"}:
+                raise ValueError(
+                    f"{profile_context} cannot combine candidates with "
+                    "single-candidate fields"
+                )
+            candidates = raw_profile["candidates"]
+            if (
+                not isinstance(candidates, Sequence)
+                or isinstance(candidates, (str, bytes))
+                or not candidates
+            ):
+                raise ValueError(
+                    f"{profile_context}.candidates must be a non-empty list"
+                )
+            for index, candidate in enumerate(candidates):
+                validate_runtime_candidate(
+                    candidate,
+                    f"{profile_context}.candidates[{index}]",
+                )
+        else:
+            validate_runtime_candidate(raw_profile, profile_context)
+        names.add(name)
+    return names
+
+
+def validate_runtime_candidate(value: object, context: str) -> None:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{context} must be a map")
+    allowed = {
+        "mode",
+        "root",
+        "python",
+        "executable_paths",
+        "library_paths",
+        "isolated",
+    }
+    unknown = set(value) - allowed
+    if unknown:
+        raise ValueError(f"{context} has unknown fields: {sorted(unknown)}")
+
+    mode = value.get("mode")
+    if mode not in ("host", "vendor", "portable"):
+        raise ValueError(f"{context}.mode must be 'host', 'vendor' or 'portable'")
+    root = value.get("root")
+    python = value.get("python")
+    if mode == "portable":
+        if not isinstance(root, str) or not root:
+            raise ValueError(f"{context}.root is required for portable mode")
+        if python is not None and (not isinstance(python, str) or not python):
+            raise ValueError(f"{context}.python must be a non-empty relative path")
+    elif root is not None or python is not None:
+        raise ValueError(f"{context}.root/python are only valid for portable mode")
+
+    for field in ("executable_paths", "library_paths"):
+        entries = value.get(field, ())
+        if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+            raise ValueError(f"{context}.{field} must be a list")
+        if not all(isinstance(entry, str) for entry in entries):
+            raise ValueError(f"{context}.{field} entries must be strings")
+        if mode != "portable" and entries:
+            raise ValueError(f"{context}.{field} is only valid for portable mode")
+    isolated = value.get("isolated", mode == "portable")
+    if not isinstance(isolated, bool):
+        raise ValueError(f"{context}.isolated must be a boolean")
+
+
 def validate_node_declaration(
     node: Mapping[str, object],
     context: str,
@@ -118,6 +208,7 @@ def validate_node_declaration(
         "cwd",
         "depends_on",
         "shutdown",
+        "runtime_profile",
     }
     unknown_fields = set(node) - allowed_fields
     if unknown_fields:
@@ -165,6 +256,11 @@ def validate_node_declaration(
         raise ValueError(f"{context}.execution is invalid")
     if runtime != "python" and execution != "process":
         raise ValueError(f"{context}.execution must be 'process' for {runtime}")
+    runtime_profile = node.get("runtime_profile")
+    if runtime_profile is not None and (
+        not isinstance(runtime_profile, str) or not runtime_profile
+    ):
+        raise ValueError(f"{context}.runtime_profile must be a non-empty string")
     lifecycle = node.get("lifecycle", "mod")
     if lifecycle not in ("mod", "state"):
         raise ValueError(f"{context}.lifecycle is invalid")
@@ -268,7 +364,7 @@ def validate_node_declaration(
     restart = cast(Mapping[str, object], node.get("restart", {}))
     if execution != "process" and restart:
         raise ValueError(f"{context}.restart requires process execution")
-    if set(restart) - {"max_attempts", "delay"}:
+    if set(restart) - {"max_attempts", "delay", "non_retryable_exit_codes"}:
         raise ValueError(f"{context}.restart has unknown fields")
     max_attempts = restart.get("max_attempts", 3)
     if (
@@ -280,6 +376,23 @@ def validate_node_declaration(
     delay = restart.get("delay", 1.0)
     if isinstance(delay, bool) or not isinstance(delay, (int, float)) or delay < 0:
         raise ValueError(f"{context}.restart.delay is invalid")
+    non_retryable_exit_codes = restart.get("non_retryable_exit_codes", ())
+    if not isinstance(non_retryable_exit_codes, Sequence) or isinstance(
+        non_retryable_exit_codes, (str, bytes)
+    ):
+        raise ValueError(
+            f"{context}.restart.non_retryable_exit_codes must be a list"
+        )
+    if not all(
+        not isinstance(exit_code, bool)
+        and isinstance(exit_code, int)
+        and 1 <= exit_code <= 255
+        for exit_code in non_retryable_exit_codes
+    ):
+        raise ValueError(
+            f"{context}.restart.non_retryable_exit_codes entries must be "
+            "integers from 1 to 255"
+        )
     shutdown = cast(Mapping[str, object], node.get("shutdown", {}))
     if execution != "process" and shutdown:
         raise ValueError(f"{context}.shutdown requires process execution")
@@ -393,6 +506,10 @@ def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, Mod
                 manifest["runtime_requirements"],
                 f"{manifest_path}: runtime_requirements",
             )
+            runtime_profile_names = validate_runtime_profiles(
+                manifest.get("runtime_profiles"),
+                f"{manifest_path}: runtime_profiles",
+            )
             raw_requires = manifest["requires"]
             if not isinstance(raw_requires, Sequence) or isinstance(
                 raw_requires, (str, bytes)
@@ -479,6 +596,15 @@ def discover_mods(source_root: Path, mod_roots: Sequence[Path]) -> dict[str, Mod
                     raw_node,
                     f"{manifest_path}: nodes.{node_name}",
                 )
+                runtime_profile = raw_node.get("runtime_profile")
+                if (
+                    isinstance(runtime_profile, str)
+                    and runtime_profile not in runtime_profile_names
+                ):
+                    raise ValueError(
+                        f"{manifest_path}: nodes.{node_name}.runtime_profile "
+                        f"references unknown profile {runtime_profile!r}"
+                    )
                 raw_states = raw_node.get("states", ())
                 if not isinstance(raw_states, Sequence) or isinstance(
                     raw_states, (str, bytes)
