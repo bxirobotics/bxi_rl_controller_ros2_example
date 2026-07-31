@@ -74,8 +74,8 @@ ELF3_RESET_JOINTS = JointLayout(
         "r_wrist_x_joint",
         "r_wrist_y_joint",
         "r_wrist_z_joint",
-        "neck_z_joint",
-        "neck_y_joint",
+        "head_z_joint",
+        "head_y_joint",
     ),
     label="ELF3 simulation reset",
 )
@@ -83,14 +83,14 @@ ELF3_RESET_JOINTS = JointLayout(
 dof_num = ELF3_RESET_JOINTS.dof_num
 joint_name = ELF3_RESET_JOINTS.names
 
-# The current ELF3 state message contains two neck joints that the original
+# The current ELF3 state message contains two head joints that the original
 # 29-joint policies do not command. A future 31-joint policy overrides these
 # values naturally because defaults are only applied to omitted joints. Name
 # lookup is compiled once; the control-cycle path performs no dictionary lookup.
 ELF3_COMMAND_DEFAULTS = JointCommandDefaults(
     {
-        "neck_y_joint": JointDefault(position=0.0, kp=16.747, kd=1.066),
-        "neck_z_joint": JointDefault(position=0.0, kp=16.747, kd=1.066),
+        "head_y_joint": JointDefault(position=0.0, kp=16.747, kd=1.066),
+        "head_z_joint": JointDefault(position=0.0, kp=16.747, kd=1.066),
     }
 )
 
