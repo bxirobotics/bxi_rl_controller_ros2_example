@@ -212,6 +212,54 @@ void test_debug_reports_changed_rule_selection()
     expect(messages.front().find("debug_axis") != std::string::npos);
 }
 
+void test_three_button_chord_excludes_two_button_x_chords()
+{
+    const RemoteConfig config = remote_controller::load_remote_config(
+        REMOTE_CONTROLLER_TEST_CONFIG_PATH);
+
+    {
+        InputMapper mapper(config);
+        mapper.set_signals({
+            {"js.button.6", 1.0},
+            {"js.button.7", 0.0},
+            {"js.button.3", 1.0},
+        });
+        communication::msg::MotionCommands message;
+        mapper.fill_message(message);
+        expect(message.btn_1 == 0);
+        expect(message.btn_5 == 1);
+        expect(message.btn_10 == 0);
+    }
+
+    {
+        InputMapper mapper(config);
+        mapper.set_signals({
+            {"js.button.6", 0.0},
+            {"js.button.7", 1.0},
+            {"js.button.3", 1.0},
+        });
+        communication::msg::MotionCommands message;
+        mapper.fill_message(message);
+        expect(message.btn_1 == 1);
+        expect(message.btn_5 == 0);
+        expect(message.btn_10 == 0);
+    }
+
+    {
+        InputMapper mapper(config);
+        mapper.set_signals({
+            {"js.button.6", 1.0},
+            {"js.button.7", 1.0},
+            {"js.button.3", 1.0},
+        });
+        communication::msg::MotionCommands message;
+        mapper.fill_message(message);
+        expect(message.btn_1 == 0);
+        expect(message.btn_5 == 0);
+        expect(message.btn_10 == 8);
+    }
+}
+
 }  // namespace
 
 int main()
@@ -220,5 +268,6 @@ int main()
     test_priority_preempts_lower_active_inputs();
     test_bool_all_keeps_inactive_raw_inputs_in_the_selected_group();
     test_debug_reports_changed_rule_selection();
+    test_three_button_chord_excludes_two_button_x_chords();
     return 0;
 }

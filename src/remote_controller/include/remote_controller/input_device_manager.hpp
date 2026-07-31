@@ -29,7 +29,6 @@ public:
     InputDeviceManager(const InputDeviceManager &) = delete;
     InputDeviceManager &operator=(const InputDeviceManager &) = delete;
 
-    void reconfigure(const RemoteConfig &config);
     void stop();
 
     // Returns true when the caller must publish one all-zero command before

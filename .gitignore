@@ -4,11 +4,18 @@
 build/
 install/
 log/
+benchmarks/results/
+benchmarks/cache/
+tools/**/results/
+tools/**/cache/
 .cache/
 !.gitignore
 # proxsuite/
 bxi_hw_release/
+src/bxi_example_py_elf3/test/
 __pycache__/
 MUJOCO_LOG.TXT
 .*/
 !.github/
+src/http_motion_bridge/
+rosbag2_*/
