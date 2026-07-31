@@ -1,0 +1,152 @@
+schema: 1
+id: com.bxi.sonic
+name: SONIC遥操
+version: 1.0.0
+api: ">=4,<5"
+enable: true
+entrypoint: plugin:create_mod
+visibility: public
+requires:
+  - id: com.bxi.basic_actions
+    version: ">=1,<2"
+conflicts: []
+python_exports: []
+runtime_requirements:
+  python:
+    - import: zmq
+  ros:
+    - package: rclpy
+    - package: communication
+    - package: std_msgs
+  system: []
+
+runtime_profiles:
+  pico_bootstrap:
+    mode: host
+  host_ros:
+    mode: host
+
+nodes:
+  pico_manager:
+    runtime: command
+    entrypoint: pico/manager_launcher.py
+    interpreter: python3
+    runtime_profile: pico_bootstrap
+    execution: process
+    lifecycle: state
+    states:
+      - sonic_teleop
+    arguments:
+      - --manager
+      - --num_frames_to_send
+      - "10"
+      - --target_fps
+      - "50"
+    environment:
+      PYTHONUNBUFFERED: "1"
+    manifest:
+      label: SONIC PICO管理器
+    runtime_requirements:
+      python: []
+      ros: []
+      system: []
+    restart:
+      max_attempts: 3
+      delay: 3.0
+      non_retryable_exit_codes: [78]
+    shutdown:
+      signal: SIGINT
+      terminate_after: 3.0
+      kill_after: 5.0
+
+  smpl_bridge:
+    runtime: python
+    entrypoint: pico.pose_to_smpl_ref_bridge:create_node
+    execution: in_process
+    runtime_profile: host_ros
+    lifecycle: state
+    states:
+      - sonic_teleop
+    depends_on:
+      - pico_manager
+    params:
+      pico_host: 127.0.0.1
+      pico_port: 5556
+      pico_topic: pose
+      out_host: 127.0.0.1
+      out_port: 5557
+      out_topic: smpl_ref
+      rate_hz: 50.0
+      history_frames: 5
+      max_gap_frames: 200
+      catch_up_enabled: true
+      stale_warning_seconds: 0.5
+    manifest:
+      label: SONIC SMPL参考桥
+    runtime_requirements:
+      python:
+        - import: zmq
+      ros:
+        - package: rclpy
+        - package: std_msgs
+      system: []
+
+events:
+  activate:
+    slot: btn_10
+    value: 9
+  reset_alignment:
+    slot: btn_9
+    value: 1
+
+states:
+  sonic_teleop:
+    manifest:
+      label: SONIC遥操
+      priority: 840
+      group: Advanced
+      icon: sports_esports
+      confirm: true
+      confirm_message: 进入后先保持idle站立；若启用夹爪，请先松开左右trigger并确认周围安全
+    params:
+      require_live_reference: false
+      yaw_bias_rad: 1.57079632679
+      live_reference_timeout_s: 0.5
+      idle_frame_start: 3509
+      source_blend_seconds: 0.4
+      hardware_gripper: true
+      gripper_input_timeout_s: 0.2
+      gripper_release_threshold: 0.05
+      gripper_left_bus: 5
+      gripper_right_bus: 6
+      gripper_can_id: 1
+      gripper_kp: 20.0
+      gripper_kd: 1.0
+
+routes:
+  - from: com.bxi.basic_actions/normal
+    event: activate
+    to: sonic_teleop
+    transition: soft_switch
+  - from: sonic_teleop
+    event: com.bxi.basic_actions/normal
+    to: com.bxi.basic_actions/normal
+    transition: soft_switch
+  - from: sonic_teleop
+    event: com.bxi.basic_actions/zero_torque
+    to: com.bxi.basic_actions/zero_torque
+  - from: sonic_teleop
+    event: com.bxi.basic_actions/pd_brake
+    to: com.bxi.basic_actions/pd_brake
+  - from: sonic_teleop
+    event: com.bxi.basic_actions/recover
+    to: com.bxi.basic_actions/recover
+    transition: soft_switch
+
+actions:
+  - from: sonic_teleop
+    event: reset_alignment
+    action: reset_alignment
+    manifest:
+      label: 重置朝向对齐
+      ui: refresh

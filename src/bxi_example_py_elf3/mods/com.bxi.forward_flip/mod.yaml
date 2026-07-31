@@ -1,0 +1,39 @@
+schema: 1
+id: com.bxi.forward_flip
+name: 前空翻
+version: 1.0.0
+api: ">=4,<5"
+enable: true
+entrypoint: plugin:create_mod
+visibility: public
+requires:
+  - id: com.bxi.basic_actions
+    version: ">=1,<2"
+conflicts: []
+python_exports: []
+runtime_requirements:
+  python: []
+  ros: []
+  system: []
+
+events:
+  activate:
+    slot: btn_10
+    value: 2
+states:
+  forward_flip:
+    manifest:
+      label: 前空翻
+      priority: 900
+      group: Advanced
+      icon: rotate_right
+      confirm: true
+      confirm_message: 请确保机器人前方3米范围内没有障碍物
+routes:
+  - from: com.bxi.basic_actions/normal
+    event: activate
+    to: forward_flip
+    transition: soft_switch
+  - from: forward_flip
+    event: com.bxi.basic_actions/zero_torque
+    to: com.bxi.basic_actions/zero_torque

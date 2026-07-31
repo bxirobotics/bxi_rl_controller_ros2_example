@@ -1,12 +1,9 @@
 #include <chrono>
 #include <cstdlib>
-#include <ctime>
-#include <cctype>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <sys/stat.h>
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
@@ -18,78 +15,15 @@ using namespace std::chrono_literals;
 using remote_controller::InputMapper;
 using remote_controller::RemoteConfig;
 
-namespace {
-
-struct ConfigFileStamp {
-    bool valid = false;
-    std::time_t mtime_sec = 0;
-    long mtime_nsec = 0;
-    off_t size = 0;
-
-    bool operator==(const ConfigFileStamp &other) const
-    {
-        return valid == other.valid &&
-               mtime_sec == other.mtime_sec &&
-               mtime_nsec == other.mtime_nsec &&
-               size == other.size;
-    }
-
-    bool operator!=(const ConfigFileStamp &other) const
-    {
-        return !(*this == other);
-    }
-};
-
-ConfigFileStamp read_config_file_stamp(const std::string &path)
-{
-    struct stat stat_buffer;
-    if (stat(path.c_str(), &stat_buffer) != 0) {
-        return {};
-    }
-
-    ConfigFileStamp stamp;
-    stamp.valid = true;
-    stamp.mtime_sec = stat_buffer.st_mtim.tv_sec;
-    stamp.mtime_nsec = stat_buffer.st_mtim.tv_nsec;
-    stamp.size = stat_buffer.st_size;
-    return stamp;
-}
-
-bool parse_bool_text(const std::string &text, bool &value)
-{
-    std::string normalized;
-    normalized.reserve(text.size());
-    for (const char ch : text) {
-        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-    }
-
-    if (normalized == "true" || normalized == "1" || normalized == "yes" || normalized == "on") {
-        value = true;
-        return true;
-    }
-    if (normalized == "false" || normalized == "0" || normalized == "no" || normalized == "off") {
-        value = false;
-        return true;
-    }
-    return false;
-}
-
-}  // namespace
-
 class COMPublisher : public rclcpp::Node {
 public:
     COMPublisher(
         const std::string &config_path,
         const std::string &driver_filter,
-        bool config_hot_reload_enabled,
         bool driver_debug_enabled)
         : Node("COM_publisher"),
-          config_path_(config_path),
-          config_hot_reload_enabled_(config_hot_reload_enabled),
           mapper_(remote_controller::load_remote_config(config_path))
     {
-        config_stamp_ = read_config_file_stamp(config_path_);
-        next_config_check_ = std::chrono::steady_clock::now() + config_check_interval_;
         print_config_diagnostics(mapper_.config());
         com_pub_ = this->create_publisher<communication::msg::MotionCommands>(
             "motion_commands", 20);
@@ -119,11 +53,6 @@ public:
 
 private:
     mutable std::mutex lock_;
-    std::string config_path_;
-    bool config_hot_reload_enabled_ = true;
-    ConfigFileStamp config_stamp_;
-    const std::chrono::milliseconds config_check_interval_{1000};
-    std::chrono::steady_clock::time_point next_config_check_;
     InputMapper mapper_;
     std::unique_ptr<remote_controller::InputDeviceManager> input_manager_;
     std::map<std::string, bool> system_mutex_locked_;
@@ -146,10 +75,6 @@ private:
 
     void timer_callback()
     {
-        if (config_hot_reload_enabled_) {
-            check_config_reload();
-        }
-
         const bool must_publish_safe_command = input_manager_ && input_manager_->tick();
         auto message = communication::msg::MotionCommands();
         std::vector<std::string> outputs;
@@ -177,58 +102,6 @@ private:
         if (must_publish_safe_command && input_manager_) {
             input_manager_->notify_safe_output_published();
         }
-    }
-
-    void check_config_reload()
-    {
-        const auto now = std::chrono::steady_clock::now();
-        if (now < next_config_check_) {
-            return;
-        }
-        next_config_check_ = now + config_check_interval_;
-
-        const ConfigFileStamp stamp = read_config_file_stamp(config_path_);
-        if (!stamp.valid) {
-            RCLCPP_WARN_THROTTLE(
-                this->get_logger(),
-                *this->get_clock(),
-                5000,
-                "remote config is not readable: %s",
-                config_path_.c_str());
-            return;
-        }
-        if (stamp == config_stamp_) {
-            return;
-        }
-
-        RemoteConfig config;
-        try {
-            config = remote_controller::load_remote_config(config_path_);
-        } catch (const std::exception &exc) {
-            RCLCPP_ERROR(
-                this->get_logger(),
-                "remote config hot reload failed: %s",
-                exc.what());
-            return;
-        }
-
-        if (input_manager_) {
-            input_manager_->stop();
-        }
-        {
-            const std::lock_guard<std::mutex> guard(lock_);
-            mapper_.reload_config(config);
-            prune_system_mutexes_locked();
-            has_last_published_payload_ = false;
-            config_stamp_ = stamp;
-        }
-
-        if (input_manager_) {
-            input_manager_->reconfigure(config);
-        }
-
-        print_config_diagnostics(config);
-        RCLCPP_INFO(this->get_logger(), "remote config hot reloaded: %s", config_path_.c_str());
     }
 
     void dispatch_outputs(const std::vector<std::string> &outputs)
@@ -305,18 +178,6 @@ private:
         }
     }
 
-    void prune_system_mutexes_locked()
-    {
-        std::map<std::string, bool> kept;
-        for (const auto &mutex : mapper_.config().system_mutexes) {
-            const auto lock_it = system_mutex_locked_.find(mutex.name);
-            if (lock_it != system_mutex_locked_.end()) {
-                kept[mutex.name] = lock_it->second;
-            }
-        }
-        system_mutex_locked_ = kept;
-    }
-
     void run_commands(const std::vector<std::string> &commands)
     {
         for (const auto &command : commands) {
@@ -330,7 +191,6 @@ int main(int argc, const char *argv[])
 {
     std::string driver_filter;
     std::string config_path;
-    bool config_hot_reload_enabled = true;
     bool driver_debug_enabled = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -342,13 +202,6 @@ int main(int argc, const char *argv[])
             driver_filter = argv[++i];
         } else if (arg == "--config" && i + 1 < argc) {
             config_path = argv[++i];
-        } else if (arg == "--hot-reload" && i + 1 < argc) {
-            if (!parse_bool_text(argv[++i], config_hot_reload_enabled)) {
-                fprintf(stderr, "--hot-reload expects true/false\n");
-                return 1;
-            }
-        } else if (arg == "--no-hot-reload") {
-            config_hot_reload_enabled = false;
         } else if (arg == "--DEBUG" || arg == "--debug") {
             driver_debug_enabled = true;
         }
@@ -363,7 +216,6 @@ int main(int argc, const char *argv[])
     rclcpp::spin(std::make_shared<COMPublisher>(
         config_path,
         driver_filter,
-        config_hot_reload_enabled,
         driver_debug_enabled));
     rclcpp::shutdown();
 

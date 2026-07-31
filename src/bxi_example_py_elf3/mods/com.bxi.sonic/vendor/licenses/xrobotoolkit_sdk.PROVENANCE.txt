@@ -1,0 +1,9 @@
+Component: xrobotoolkit_sdk Python binding
+Upstream: https://github.com/YanjieZe/XRoboToolkit-PC-Service-Pybind.git
+Revision: 75cb1130ac63e76d8f7e7788049be415e8be44f2
+Version: 1.0.2
+License: MIT (see LICENSE)
+
+The Mod carries the installed CPython extension for each supported platform:
+vendor/python/linux-x86_64-cpython-310/
+vendor/python/linux-aarch64-cpython-310/

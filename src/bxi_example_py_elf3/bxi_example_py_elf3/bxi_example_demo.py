@@ -1,197 +1,149 @@
+from bxi_example_py_elf3.framework.platform.cpu_affinity import (
+    bootstrap_process_scheduling,
+    CpuAffinityPlan,
+)
+
+_CPU_AFFINITY_PLAN = bootstrap_process_scheduling()
+
 import rclpy
 from rclpy.node import Node
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, qos_profile_sensor_data
-from rclpy.time import Time
 import communication.msg as bxiMsg
 import communication.srv as bxiSrv
 import nav_msgs.msg
 import sensor_msgs.msg
-from threading import Lock
+from threading import Event, Lock
 import numpy as np
 
-# import torch
 import time
 import os
-import math
 import json
 from collections import deque
-from std_msgs.msg import Header, String
+from pathlib import Path
+from std_msgs.msg import String
 from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
 
-from bxi_example_py_elf3.inference.beyondmimic import *
-from bxi_example_py_elf3.inference.normal import *
-from bxi_example_py_elf3.inference.amp import *
-from bxi_example_py_elf3.utils.hot_reload import HotReloadMixin
-from bxi_example_py_elf3.utils.state_machine import (
-    RobotStateMachine,
-    RemoteEventAdapter,
-    load_state_machine_config,
+from bxi_example_py_elf3.framework.runtime.state_machine import load_state_machine_config
+from bxi_example_py_elf3.framework.joints import (
+    JointCommandDefaults,
+    JointDefault,
+    JointLayout,
+    JointStateBuffer,
 )
-from bxi_example_py_elf3.utils.robot_state_builder import build_robot_states
-import bxi_example_py_elf3.robot_states  # 加载 State 类，供 build_robot_states() 自动发现
-from bxi_example_py_elf3.utils.tfs import quaternion_to_euler_array
+from bxi_example_py_elf3.framework.mod_api import MotorFrame
+from bxi_example_py_elf3.framework.platform import (
+    NamedJointStateSource,
+    RobotControlRuntime,
+    RobotObservation,
+)
 
 robot_name = "elf3"
 
-dof_num = 29
-
-joint_name = (
-    "waist_y_joint",
-    "waist_x_joint",
-    "waist_z_joint",
-    "l_hip_y_joint",  # 左腿_髋关节_z轴
-    "l_hip_x_joint",  # 左腿_髋关节_x轴
-    "l_hip_z_joint",  # 左腿_髋关节_y轴
-    "l_knee_y_joint",  # 左腿_膝关节_y轴
-    "l_ankle_y_joint",  # 左腿_踝关节_y轴
-    "l_ankle_x_joint",  # 左腿_踝关节_x轴
-    "r_hip_y_joint",  # 右腿_髋关节_z轴
-    "r_hip_x_joint",  # 右腿_髋关节_x轴
-    "r_hip_z_joint",  # 右腿_髋关节_y轴
-    "r_knee_y_joint",  # 右腿_膝关节_y轴
-    "r_ankle_y_joint",  # 右腿_踝关节_y轴
-    "r_ankle_x_joint",  # 右腿_踝关节_x轴
-    "l_shoulder_y_joint",  # 左臂_肩关节_y轴
-    "l_shoulder_x_joint",  # 左臂_肩关节_x轴
-    "l_shoulder_z_joint",  # 左臂_肩关节_z轴
-    "l_elbow_y_joint",  # 左臂_肘关节_y轴
-    "l_wrist_x_joint",
-    "l_wrist_y_joint",
-    "l_wrist_z_joint",
-    "r_shoulder_y_joint",  # 右臂_肩关节_y轴
-    "r_shoulder_x_joint",  # 右臂_肩关节_x轴
-    "r_shoulder_z_joint",  # 右臂_肩关节_z轴
-    "r_elbow_y_joint",  # 右臂_肘关节_y轴
-    "r_wrist_x_joint",
-    "r_wrist_y_joint",
-    "r_wrist_z_joint",
+ELF3_RESET_JOINTS = JointLayout(
+    (
+        "waist_y_joint",
+        "waist_x_joint",
+        "waist_z_joint",
+        "l_hip_y_joint",
+        "l_hip_x_joint",
+        "l_hip_z_joint",
+        "l_knee_y_joint",
+        "l_ankle_y_joint",
+        "l_ankle_x_joint",
+        "r_hip_y_joint",
+        "r_hip_x_joint",
+        "r_hip_z_joint",
+        "r_knee_y_joint",
+        "r_ankle_y_joint",
+        "r_ankle_x_joint",
+        "l_shoulder_y_joint",
+        "l_shoulder_x_joint",
+        "l_shoulder_z_joint",
+        "l_elbow_y_joint",
+        "l_wrist_x_joint",
+        "l_wrist_y_joint",
+        "l_wrist_z_joint",
+        "r_shoulder_y_joint",
+        "r_shoulder_x_joint",
+        "r_shoulder_z_joint",
+        "r_elbow_y_joint",
+        "r_wrist_x_joint",
+        "r_wrist_y_joint",
+        "r_wrist_z_joint",
+        "head_z_joint",
+        "head_y_joint",
+    ),
+    label="ELF3 simulation reset",
 )
 
-joint_nominal_pos = np.array([   # 指定的固定关节角度
-    0.0, 0.0, 0.0,
-    -0.4,0.0,0.0,0.8,-0.4,0.0,
-    -0.4,0.0,0.0,0.8,-0.4,0.0,
-    0.5, 0.3,-0.1,-0.2, 0.0,0.0,0.0,     # 左臂放在大腿旁边 (Y=0 肩平, X=0 前后居中, Z=0 不旋转, 肘关节微弯)
-    0.5,-0.3, 0.1,-0.2, 0.0,0.0,0.0],    # 右臂放在大腿旁边 (Y=0 肩平, X=0 前后居中, Z=0 不旋转, 肘关节微弯)
-    dtype=np.float32)
+dof_num = ELF3_RESET_JOINTS.dof_num
+joint_name = ELF3_RESET_JOINTS.names
 
-joint_kp = np.array([     # 指定关节的kp，和joint_name顺序一一对应
-    500,500,300,
-    300,100,100,300,50,50,
-    300,100,100,300,50,50,
-    100,80,80,100, 20,20,20,
-    100,80,80,100, 20,20,20],
-    dtype=np.float32)
+# The current ELF3 state message contains two head joints that the original
+# 29-joint policies do not command. A future 31-joint policy overrides these
+# values naturally because defaults are only applied to omitted joints. Name
+# lookup is compiled once; the control-cycle path performs no dictionary lookup.
+ELF3_COMMAND_DEFAULTS = JointCommandDefaults(
+    {
+        "head_y_joint": JointDefault(position=0.0, kp=16.747, kd=1.066),
+        "head_z_joint": JointDefault(position=0.0, kp=16.747, kd=1.066),
+    }
+)
 
-joint_kd = np.array([  # 指定关节的kd，和joint_name顺序一一对应
-    3,3,3,
-    2.5,2,2,2.5,2,2,
-    2.5,2,2,2.5,2,2,
-    2.5,2,2,2.5, 1,1,1,
-    2.5,2,2,2.5, 1,1,1],
-    dtype=np.float32)
 
-kp_recover = np.array([     # 跌到起身腰部手部pd加大(add pd for hands and waist)
-    500,500,300,
-    150, 150, 150, 200, 50, 50,
-    150, 150, 150, 200, 50, 50,
-    80, 80, 80, 60, 20, 50, 50,
-    80, 80, 80, 60, 20, 50, 50,],
-    dtype=np.float32)
-
-kd_recover = np.array([  # 跌到起身腰部手部pd加大(add pd for hands and waist)
-    5,3,3,
-    2,2,2,2,1,1,
-    2,2,2,2,1,1,
-    2,2,2,2, 1,2,2,
-    2,2,2,2, 1,2,2],
-    dtype=np.float32)
-
-class BxiExample(HotReloadMixin, Node):
-    hot_reload_module_path = __file__
-
-    def __init__(self):
+class BxiExample(Node):
+    def __init__(self, *, cpu_affinity_plan: CpuAffinityPlan):
         super().__init__("bxi_example_py")
+
+        self._shutting_down = Event()
 
         # 加载运行参数
         self.load_files()
-
-        # 加载模型
-        self.load_models()
-
-        self.initial_pos = np.zeros(dof_num, dtype=np.double)
 
         # 订阅发布ros主题
         self.init_pub_sub()
 
         # 机器人状态变量(robot states)
-        self.qpos = np.zeros(dof_num, dtype=np.double)
-        self.qvel = np.zeros(dof_num, dtype=np.double)
         self.omega = np.zeros(3, dtype=np.double)
         self.quat_xyzw = np.zeros(4, dtype=np.double)
         self.quat_wxyz = np.zeros(4, dtype=np.double)
-
-        self.pos_last = np.zeros(dof_num, dtype=np.float32)
-        self.kp_last = np.zeros(dof_num, dtype=np.float32)
-        self.kd_last = np.zeros(dof_num, dtype=np.float32)
-        self.pos_last_state = np.zeros(dof_num, dtype=np.float32)
-        self.kp_last_state = np.zeros(dof_num, dtype=np.float32)
-        self.kd_last_state = np.zeros(dof_num, dtype=np.float32)
-
-        # 状态切换参数
-        self.dof_num = dof_num
-        self.joint_nominal_pos = joint_nominal_pos
-        self.joint_kp = joint_kp
-        self.joint_kd = joint_kd
-        self.loop_count = 0
-        self.motor_target = None
-        self.speed_profiles = self.state_machine_config.get("speed_profiles", {})
-        self.pending_remote_events = deque()
-        self.current_q = np.zeros(dof_num, dtype=np.double)
-        self.current_dq = np.zeros(dof_num, dtype=np.double)
-        self.current_omega = np.zeros(3, dtype=np.double)
-        self.current_quat_xyzw = np.zeros(4, dtype=np.double)
-        self.current_quat_wxyz = np.zeros(4, dtype=np.double)
         self.raw_cmd_vel = np.zeros(3, dtype=np.float32)
-        self.current_raw_cmd_vel = np.zeros(3, dtype=np.float32)
-        self.current_cmd_vel = np.zeros(3, dtype=np.float32)
+        self.pending_remote_events = deque()
+        self._joint_source = NamedJointStateSource(dtype=np.float64)
+        self._joint_received = False
+        self._bad_joint_state_warned = False
+        self._joint_snapshot: JointStateBuffer | None = None
+        self._quat_xyzw_snapshot = np.zeros(4, dtype=np.float64)
+        self._quat_wxyz_snapshot = np.zeros(4, dtype=np.float64)
+        self._omega_snapshot = np.zeros(3, dtype=np.float64)
+        self._cmd_snapshot = np.zeros(3, dtype=np.float32)
+        self._observation: RobotObservation | None = None
 
-        robot_states = build_robot_states(self.state_machine_config)
-        self.robot_states = robot_states
-        self.state_id_by_name = {
-            name: state.state_id for name, state in robot_states.items()
-        }
-        self.state_name_by_id = {
-            value: key for key, value in self.state_id_by_name.items()
-        }
-        self.bind_robot_states(robot_states)
-        self.state_machine = RobotStateMachine(
-            self,
-            self.state_machine_config,
-            robot_states,
-        )
-        self.remote_event_adapter = RemoteEventAdapter(
-            self.state_machine_config.get("remote_events", {})
-        )
-        self.init_hot_reload()
-
-        self.state = self.state_machine.current_state_id
-
-        # 定时器初始化
+        # 控制循环初始化
         self.step = 0
-        self.dt = 0.02  # loop @50Hz
-        self.inference_period = self.dt
-        self.inference_timeout_tolerance = 0.005
-        self.last_inference_frame_time = None
-        self.inference_timeout_count = 0
-        self.state_machine_info_elapsed = 0.0
-        self.timer = self.create_timer(
-            self.dt, self.timer_callback, callback_group=self.timer_callback_group_1
+        self._second_reset_at = 0.0
+        self._zero_actuator_values: list[float] = []
+
+        self.runtime = RobotControlRuntime(
+            self.state_machine_config,
+            built_in_mod_root=self.package_share / "mods",
+            command_defaults=ELF3_COMMAND_DEFAULTS,
+            ros_node=self,
+            platform=self,
+            cpu_affinity_plan=cpu_affinity_plan,
+            fatal_callback=self._on_control_fatal,
         )
+        self.state_machine_info_timer = None
+        if self.state_machine_info_hz > 0.0:
+            self.state_machine_info_timer = self.create_timer(
+                1.0 / self.state_machine_info_hz,
+                self.publish_state_machine_info,
+                callback_group=self.status_callback_group,
+            )
 
     def load_files(self):
         self.declare_parameter("/topic_prefix", "default_value")
@@ -199,17 +151,17 @@ class BxiExample(HotReloadMixin, Node):
             self.get_parameter("/topic_prefix").get_parameter_value().string_value
         )
 
-        package_share = get_package_share_directory("bxi_example_py_elf3")
+        self.package_share = Path(get_package_share_directory("bxi_example_py_elf3"))
         self.declare_parameter(
             "/state_machine_config",
-            os.path.join(package_share, "config", "elf3_state_machine.yaml"),
+            os.path.join(
+                self.package_share,
+                "config",
+                "elf3_state_machine.yaml",
+            ),
         )
-        self.state_machine_config_path = self.get_parameter(
-            "/state_machine_config"
-        ).value
-        self.state_machine_config = load_state_machine_config(
-            self.state_machine_config_path
-        )
+        state_machine_config_path = self.get_parameter("/state_machine_config").value
+        self.state_machine_config = load_state_machine_config(state_machine_config_path)
 
         self.declare_parameter("/state_machine_info_topic", "")
         self.state_machine_info_topic = (
@@ -223,63 +175,27 @@ class BxiExample(HotReloadMixin, Node):
             self.get_parameter("/state_machine_info_hz").value
         )
 
-        self.declare_parameter("/hot_reload", False)
-        self.hot_reload_enabled = bool(self.get_parameter("/hot_reload").value)
+    def _on_control_fatal(self, _message: str):
+        self._shutting_down.set()
+        rclpy.try_shutdown()
 
-    def load_models(self):
-        data_dir = os.path.join(
-            get_package_share_directory("bxi_example_py_elf3"),
-            "data",
-        )
-        model_file_paths: list[str] = []
-
-        def model_file(file_name: str) -> str:
-            path = os.path.join(data_dir, file_name)
-            model_file_paths.append(path)
-            return path
-
-        self.normal: HumanoidGaitPolicyLiteIsaaclab = HumanoidGaitPolicyLiteIsaaclab(
-            model_file("isaaclab_model/amp_terrain.onnx")
-        )
-        self.recover: DanceMotionPolicyMjlab = DanceMotionPolicyMjlab(
-            model_file("mjlab_model/recover.npz"),
-            model_file("mjlab_model/recover.onnx"),
-            start_frame=600,
-        )
-        self.dance: DanceMotionPolicyGravityIsaaclabV3 = DanceMotionPolicyGravityIsaaclabV3(
-            model_file("isaaclab_model/shuishou.npz"),
-            model_file("isaaclab_model/shuishou.onnx"),
-            start_frame=60,
-            fixed_pos=True
-        )
-        self.amp_run: HumanoidGaitPolicyLiteIsaaclab = HumanoidGaitPolicyLiteIsaaclab(
-            model_file("isaaclab_model/amp_run.onnx")
-        )
-        self.normal_run: NormalMotionPolicyMjlab = NormalMotionPolicyMjlab(
-            model_file("mjlab_model/model_normal.onnx")
-        )
-        self.forward_flip: DanceMotionPolicyGravityIsaaclab = (
-            DanceMotionPolicyGravityIsaaclab(
-                model_file("isaaclab_model/forward_flip.npz"),
-                model_file("isaaclab_model/forward_flip.onnx"),
-                start_frame=150,
-            )
-        )
-        self.withoutarm: HumanoidGaitPolicyLiteIsaaclab = HumanoidGaitPolicyLiteIsaaclab(
-            model_file("isaaclab_model/withoutarm.onnx")
-        )
-        self.model_file_paths: tuple[str, ...] = tuple(model_file_paths)
-        self.pd_pos: np.ndarray = self.normal.default_dof_pos
-
-    def bind_robot_states(self, robot_states):
-        for state in robot_states.values():
-            state.on_bind(self)
+    def destroy_node(self):
+        self._shutting_down.set()
+        runtime = getattr(self, "runtime", None)
+        if runtime is not None:
+            try:
+                runtime.close()
+            except Exception as exc:
+                self.get_logger().warning(f"control runtime cleanup failed: {exc}")
+        return super().destroy_node()
 
     # ---------------------------------------------------------------------------- #
     #                                    ROS话题部分                                   #
     # ---------------------------------------------------------------------------- #
     def init_pub_sub(self):
         # 订阅和发布主题
+        self.io_callback_group = MutuallyExclusiveCallbackGroup()
+        self.status_callback_group = MutuallyExclusiveCallbackGroup()
         qos = QoSProfile(
             depth=1,
             durability=qos_profile_sensor_data.durability,
@@ -297,26 +213,39 @@ class BxiExample(HotReloadMixin, Node):
         )
 
         self.odom_sub = self.create_subscription(
-            nav_msgs.msg.Odometry, self.topic_prefix + "odom", self.odom_callback, qos
+            nav_msgs.msg.Odometry,
+            self.topic_prefix + "odom",
+            self.odom_callback,
+            qos,
+            callback_group=self.io_callback_group,
         )
-        # self.joint_sub = self.create_subscription(sensor_msgs.msg.JointState, self.topic_prefix+'joint_states', self.joint_callback, qos)
         self.actuator_sub = self.create_subscription(
             bxiMsg.ActuatorStates,
             self.topic_prefix + "actuator_states",
             self.actuator_callback,
             qos,
+            callback_group=self.io_callback_group,
         )
         self.imu_sub = self.create_subscription(
-            sensor_msgs.msg.Imu, self.topic_prefix + "imu_data", self.imu_callback, qos
+            sensor_msgs.msg.Imu,
+            self.topic_prefix + "imu_data",
+            self.imu_callback,
+            qos,
+            callback_group=self.io_callback_group,
         )
         self.touch_sub = self.create_subscription(
             bxiMsg.TouchSensor,
             self.topic_prefix + "touch_sensor",
             self.touch_callback,
             qos,
+            callback_group=self.io_callback_group,
         )
         self.joy_sub = self.create_subscription(
-            bxiMsg.MotionCommands, "motion_commands", self.joy_callback, qos
+            bxiMsg.MotionCommands,
+            "motion_commands",
+            self.joy_callback,
+            qos,
+            callback_group=self.io_callback_group,
         )
 
         self.rest_srv = self.create_client(
@@ -326,89 +255,87 @@ class BxiExample(HotReloadMixin, Node):
             bxiSrv.SimulationReset, self.topic_prefix + "sim_reset"
         )
 
-        self.timer_callback_group_1 = MutuallyExclusiveCallbackGroup()
-        self.timer_callback_group_2 = MutuallyExclusiveCallbackGroup()
-
         self.lock_in = Lock()
         self.lock_ou = self.lock_in  # Lock()
 
-    def timer_callback(self):
-        # ptyhon 与 rclpy 多线程不太友好，这里使用定时间+简易状态机运行a
-        events = []
+    # --------------------------- Runtime 平台适配接口 --------------------------- #
+
+    def startup_step(self, now: float) -> bool:
+        """Perform the ELF3-specific two-stage reset before control starts."""
         if self.step == 0:
-            self.robot_reset(1, False)  # first reset
-            print("robot reset 1!")
-            self.step = 1
-            return
-        elif self.step == 1 and self.loop_count >= (1.0 / self.dt):  # 延迟2s
-            self.robot_reset(2, True)  # first reset
-            print("robot reset 2!")
-            self.loop_count = 0
+            if self.robot_reset(1, False):
+                self.get_logger().info("robot reset step 1 requested")
+                self._second_reset_at = now + 1.0
+                self.step = 1
+            return False
+        if self.step == 1:
+            if now < self._second_reset_at:
+                return False
+            if not self.robot_reset(2, True):
+                return False
+            self.get_logger().info("robot reset step 2 requested")
             self.step = 2
-            self.reset_inference_timeout_monitor()
-            return
+            if self.topic_prefix.find("simulation") != -1:
+                self.runtime.request_state(
+                    "com.bxi.basic_actions/pd_brake", trigger="AutoPdbreak"
+                )
+                self.runtime.request_state(
+                    "com.bxi.basic_actions/normal", trigger="AutoRelease"
+                )
+            return False
+        with self.lock_in:
+            return self._joint_received
 
-        if self.step == 2:
-            self.check_hot_reload(self.dt)
+    def snapshot_control_inputs(self):
+        """Copy the latest ROS inputs into one coherent framework observation."""
+        with self.lock_in:
+            latest_joints = self._joint_source.view
+            if self._joint_snapshot is None:
+                self._joint_snapshot = JointStateBuffer(
+                    latest_joints.layout,
+                    dtype=np.float64,
+                )
+                self._observation = RobotObservation(
+                    joints=self._joint_snapshot.view,
+                    quat_xyzw=self._quat_xyzw_snapshot,
+                    quat_wxyz=self._quat_wxyz_snapshot,
+                    omega=self._omega_snapshot,
+                    raw_cmd_vel=self._cmd_snapshot,
+                )
+            self._joint_snapshot.update(
+                latest_joints.position,
+                latest_joints.velocity,
+                timestamp_ns=latest_joints.timestamp_ns,
+            )
+            np.copyto(self._quat_xyzw_snapshot, self.quat_xyzw)
+            np.copyto(self._quat_wxyz_snapshot, self.quat_wxyz)
+            np.copyto(self._omega_snapshot, self.omega)
+            np.copyto(self._cmd_snapshot, self.raw_cmd_vel)
+            events = tuple(self.pending_remote_events)
+            self.pending_remote_events.clear()
+        assert self._observation is not None
+        return self._observation, events
 
-            with self.lock_in:
-                self.current_q = self.qpos.copy()
-                self.current_dq = self.qvel.copy()
-                self.current_quat_xyzw = self.quat_xyzw.copy()
-                self.current_quat_wxyz = self.quat_wxyz.copy()
-                self.current_omega = self.omega.copy()
-                self.current_raw_cmd_vel[:] = self.raw_cmd_vel
-                self.current_cmd_vel.fill(0.0)
-                events = list(self.pending_remote_events)
-                self.pending_remote_events.clear()
-
-            self.motor_target = None
-            transition_active = self.state_machine.update(self.dt, events)
-            self.state = self.state_machine.current_state_id
-
-            if not transition_active:
-                self.state_machine.update_current_state(self.dt)
-                self.state = self.state_machine.current_state_id
-
-            if self.motor_target is not None:
-                qpos, kp, kd = self.motor_target
-                self.pos_last = qpos
-                self.kp_last = kp
-                self.kd_last = kd
-                self.check_inference_frame_timeout()
-                self.send_to_motor(qpos, kp, kd)
-
-        self.loop_count += 1
-        self.publish_state_machine_info_if_due(events)
-
-    def send_to_motor(self, dof_pos_target, joint_kp, joint_kd):
+    def publish_motor_frame(self, frame: MotorFrame):
+        """Convert a framework motor frame into the ELF3 ROS command message."""
         msg = bxiMsg.ActuatorCmds()
         msg.header.frame_id = robot_name
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.actuators_name = joint_name
-        msg.pos = dof_pos_target.tolist()
-        msg.vel = np.zeros(dof_num, dtype=np.float32).tolist()
-        msg.torque = np.zeros(dof_num, dtype=np.float32).tolist()
-        msg.kp = joint_kp.tolist()
-        msg.kd = joint_kd.tolist()
+        msg.actuators_name = frame.layout.names
+        if len(self._zero_actuator_values) != frame.layout.dof_num:
+            self._zero_actuator_values = [0.0] * frame.layout.dof_num
+        msg.pos = frame.qpos.tolist()
+        msg.vel = self._zero_actuator_values
+        msg.torque = self._zero_actuator_values
+        msg.kp = frame.kp.tolist()
+        msg.kd = frame.kd.tolist()
         self.act_pub.publish(msg)
 
-    def publish_state_machine_info_if_due(self, events):
-        if self.state_machine_info_hz <= 0.0:
+    def publish_state_machine_info(self):
+        info = self.runtime.snapshot(include_graph=True)
+        if info is None:
             return
-
-        self.state_machine_info_elapsed += self.dt
-        period = 1.0 / self.state_machine_info_hz
-        if self.state_machine_info_elapsed + 1e-9 < period:
-            return
-
-        self.state_machine_info_elapsed = 0.0
-        self.publish_state_machine_info(events)
-
-    def publish_state_machine_info(self, events):
         now = self.get_clock().now()
-        current_cmd_vel = self.current_cmd_vel.tolist()
-        info = self.state_machine.snapshot(include_graph=True)
         info.update(
             {
                 "stamp": {
@@ -416,13 +343,6 @@ class BxiExample(HotReloadMixin, Node):
                     "nanosec": int(now.nanoseconds % 1000000000),
                 },
                 "step": int(self.step),
-                "loop_count": int(self.loop_count),
-                "events": list(events),
-                "cmd_vel": {
-                    "x": float(current_cmd_vel[0]),
-                    "y": float(current_cmd_vel[1]),
-                    "yaw": float(current_cmd_vel[2]),
-                },
             }
         )
 
@@ -436,10 +356,13 @@ class BxiExample(HotReloadMixin, Node):
         req.release = release
         req.header.frame_id = robot_name
 
-        while not self.rest_srv.wait_for_service(timeout_sec=1.0):
-            print("service not available, waiting again...")
+        while not self.rest_srv.wait_for_service(timeout_sec=0.2):
+            if self._shutting_down.is_set() or not rclpy.ok():
+                return False
+            self.get_logger().info("robot reset service not available; waiting")
 
         self.rest_srv.call_async(req)
+        return True
 
     def sim_robot_reset(self):
         req = bxiSrv.SimulationReset.Request()
@@ -469,34 +392,41 @@ class BxiExample(HotReloadMixin, Node):
         self.sim_rest_srv.call_async(req)
 
     def joint_callback(self, msg):
-        joint_pos = msg.position
-        joint_vel = msg.velocity
-        joint_tor = msg.effort
-
-        with self.lock_in:
-            self.qpos[:] = np.array(joint_pos[:])
-            self.qvel[:] = np.array(joint_vel[:])
+        self._update_joint_state(msg.name, msg.position, msg.velocity)
 
     def actuator_callback(self, msg):
-        joint_pos = msg.position
-        joint_vel = msg.velocity
-        joint_tor = msg.effort
-        drv_temperature = msg.driver_temperature
-        motor_temperature = msg.motor_temperature
+        self._update_joint_state(msg.name, msg.position, msg.velocity)
 
+    def _update_joint_state(self, names, position, velocity):
         with self.lock_in:
-            self.qpos[:] = np.array(joint_pos[:])
-            self.qvel[:] = np.array(joint_vel[:])
+            try:
+                latest = self._joint_source.update(
+                    names,
+                    position,
+                    velocity,
+                    timestamp_ns=self.get_clock().now().nanoseconds,
+                )
+            except (TypeError, ValueError) as exc:
+                if not self._bad_joint_state_warned:
+                    self.get_logger().error(f"invalid named joint state: {exc}")
+                    self._bad_joint_state_warned = True
+                return
+
+            if not self._joint_received:
+                self.get_logger().info(
+                    "ELF3 state layout initialized from message names: "
+                    f"{latest.layout.dof_num} joints"
+                )
+            self._joint_received = True
+            self._bad_joint_state_warned = False
 
     def joy_callback(self, msg):
+        events = self.runtime.extract_remote_events(msg, sync_only=self.step < 2)
         with self.lock_in:
             self.raw_cmd_vel[:] = (
                 msg.vel_des.x,
                 msg.vel_des.y,
                 msg.yawdot_des,
-            )
-            events = self.remote_event_adapter.extract_events(
-                msg, sync_only=self.step < 2
             )
             self.pending_remote_events.extend(events)
 
@@ -506,121 +436,36 @@ class BxiExample(HotReloadMixin, Node):
     def imu_callback(self, msg):
         quat = msg.orientation
         avel = msg.angular_velocity
-        acc = msg.linear_acceleration
-
-        quat_tmp1 = np.array([quat.x, quat.y, quat.z, quat.w]).astype(np.double)
-        quat_tmp2 = np.array([quat.w, quat.x, quat.y, quat.z]).astype(np.double)
 
         with self.lock_in:
-            self.quat_xyzw = quat_tmp1
-            self.quat_wxyz = quat_tmp2
-            self.omega = np.array([avel.x, avel.y, avel.z])
+            self.quat_xyzw[:] = quat.x, quat.y, quat.z, quat.w
+            self.quat_wxyz[:] = quat.w, quat.x, quat.y, quat.z
+            self.omega[:] = avel.x, avel.y, avel.z
 
-    def touch_callback(self, msg):
-        foot_force = msg.value
+    def touch_callback(self, _msg):
+        pass
 
-    def odom_callback(self, msg):  # 全局里程计（上帝视角，仅限仿真使用）
-        base_pose = msg.pose
-        base_twist = msg.twist
-
-    # ---------------------------------- ROS话题部分 --------------------------------- #
-    # ---------------------------------------------------------------------------- #
-    #                                     工具类函数                                    #
-    # ---------------------------------------------------------------------------- #
-    def set_motor_target(self, qpos, kp, kd):
-        frame = (
-            np.asarray(qpos, dtype=np.float32).copy(),
-            np.asarray(kp, dtype=np.float32).copy(),
-            np.asarray(kd, dtype=np.float32).copy(),
-        )
-        self.motor_target = frame
-
-    def hold_last_motor_target(self):
-        self.set_motor_target(self.pos_last, self.kp_last, self.kd_last)
-
-    def reset_inference_timeout_monitor(self):
-        self.last_inference_frame_time = None
-        self.inference_timeout_count = 0
-
-    def check_inference_frame_timeout(self):
-        now = time.perf_counter()
-        last = self.last_inference_frame_time
-        self.last_inference_frame_time = now
-        if last is None or self.inference_period <= 0.0:
-            return
-
-        frame_delay = now - last
-        timeout_threshold = self.inference_period + self.inference_timeout_tolerance
-        if frame_delay <= timeout_threshold:
-            return
-
-        self.inference_timeout_count += 1
-        state_name = self.state_name_by_id.get(self.state, str(self.state))
-        print(
-            "[INFERENCE TIMEOUT] "
-            f"state={state_name}, "
-            f"delay={frame_delay * 1000.0:.2f}ms, "
-            f"limit={self.inference_period * 1000.0:.2f}ms "
-            f"({1.0 / self.inference_period:.1f}Hz), "
-            f"tolerance={self.inference_timeout_tolerance * 1000.0:.2f}ms, "
-            f"over={(frame_delay - self.inference_period) * 1000.0:.2f}ms, "
-            f"count={self.inference_timeout_count}"
-        )
-
-    def request_state(
-        self, state_name, trigger="code", transition="instant", delay=0.0
-    ):
-        self.state_machine.request_transition(
-            state_name, trigger=trigger, transition=transition, delay=delay
-        )
-
-    def is_orientation_unsafe(self, quat_xyzw):
-        eu_ang = quaternion_to_euler_array(quat_xyzw)
-        eu_ang[eu_ang > math.pi] -= 2 * math.pi
-        return (np.abs(eu_ang[0]) > (math.pi / 3.0)) or (
-            np.abs(eu_ang[1]) > (math.pi / 3.0)
-        )
-
-    # --- 模型切换过渡逻辑 ---
-    def preheat_model(self, model, with_cmd_vel=False, cmd_vel=None):
-        # 用当前观测预推理一次，不输出到电机；有历史观测的模型随后用当前观测填满历史。
-        q = self.qpos.copy()
-        dq = self.qvel.copy()
-        omega = self.omega.copy()
-        quat_xyzw = self.quat_xyzw.copy()
-        quat_wxyz = self.quat_wxyz.copy()
-        if cmd_vel is None:
-            cmd_vel = self.current_cmd_vel.copy()
-        else:
-            cmd_vel = np.asarray(cmd_vel, dtype=np.float32)
-        history_len = getattr(model, "obs_history_len", 1)
-        for _ in range(history_len*2):
-            if type(model) is NormalMotionPolicyMjlab:
-                model.infer_step(q, dq, quat_xyzw, omega, cmd_vel)
-            else:
-                if with_cmd_vel:
-                    model.inference_step(q, dq, quat_wxyz, omega, cmd_vel)
-                else:
-                    model.inference_step(q, dq, quat_wxyz, omega)
-
-# ----------------------------------- 工具类函数 ---------------------------------- #
+    def odom_callback(self, _msg):  # 全局里程计（上帝视角，仅限仿真使用）
+        pass
 
 
 def main(args=None):
-
     time.sleep(5)
 
     rclpy.init(args=args)
-    node = BxiExample()
+    node = BxiExample(cpu_affinity_plan=_CPU_AFFINITY_PLAN)
 
     executor = MultiThreadedExecutor(num_threads=3)
-    executor.add_node(node)
-
     try:
+        executor.add_node(node)
+        node.runtime.attach_executor(executor)
+        node.runtime.start()
         executor.spin()
     finally:
-        executor.shutdown()
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        finally:
+            executor.shutdown()
 
     rclpy.shutdown()
 

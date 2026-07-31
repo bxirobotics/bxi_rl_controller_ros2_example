@@ -142,6 +142,16 @@ ros2 launch bxi_example_py_elf3 example_launch_demo_hw.py
 
 该命令会启动机器人硬件和控制策略。
 
+如果已经使用 `bxi_robot_config_tool` 生成 `/opt/bxi/robot_config.yaml`，硬件 launch 会自动读取该文件；文件不存在时继续使用内置默认值。也可以手动指定：
+
+```bash
+ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py \
+  robot_config_file:=/opt/bxi/robot_config.yaml \
+  enable_head:=auto
+```
+
+`enable_head:=auto` 会读取 `modules.head.enabled`。如需覆盖配置，可使用 `enable_head:=true` 或 `enable_head:=false`。
+
 ### 控制程序运行提示
 
 1. 话题中的控制命令必须按照指定关节顺序发送。关节顺序请参考 `src/bxi_example_py_elf3` 中的示例。

@@ -1,0 +1,19 @@
+XRoboToolkit PC Service minimal runtime
+
+Source: https://github.com/XR-Robotics/XRoboToolkit-PC-Service.git
+Upstream source commit reviewed: 85bac4dbc1fd5cef42c74a160d9c30aa3491f122
+Upstream/package version: 1.0.0.0
+License: Apache-2.0
+
+The platform runtime contains only the headless service executable, its direct
+private library closure, setting.ini, and libPXREARobotSDK.so. Demos, Unity,
+QML, translations, graphics plugins, development headers, and package-manager
+integration are intentionally excluded.
+ELF debug information and symbols unnecessary for dynamic linking are removed
+with strip --strip-unneeded when the platform tool is available.
+Absolute build-machine RPATH/RUNPATH entries are replaced with target-local
+`$ORIGIN` paths so the runtime does not reference the vendor build host.
+
+setting.ini is a BXI headless configuration derived from the upstream Linux
+configuration. It explicitly binds gRPC to 127.0.0.1:60061 and disables the
+vendor file logger; this modification is marked in the file itself.

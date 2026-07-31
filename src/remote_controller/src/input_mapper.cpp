@@ -70,22 +70,6 @@ const RemoteConfig &InputMapper::config() const
     return config_;
 }
 
-void InputMapper::reload_config(RemoteConfig config)
-{
-    config_ = std::move(config);
-    signals_.clear();
-    controls_.clear();
-    signal_expiry_.clear();
-    signal_update_time_.clear();
-    timed_out_sources_.clear();
-    binding_active_.assign(config_.bindings.size(), false);
-    std::fill(output_slots_, output_slots_ + kButtonSlotCount + 1, 0);
-    std::fill(edge_pulse_slots_, edge_pulse_slots_ + kButtonSlotCount + 1, 0);
-    std::fill(last_logged_output_slots_, last_logged_output_slots_ + kButtonSlotCount + 1, 0);
-    refresh_controls();
-    refresh_bindings(false);
-}
-
 std::vector<std::string> InputMapper::set_axis(int axis_index, double value)
 {
     if (axis_index < 0 || axis_index >= kAxisCount) {

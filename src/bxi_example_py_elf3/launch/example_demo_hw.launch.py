@@ -1,10 +1,16 @@
+import atexit
+import fcntl
 import os
 import sys
-import fcntl
-import atexit
+
 from ament_index_python.packages import get_package_share_path
 from launch import LaunchDescription
+from launch.actions import OpaqueFunction
 from launch_ros.actions import Node
+from bxi_example_py_elf3.framework.mod_api.hardware_launch import (
+    declare_hardware_launch_arguments,
+    hardware_node_from_context,
+)
 
 LOCK_FILE = "/tmp/bxi_example_hw.lock"
 _lock_fd = None
@@ -61,7 +67,9 @@ def _acquire_lock():
     except OSError:
         try:
             os.lseek(fd, 0, os.SEEK_SET)
-            holder = os.read(fd, 64).decode("utf-8", errors="replace").strip() or "unknown"
+            holder = (
+                os.read(fd, 64).decode("utf-8", errors="replace").strip() or "unknown"
+            )
         except OSError:
             holder = "unknown"
         os.close(fd)
@@ -77,6 +85,7 @@ def _acquire_lock():
     _lock_fd = fd
     atexit.register(_release_lock)
 
+
 def generate_launch_description():
     _acquire_lock()
 
@@ -86,21 +95,11 @@ def generate_launch_description():
     )
 
     return LaunchDescription(
-        [
-            Node(
-                package="hardware_elf3",
-                executable="hardware_elf3",
-                name="hardware_elf3",
-                output="screen",
-                parameters=[
-                    {"hardware_config/imu": True},      #start imu
-                    {"hardware_config/motor_pwr": True}, #motor poweron
-                    {"hardware_config/motor_disable": 0x60000000}, #motor disable head
-                ],
-                emulate_tty=True,
-                arguments=[("__log_level:=debug")],
+        declare_hardware_launch_arguments()
+        + [
+            OpaqueFunction(
+                function=lambda context: [hardware_node_from_context(context)]
             ),
-
             Node(
                 package="bxi_example_py_elf3",
                 executable="bxi_example_py_elf3_demo",
@@ -109,7 +108,6 @@ def generate_launch_description():
                 parameters=[
                     {"/topic_prefix": "hardware/"},
                     {"/state_machine_config": state_machine_config},
-                    {"/hot_reload": False},
                 ],
                 emulate_tty=True,
                 arguments=[("__log_level:=debug")],

@@ -18,7 +18,6 @@ public:
     explicit InputMapper(RemoteConfig config);
 
     const RemoteConfig &config() const;
-    void reload_config(RemoteConfig config);
 
     std::vector<std::string> set_axis(int axis_index, double value);
     std::vector<std::string> set_signal(const std::string &source, double value);

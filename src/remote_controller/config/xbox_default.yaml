@@ -1,8 +1,14 @@
 inputs:
+  # 所有候选设备严格独占。系统每 100 ms 扫描可用性；设备持续可用
+  # 500 ms 才允许抢占低优先级设备，避免插拔抖动造成频繁切换。
   selection:
     scan_interval_ms: 100
     promote_stable_ms: 500
+
 sources:
+  # CRSF 接收机。只有持续收到 CRC 正确的 RC 通道帧才会参与候选选择。
+  # 连续 Xbox 输入和 CH8/CH9 离散编码按键组均在下方 signals 中明确映射。业务动作仍由
+  # controls/outputs 统一定义，因此可以复用手柄的全部组合键行为。
   crsf:
     type: crsf
     device: /dev/ttyCRSF
@@ -12,22 +18,16 @@ sources:
     loss_timeout_ms: 300
     cooldown_ms: 1000
     signals:
-      crsf.left_x:
-        from: crsf.channel.1
-      crsf.left_y:
-        from: crsf.channel.2
-      crsf.trigger_right:
-        from: crsf.channel.3
-      crsf.right_x:
-        from: crsf.channel.4
-      crsf.right_y:
-        from: crsf.channel.6
-      crsf.trigger_left:
-        from: crsf.channel.7
-      crsf.button_group_a:
-        from: crsf.channel.8
-      crsf.button_group_b:
-        from: crsf.channel.9
+      crsf.left_x:        {from: crsf.channel.1}  # CH1
+      crsf.left_y:        {from: crsf.channel.2}  # CH2, control 中反向
+      crsf.trigger_right: {from: crsf.channel.3}  # CH3 / RT
+      crsf.right_x:       {from: crsf.channel.4}  # CH4
+      crsf.right_y:       {from: crsf.channel.6}  # CH6, 使用时反向
+      crsf.trigger_left:  {from: crsf.channel.7}  # CH7 / LT
+      crsf.button_group_a: {from: crsf.channel.8} # A/B/X/Y/LStick/RStick 编码组
+      crsf.button_group_b: {from: crsf.channel.9} # LB/RB/Back/Start/D-pad 编码组
+
+  #手柄按键配置
   gamepad:
     type: joystick
     device: /dev/input/jsBattleDragon
@@ -36,32 +36,36 @@ sources:
     loss_timeout_ms: 300
     cooldown_ms: 1000
     signals:
-      gamepad.left_y:
-        from: js.axis.3
-      gamepad.left_x:
-        from: js.axis.0
-      gamepad.yaw:
-        from: js.axis.6
-      gamepad.trigger_left:
-        from: js.axis.5
-      gamepad.trigger_right:
-        from: js.axis.4
-      gamepad.stop:
-        from: js.button.11
-      gamepad.start:
-        from: js.button.14
-      gamepad.lb:
-        from: js.button.6
-      gamepad.rb:
-        from: js.button.7
-      gamepad.a:
-        from: js.button.0
-      gamepad.b:
-        from: js.button.1
-      gamepad.x:
-        from: js.button.3
-      gamepad.y:
-        from: js.button.4
+      #ps4
+      # gamepad.left_y: {from: js.axis.4}
+      # gamepad.left_x: {from: js.axis.0}
+      # gamepad.yaw: {from: js.axis.6}
+      # gamepad.trigger_left: {from: js.axis.2}
+      # gamepad.trigger_right: {from: js.axis.5}
+      # gamepad.stop: {from: js.button.9}
+      # gamepad.start: {from: js.button.10}
+      # gamepad.lb: {from: js.button.4}
+      # gamepad.rb: {from: js.button.5}
+      # gamepad.a: {from: js.button.0}
+      # gamepad.b: {from: js.button.1}
+      # gamepad.x: {from: js.button.2}
+      # gamepad.y: {from: js.button.3}
+      #xbox
+      gamepad.left_y: {from: js.axis.3}
+      gamepad.left_x: {from: js.axis.0}
+      gamepad.yaw: {from: js.axis.6}
+      gamepad.trigger_left: {from: js.axis.5}
+      gamepad.trigger_right: {from: js.axis.4}
+      gamepad.stop: {from: js.button.11}
+      gamepad.start: {from: js.button.14}
+      gamepad.lb: {from: js.button.6}
+      gamepad.rb: {from: js.button.7}
+      gamepad.a: {from: js.button.0}
+      gamepad.b: {from: js.button.1}
+      gamepad.x: {from: js.button.3}
+      gamepad.y: {from: js.button.4}
+
+  #键盘按键配置
   keyboard:
     type: keyboard
     priority: 0
@@ -72,516 +76,386 @@ sources:
     hold_ms: 200
     stop: space
     signals:
-      keyboard.vx:
-        from: keyboard.axis
-        negative: s
-        positive: w
-      keyboard.vy:
-        from: keyboard.axis
-        negative: d
-        positive: a
-      keyboard.yaw:
-        from: keyboard.axis
-        negative: e
-        positive: q
-      keyboard.normal:
-        from: keyboard.key
-        key: '1'
-        hold_ms: 200
-      keyboard.pd_break:
-        from: keyboard.key
-        key: '!'
-      keyboard.recover:
-        from: keyboard.key
-        key: '2'
-      keyboard.dance:
-        from: keyboard.key
-        key: '3'
-      keyboard.amp_run:
-        from: keyboard.key
-        key: '4'
-      keyboard.normal_run:
-        from: keyboard.key
-        key: '5'
-      keyboard.forward_flip:
-        from: keyboard.key
-        key: '7'
-      keyboard.applause:
-        from: keyboard.key
-        key: '8'
-      keyboard.hello:
-        from: keyboard.key
-        key: '9'
+      keyboard.vx: {from: keyboard.axis, negative: s, positive: w}
+      keyboard.vy: {from: keyboard.axis, negative: d, positive: a}
+      keyboard.yaw: {from: keyboard.axis, negative: e, positive: q}
+      keyboard.normal: {from: keyboard.key, key: "1", hold_ms: 200}
+      keyboard.pd_break: {from: keyboard.key, key: "!"}
+      keyboard.sonic: {from: keyboard.key, key: "@"}
+      keyboard.recover: {from: keyboard.key, key: "2"}
+      keyboard.dance: {from: keyboard.key, key: "3"}
+      keyboard.amp_run: {from: keyboard.key, key: "4"}
+      keyboard.normal_run: {from: keyboard.key, key: "5"}
+      keyboard.back_flip: {from: keyboard.key, key: "6"}
+      keyboard.forward_flip: {from: keyboard.key, key: "7"}
+      keyboard.applause: {from: keyboard.key, key: "8"}
+      keyboard.hello: {from: keyboard.key, key: "9"}
+      keyboard.normal_depth: {from: keyboard.key, key: "0"}
+
+#预设的一些，输入曲线
 curves:
   stick:
     type: expo
     deadzone: 0.03
     expo: 0.0
-    limit:
-    - -1.0
-    - 1.0
+    limit: [-1.0, 1.0]
     calibration:
-      input:
-      - -1.0
-      - 0.0
-      - 1.0
-      output:
-      - -1.0
-      - 0.0
-      - 1.0
+      input: [-1.0, 0.0, 1.0]
+      output: [-1.0, 0.0, 1.0]
+
+#处理来自不同source的输入，映射到统一的controls
 controls:
   move.vx:
     type: analog
     mix: max_abs
     inputs:
-    - source: gamepad.left_y
-      direction: -1
-      curve: stick
-    - source: crsf.right_y
-      direction: -1
-      curve: stick
-    - source: keyboard.vx
+      - source: gamepad.left_y
+        direction: -1
+        curve: stick
+      # 使用 CRSF CH5（右摇杆 Y）；反向后与手柄前后方向一致。
+      - source: crsf.right_y
+        direction: -1
+        curve: stick
+      - source: keyboard.vx
     deadzone: 0.03
     min: -1.0
     max: 1.0
     alpha: 0.03
+
   move.vy:
     type: analog
     mix: max_abs
     inputs:
-    - source: gamepad.left_x
-      direction: -1
-      curve: stick
-    - source: crsf.left_x
-      direction: -1
-      curve: stick
-    - source: keyboard.vy
+      - source: gamepad.left_x
+        direction: -1
+        curve: stick
+      # CH1 对应 Xbox 左摇杆 X，沿用手柄横移方向。
+      - source: crsf.left_x
+        direction: -1
+        curve: stick
+      - source: keyboard.vy
     deadzone: 0.03
     min: -1.0
     max: 1.0
     alpha: 0.03
+
   move.yaw:
     type: analog
     mix: max_abs
     inputs:
-    - source: gamepad.yaw
-      direction: -1
-      curve: stick
-    - source: keyboard.yaw
+      - source: gamepad.yaw
+        direction: -1
+        curve: stick
+      - source: keyboard.yaw
     deadzone: 0.03
     min: -1.0
     max: 1.0
     alpha: 0.05
+
+  # CRSF yaw 直接依据已解码的 CH8 enum；raw 区间之间是否连续不再重要。
+  # 未设置 alpha，默认立即输出；D-pad 左为 +1，右为 -1。
   crsf.yaw:
     type: analog
     mix: sum
     inputs:
-    - name: dpad_left
-      when:
-      - crsf.button_group_b=dpad_left
-      value: 1.0
-    - name: dpad_right
-      when:
-      - crsf.button_group_b=dpad_right
-      value: -1.0
+      - name: dpad_left
+        when: [crsf.button_group_b=dpad_left]
+        value: 1.0
+      - name: dpad_right
+        when: [crsf.button_group_b=dpad_right]
+        value: -1.0
     min: -1.0
     max: 1.0
     alpha: 0.05
-  gamepad.stop_event:
-    type: bool
-    inputs:
-    - source: gamepad.stop
-  gamepad.start_event:
-    type: bool
-    inputs:
-    - source: gamepad.start
-  gamepad.lb_event:
-    type: bool
-    inputs:
-    - source: gamepad.lb
-  gamepad.rb_event:
-    type: bool
-    inputs:
-    - source: gamepad.rb
-  gamepad.a_event:
-    type: bool
-    inputs:
-    - source: gamepad.a
-  gamepad.b_event:
-    type: bool
-    inputs:
-    - source: gamepad.b
-  gamepad.x_event:
-    type: bool
-    inputs:
-    - source: gamepad.x
-  gamepad.y_event:
-    type: bool
-    inputs:
-    - source: gamepad.y
+
+  # 手柄保持原有的 0/1 按键阈值；每个 control 统一使用 inputs 规则列表。
+  gamepad.stop_event: {type: bool, inputs: [{source: gamepad.stop}]}
+  gamepad.start_event: {type: bool, inputs: [{source: gamepad.start}]}
+  gamepad.lb_event: {type: bool, inputs: [{source: gamepad.lb}]}
+  gamepad.rb_event: {type: bool, inputs: [{source: gamepad.rb}]}
+  gamepad.a_event: {type: bool, inputs: [{source: gamepad.a}]}
+  gamepad.b_event: {type: bool, inputs: [{source: gamepad.b}]}
+  gamepad.x_event: {type: bool, inputs: [{source: gamepad.x}]}
+  gamepad.y_event: {type: bool, inputs: [{source: gamepad.y}]}
+
+  # CH8 离散值：200/400/600/800 分别对应 A/B/X/Y；
+  # 1180/1380 分别对应 LStick/RStick，992 是空闲。
+  # 区间边界是相邻发送值的中点。
   crsf.button_group_a:
     type: enum
     default: idle
     hysteresis: 0.03
-    inputs:
-    - source: crsf.button_group_a
+    inputs: [{source: crsf.button_group_a}]
     positions:
-      a:
-      - -1.0
-      - -0.846
-      b:
-      - -0.845
-      - -0.602
-      x:
-      - -0.601
-      - -0.358
-      y:
-      - -0.357
-      - -0.118
-      idle:
-      - -0.117
-      - 0.114
-      lstick:
-      - 0.115
-      - 0.351
-      rstick:
-      - 0.352
-      - 1.0
+      a: [-1.0, -0.846]
+      b: [-0.845, -0.602]
+      x: [-0.601, -0.358]
+      y: [-0.357, -0.118]
+      idle: [-0.117, 0.114]
+      lstick: [0.115, 0.351]
+      rstick: [0.352, 1.0]
+
+  # CH9 离散值：200/400/600/800 分别对应 LB/RB/Back/Start；
+  # 1180/1380/1580/1780 分别对应 D-pad Up/Down/Left/Right，992 是空闲。
   crsf.button_group_b:
     type: enum
     default: idle
     hysteresis: 0.03
-    inputs:
-    - source: crsf.button_group_b
+    inputs: [{source: crsf.button_group_b}]
     positions:
-      lb:
-      - -1.0
-      - -0.846
-      rb:
-      - -0.845
-      - -0.602
-      back:
-      - -0.601
-      - -0.358
-      start:
-      - -0.357
-      - -0.118
-      idle:
-      - -0.117
-      - 0.114
-      dpad_up:
-      - 0.115
-      - 0.351
-      dpad_down:
-      - 0.352
-      - 0.596
-      dpad_left:
-      - 0.597
-      - 0.841
-      dpad_right:
-      - 0.842
-      - 1.0
+      lb: [-1.0, -0.846]
+      rb: [-0.845, -0.602]
+      back: [-0.601, -0.358]
+      start: [-0.357, -0.118]
+      idle: [-0.117, 0.114]
+      dpad_up: [0.115, 0.351]
+      dpad_down: [0.352, 0.596]
+      dpad_left: [0.597, 0.841]
+      dpad_right: [0.842, 1.0]
+
   crsf.stop_event:
     type: bool
-    inputs:
-    - when:
-      - crsf.button_group_b=start
-      value: true
+    inputs: [{when: [crsf.button_group_b=start], value: true}]
   crsf.start_event:
     type: bool
-    inputs:
-    - when:
-      - crsf.button_group_a=rstick
-      value: true
+    inputs: [{when: [crsf.button_group_a=rstick], value: true}]
   crsf.lb_event:
     type: bool
-    inputs:
-    - when:
-      - crsf.button_group_b=lb
-      value: true
+    inputs: [{when: [crsf.button_group_b=lb], value: true}]
   crsf.rb_event:
     type: bool
-    inputs:
-    - when:
-      - crsf.button_group_b=rb
-      value: true
+    inputs: [{when: [crsf.button_group_b=rb], value: true}]
   crsf.a_event:
     type: bool
-    inputs:
-    - when:
-      - crsf.button_group_a=a
-      value: true
+    inputs: [{when: [crsf.button_group_a=a], value: true}]
   crsf.b_event:
     type: bool
-    inputs:
-    - when:
-      - crsf.button_group_a=b
-      value: true
+    inputs: [{when: [crsf.button_group_a=b], value: true}]
   crsf.x_event:
     type: bool
-    inputs:
-    - when:
-      - crsf.button_group_a=x
-      value: true
+    inputs: [{when: [crsf.button_group_a=x], value: true}]
   crsf.y_event:
     type: bool
-    inputs:
-    - when:
-      - crsf.button_group_a=y
-      value: true
+    inputs: [{when: [crsf.button_group_a=y], value: true}]
+
   system.stop_event:
     type: bool
-    inputs:
-    - when:
-        any:
-        - gamepad.stop_event
-        - crsf.stop_event
-      value: true
+    inputs: [{when: {any: [gamepad.stop_event, crsf.stop_event]}, value: true}]
   system.start_event:
     type: bool
-    inputs:
-    - when:
-        any:
-        - gamepad.start_event
-        - crsf.start_event
-      value: true
+    inputs: [{when: {any: [gamepad.start_event, crsf.start_event]}, value: true}]
   shoulder.left_event:
     type: bool
-    inputs:
-    - when:
-        any:
-        - gamepad.lb_event
-        - crsf.lb_event
-      value: true
+    inputs: [{when: {any: [gamepad.lb_event, crsf.lb_event]}, value: true}]
   shoulder.right_event:
     type: bool
-    inputs:
-    - when:
-        any:
-        - gamepad.rb_event
-        - crsf.rb_event
-      value: true
+    inputs: [{when: {any: [gamepad.rb_event, crsf.rb_event]}, value: true}]
   button.a_event:
     type: bool
-    inputs:
-    - when:
-        any:
-        - gamepad.a_event
-        - crsf.a_event
-      value: true
+    inputs: [{when: {any: [gamepad.a_event, crsf.a_event]}, value: true}]
   button.b_event:
     type: bool
-    inputs:
-    - when:
-        any:
-        - gamepad.b_event
-        - crsf.b_event
-      value: true
+    inputs: [{when: {any: [gamepad.b_event, crsf.b_event]}, value: true}]
   button.x_event:
     type: bool
-    inputs:
-    - when:
-        any:
-        - gamepad.x_event
-        - crsf.x_event
-      value: true
+    inputs: [{when: {any: [gamepad.x_event, crsf.x_event]}, value: true}]
   button.y_event:
     type: bool
-    inputs:
-    - when:
-        any:
-        - gamepad.y_event
-        - crsf.y_event
-      value: true
+    inputs: [{when: {any: [gamepad.y_event, crsf.y_event]}, value: true}]
+
   gamepad.trigger.left_event:
     type: bool
     threshold: 0.85
     hysteresis: 0.05
-    inputs:
-    - source: gamepad.trigger_left
+    inputs: [{source: gamepad.trigger_left}]
   gamepad.trigger.right_event:
     type: bool
     threshold: 0.85
     hysteresis: 0.05
-    inputs:
-    - source: gamepad.trigger_right
+    inputs: [{source: gamepad.trigger_right}]
   crsf.trigger.left_event:
     type: bool
     threshold: 0.5
     hysteresis: 0.05
-    inputs:
-    - source: crsf.trigger_left
+    inputs: [{source: crsf.trigger_left}]
   crsf.trigger.right_event:
     type: bool
     threshold: 0.5
     hysteresis: 0.05
-    inputs:
-    - source: crsf.trigger_right
+    inputs: [{source: crsf.trigger_right}]
   trigger.left_event:
     type: bool
-    inputs:
-    - when:
-        any:
-        - gamepad.trigger.left_event
-        - crsf.trigger.left_event
-      value: true
+    inputs: [{when: {any: [gamepad.trigger.left_event, crsf.trigger.left_event]}, value: true}]
   trigger.right_event:
     type: bool
-    inputs:
-    - when:
-        any:
-        - gamepad.trigger.right_event
-        - crsf.trigger.right_event
-      value: true
-  keyboard.normal_event:
-    type: bool
-    inputs:
-    - source: keyboard.normal
-  keyboard.pd_break_event:
-    type: bool
-    inputs:
-    - source: keyboard.pd_break
-  keyboard.recover_event:
-    type: bool
-    inputs:
-    - source: keyboard.recover
-  keyboard.dance_event:
-    type: bool
-    inputs:
-    - source: keyboard.dance
-  keyboard.amp_run_event:
-    type: bool
-    inputs:
-    - source: keyboard.amp_run
-  keyboard.normal_run_event:
-    type: bool
-    inputs:
-    - source: keyboard.normal_run
-  keyboard.forward_flip_event:
-    type: bool
-    inputs:
-    - source: keyboard.forward_flip
-  keyboard.applause_event:
-    type: bool
-    inputs:
-    - source: keyboard.applause
-  keyboard.hello_event:
-    type: bool
-    inputs:
-    - source: keyboard.hello
+    inputs: [{when: {any: [gamepad.trigger.right_event, crsf.trigger.right_event]}, value: true}]
+
+  keyboard.normal_event: {type: bool, inputs: [{source: keyboard.normal}]}
+  keyboard.pd_break_event: {type: bool, inputs: [{source: keyboard.pd_break}]}
+  keyboard.sonic_event: {type: bool, inputs: [{source: keyboard.sonic}]}
+  keyboard.recover_event: {type: bool, inputs: [{source: keyboard.recover}]}
+  keyboard.dance_event: {type: bool, inputs: [{source: keyboard.dance}]}
+  keyboard.amp_run_event: {type: bool, inputs: [{source: keyboard.amp_run}]}
+  keyboard.normal_run_event: {type: bool, inputs: [{source: keyboard.normal_run}]}
+  keyboard.back_flip_event: {type: bool, inputs: [{source: keyboard.back_flip}]}
+  keyboard.forward_flip_event: {type: bool, inputs: [{source: keyboard.forward_flip}]}
+  keyboard.applause_event: {type: bool, inputs: [{source: keyboard.applause}]}
+  keyboard.hello_event: {type: bool, inputs: [{source: keyboard.hello}]}
+  keyboard.normal_depth_event: {type: bool, inputs: [{source: keyboard.normal_depth}]}
+
+#将统一的controls映射到输出
 outputs:
   conflict_policy: first_wins
   publish_on_change: true
+
+  #连续的模拟值
   analog:
     vx: move.vx
     vy: move.vy
     yaw:
-      controls:
-      - move.yaw
-      - crsf.yaw
+      controls: [move.yaw, crsf.yaw]
       mix: max_abs
+
+  #上升沿触发，满足条件会输出目标值随后恢复为0
   edge:
-  - output: system.stop
-    when:
-    - system.stop_event
-  - output: system.start
-    when:
-    - system.start_event
+    #sysyem.<name>代表触发下面的特定命令
+    - output: system.stop
+      when: [system.stop_event]
+    - output: system.start
+      when: [system.start_event]
+
+  #电平触发，满足条件会一直输出
   level:
-  - output: btn_1=1
-    when:
-      any:
-      - - shoulder.right_event
+    - output: btn_1=1
+      when:
+        any:
+          - [shoulder.right_event, button.x_event, {released: shoulder.left_event}]
+          - [keyboard.normal_event]
+
+    - output: btn_2=1
+      when: [shoulder.right_event, button.a_event]
+
+    - output: btn_3=1
+      when: 
+        any:
+          - [shoulder.right_event, button.b_event]
+          - [keyboard.pd_break_event]
+
+    - output: btn_4=1
+      when:
+        any:
+          - [shoulder.right_event, button.y_event, {released: shoulder.right_event}]
+
+    - output: btn_5=1
+      when:
+        any:
+          - [shoulder.left_event, button.x_event, {released: shoulder.right_event}]
+          - [keyboard.dance_event]
+
+    - output: btn_6=1
+      when:
+        any:
+          - [shoulder.left_event, button.a_event]
+          - [keyboard.recover_event]
+
+    - output: btn_7=1
+      when:
+        any:
+          - [shoulder.left_event, button.b_event]
+          - [keyboard.normal_run_event]
+
+    - output: btn_8=1
+      when:
+        any:
+          - [shoulder.left_event, button.y_event, {released: shoulder.right_event}]
+          - [keyboard.amp_run_event]
+
+    - output: btn_9=1
+      when:
         - button.x_event
-      - - keyboard.normal_event
-  - output: btn_2=1
-    when:
-    - shoulder.right_event
-    - button.a_event
-  - output: btn_3=1
-    when:
-      any:
-      - - shoulder.right_event
-        - button.b_event
-      - - keyboard.pd_break_event
-  - output: btn_4=1
-    when:
-      any:
-      - - shoulder.right_event
-        - button.y_event
-  - output: btn_5=1
-    when:
-      any:
-      - - shoulder.left_event
-        - button.x_event
-      - - keyboard.dance_event
-  - output: btn_6=1
-    when:
-      any:
-      - - shoulder.left_event
-        - button.a_event
-      - - keyboard.recover_event
-  - output: btn_7=1
-    when:
-      any:
-      - - shoulder.left_event
-        - button.b_event
-      - - keyboard.normal_run_event
-  - output: btn_8=1
-    when:
-      any:
-      - - shoulder.left_event
-        - button.y_event
-      - - keyboard.amp_run_event
-  - output: btn_9=1
-    when:
-    - button.x_event
-    - released: shoulder.left_event
-    - released: shoulder.right_event
-    - released: trigger.left_event
-    - released: trigger.right_event
-  - output: btn_10=2
-    when:
-      any:
-      - - trigger.left_event
-        - button.y_event
-      - - keyboard.forward_flip_event
-  - output: btn_10=4
-    when:
-      any:
-      - - trigger.left_event
-        - button.b_event
-  - output: btn_10=5
-    when:
-      any:
-      - - trigger.right_event
-        - button.b_event
-      - - keyboard.applause_event
-  - output: btn_10=6
-    when:
-      any:
-      - - trigger.right_event
-        - button.a_event
-      - - keyboard.hello_event
+        - released: shoulder.left_event
+        - released: shoulder.right_event
+        - released: trigger.left_event
+        - released: trigger.right_event
+
+    - output: btn_10=1
+      when:
+        any:
+          - [trigger.left_event, button.x_event]
+          - [keyboard.back_flip_event]
+
+    - output: btn_10=2
+      when:
+        any:
+          - [trigger.left_event, button.y_event]
+          - [keyboard.forward_flip_event]
+
+    - output: btn_10=3
+      when:
+        any:
+          - [trigger.left_event, button.a_event]
+
+    - output: btn_10=4
+      when:
+        any:
+          - [trigger.left_event, button.b_event]
+
+    - output: btn_10=5
+      when:
+        any:
+          - [trigger.right_event, button.b_event]
+          - [keyboard.applause_event]
+
+    - output: btn_10=6
+      when:
+        any:
+          - [trigger.right_event, button.a_event]
+          - [keyboard.hello_event]
+    
+    - output: btn_10=7
+      when:
+        any:
+          - [trigger.right_event, button.x_event]
+          - [keyboard.normal_depth_event]
+
+    - output: btn_10=8
+      when:
+        any:
+          - [trigger.right_event, button.y_event]
+
+    - output: btn_10=9
+      when:
+        any:
+          - [shoulder.left_event, shoulder.right_event, button.x_event]
+          - [keyboard.sonic_event]
+
+    - output: btn_10=10
+      when:
+        any:
+          - [shoulder.left_event, shoulder.right_event, button.y_event]
+
+#自定义命令
 system:
   start:
-  - mkdir -p /var/log/bxi_log
-  - ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py > /var/log/bxi_log/$(date
-    +%Y-%m-%d_%H-%M-%S)_elf.log 2>&1 &
-  - ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log
-    2>&1 &
-  - su bxi -c "cd /home/bxi/bxi_ws/bxi_voice && ./bin/bxi-voice" 2>&1 &
+    - "mkdir -p /var/log/bxi_log"
+    - "ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log 2>&1 &"
+    - "ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log 2>&1 &"
+    - "su bxi -c \"cd /home/bxi/bxi_ws/bxi_voice && ./bin/bxi-voice\" 2>&1 &"
   stop:
-  - killall -SIGINT hardware_elf3
-  - killall -SIGINT bxi_example_py_elf3
-  - killall -SIGINT bxi_example_py_elf3_demo
-  - killall -SIGINT bxi_bms
-  - killall -SIGINT bxi_example_bms
-  - killall -SIGINT bxi-voice
+    - "killall -SIGINT hardware_elf3"
+    - "killall -SIGINT bxi_example_py_elf3"
+    - "killall -SIGINT bxi_example_py_elf3_demo"
+    - "killall -SIGINT bxi_bms"
+    - "killall -SIGINT bxi_example_bms"
+    - "killall -SIGINT bxi-voice"
+
+#互斥定义，只能acquire一次，但是可以release多次
 system_mutexes:
   robot_process:
     acquire: start
     release: stop
+
+#重置摇杆的滤波器
 system_reset_motion_after:
-- start
-- stop
+  - start
+  - stop
