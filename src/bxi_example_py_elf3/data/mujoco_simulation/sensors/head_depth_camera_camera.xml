@@ -1,0 +1,20 @@
+<mujocoinclude>
+  <!--
+    Head-mounted Intel RealSense D435i pose from resources/elf3_dof31/urdf/elf3.urdf:
+      parent=head_y_link
+      xyz=0.0628 0.0175 -0.048
+      rpy=-1.5708 0 -1.5708
+
+    The quaternion also applies a 180-degree rotation about camera-local X,
+    converting the URDF optical +Z viewing direction to MuJoCo camera -Z while
+    preserving image-up orientation.
+
+    Color and Depth profiles are configured independently by the matching
+    11-value user sensor in head_depth_camera_sensor.xml.
+  -->
+  <camera name="head_depth_camera"
+          pos="0.0628 0.0175 -0.048"
+          quat="0.5 0.5 -0.5 -0.5"
+          mode="fixed"
+          fovy="58.605976"/>
+</mujocoinclude>

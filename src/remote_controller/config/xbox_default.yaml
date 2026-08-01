@@ -344,7 +344,7 @@ outputs:
     - output: btn_4=1
       when:
         any:
-          - [shoulder.right_event, button.y_event, {released: shoulder.right_event}]
+          - [shoulder.right_event, button.y_event, {released: shoulder.left_event}]
 
     - output: btn_5=1
       when:
@@ -445,6 +445,7 @@ system:
     - "killall -SIGINT hardware_elf3"
     - "killall -SIGINT bxi_example_py_elf3"
     - "killall -SIGINT bxi_example_py_elf3_demo"
+    - "pkill -SIGINT -f '[/]bxi_depth_camera/cameras|[b]xi_depth_camera\\.manager'"
     - "killall -SIGINT bxi_bms"
     - "killall -SIGINT bxi_example_bms"
     - "killall -SIGINT bxi-voice"

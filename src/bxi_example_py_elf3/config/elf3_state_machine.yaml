@@ -28,7 +28,7 @@ control_runtime:
   # 先睡眠，距离绝对释放点最后200微秒时忙等；-1表示完全关闭忙等。
   spin_wait_us: 200
   cpu_affinity: control
-  realtime_priority: 99 #需要程序以root运行，或者sudo prlimit --pid "$$" --rtprio=99:99赋予当前终端权限
+  realtime_priority: 50 #需要程序以root运行，或者sudo prlimit --pid "$$" --rtprio=99:99赋予当前终端权限
 
 graph:
   validate: true

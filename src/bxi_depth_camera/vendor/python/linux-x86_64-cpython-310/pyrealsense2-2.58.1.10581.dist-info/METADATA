@@ -1,0 +1,53 @@
+Metadata-Version: 2.4
+Name: pyrealsense2
+Version: 2.58.1.10581
+Summary: Python Wrapper for Realsense SDK 2.0.
+Project-URL: homepage, https://github.com/realsenseai/librealsense
+Author-email: RealSense <rsswsdk@realsensecloud.onmicrosoft.com>
+License: Apache License, Version 2.0
+License-File: LICENSE
+Classifier: Development Status :: 3 - Alpha
+Classifier: Environment :: Console
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Education
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Operating System :: POSIX
+Classifier: Operating System :: Unix
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Programming Language :: Python :: 3.14
+Classifier: Topic :: Multimedia :: Video
+Classifier: Topic :: Scientific/Engineering
+Classifier: Topic :: Scientific/Engineering :: Human Machine Interfaces
+Classifier: Topic :: Scientific/Engineering :: Image Recognition
+Classifier: Topic :: Software Development
+Classifier: Topic :: Software Development :: Libraries :: Application Frameworks
+Requires-Python: >=3.9
+Description-Content-Type: text/x-rst
+
+Python Wrapper for RealSense SDK 2.0
+====================================
+
+The Python wrapper for RealSense SDK 2.0 provides the C++ to Python binding required to access the SDK.
+
+Quick start
+-----------
+
+::
+
+  import pyrealsense2 as rs
+  pipe = rs.pipeline()
+  profile = pipe.start()
+  try:
+    for i in range(0, 100):
+      frames = pipe.wait_for_frames()
+      for f in frames:
+        print(f.profile)
+  finally:
+      pipe.stop()

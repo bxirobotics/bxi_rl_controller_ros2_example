@@ -1,0 +1,9 @@
+<mujocoinclude>
+  <worldbody>
+    <light name="ut_world_light" pos="0 0 6" dir="0 0 -1" directional="true" diffuse="0.72 0.72 0.72" ambient="0.28 0.28 0.28" specular="0.08 0.08 0.08" castshadow="false"/>
+    <!-- Infinite common ground. Local raised decks preserve real pit/ditch depth. -->
+    <geom name="ut_infinite_ground" type="plane" pos="0 0 0" size="0 0 0.01" material="ut_ground" friction="1.0 0.01 0.001" condim="3"/>
+    <!-- The infinite plane itself is the 8 x 8 m collision-safe spawn area. -->
+    <site name="ut_spawn_origin" type="cylinder" pos="0 0 0.006" size="0.22 0.006" rgba="0.1 0.8 0.25 0.65"/>
+  </worldbody>
+</mujocoinclude>

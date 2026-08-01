@@ -1,0 +1,90 @@
+<mujocoinclude>
+  <worldbody>
+    <!-- EMERGENCY RESCUE, south side: features occupy a 16 x 16 m district. -->
+
+    <!-- Building rubble with exposed rebar. -->
+    <geom name="ut_rescue_rubble_slab_1" type="box" pos="-6.5 -11.2 0.18" size="0.75 0.45 0.16" euler="0.18 0.28 0.2" material="ut_rubble"/>
+    <geom name="ut_rescue_rubble_slab_2" type="box" pos="-5.3 -12.0 0.25" size="0.65 0.55 0.20" euler="-0.25 0.20 -0.4" material="ut_rubble"/>
+    <geom name="ut_rescue_rubble_block_1" type="box" pos="-6.6 -12.5 0.18" size="0.32 0.28 0.18" euler="0.4 -0.2 0.5" material="ut_rubble"/>
+    <geom name="ut_rescue_rubble_block_2" type="ellipsoid" pos="-5.4 -10.8 0.15" size="0.30 0.22 0.15" material="ut_rock"/>
+    <geom name="ut_rescue_exposed_rebar_1" type="capsule" fromto="-6.8 -11.1 0.25 -5.8 -10.5 0.85" size="0.025" material="ut_metal"/>
+    <geom name="ut_rescue_exposed_rebar_2" type="capsule" fromto="-5.8 -12.2 0.28 -5.0 -12.7 0.95" size="0.025" material="ut_metal"/>
+    <geom name="ut_rescue_exposed_rebar_3" type="capsule" fromto="-6.4 -12.5 0.2 -6.2 -11.7 0.75" size="0.022" material="ut_metal"/>
+
+    <!-- 45 degree debris incline (within requested 40-50 degree range). -->
+    <geom name="ut_rescue_rubble_slope_45deg" type="box" pos="-2.9 -11.5 1.05" size="1.4 0.95 0.12" quat="0.923880 0 0.382683 0" material="ut_rubble" friction="0.65 0.02 0.004"/>
+    <geom name="ut_rescue_rubble_slope_rock_1" type="box" pos="-3.2 -11.4 1.2" size="0.18 0.15 0.12" euler="0.1 0.2 0.5" material="ut_rock"/>
+    <geom name="ut_rescue_rubble_slope_rock_2" type="ellipsoid" pos="-2.6 -11.7 1.55" size="0.20 0.14 0.11" material="ut_rock"/>
+
+    <!-- Raised collapsed floor. One slab is mocap-controlled for scripted drop tests. -->
+    <geom name="ut_rescue_collapsed_floor_support_l" type="box" pos="0.0 -11.5 0.40" size="0.55 1.0 0.40" material="ut_concrete"/>
+    <geom name="ut_rescue_collapsed_floor_support_r" type="box" pos="3.0 -11.5 0.40" size="0.55 1.0 0.40" material="ut_concrete"/>
+    <geom name="ut_rescue_collapsed_floor_fixed" type="box" pos="0.9 -11.5 0.82" size="0.35 1.0 0.08" material="ut_concrete"/>
+    <body name="ut_rescue_collapsible_slab" mocap="true" pos="1.25 -11.5 0.82">
+      <geom name="ut_rescue_collapsible_slab_geom" type="box" pos="0.55 0 0" size="0.55 1.0 0.07" material="ut_concrete" density="550"/>
+    </body>
+    <geom name="ut_rescue_collapsed_floor_gap_marker" type="box" pos="2.55 -11.5 0.04" size="0.35 1.0 0.02" material="ut_red" contype="0" conaffinity="0"/>
+
+    <!-- 70 cm clear square approximates a 60-80 cm narrow vertical shaft; deck depth is 1.5 m. -->
+    <geom name="ut_rescue_shaft_deck_w" type="box" pos="5.0 -11.5 1.45" size="1.0 0.35 0.10" material="ut_concrete"/>
+    <geom name="ut_rescue_shaft_deck_e" type="box" pos="5.0 -9.8 1.45" size="1.0 0.35 0.10" material="ut_concrete"/>
+    <geom name="ut_rescue_shaft_deck_n" type="box" pos="4.15 -10.65 1.45" size="0.15 0.50 0.10" material="ut_concrete"/>
+    <geom name="ut_rescue_shaft_deck_s" type="box" pos="5.85 -10.65 1.45" size="0.15 0.50 0.10" material="ut_concrete"/>
+    <geom name="ut_rescue_shaft_wall_w" type="box" pos="4.55 -10.65 0.72" size="0.05 0.35 0.72" material="ut_concrete"/>
+    <geom name="ut_rescue_shaft_wall_e" type="box" pos="5.45 -10.65 0.72" size="0.05 0.35 0.72" material="ut_concrete"/>
+    <geom name="ut_rescue_shaft_wall_n" type="box" pos="5.0 -11.05 0.72" size="0.45 0.05 0.72" material="ut_concrete"/>
+    <geom name="ut_rescue_shaft_wall_s" type="box" pos="5.0 -10.25 0.72" size="0.45 0.05 0.72" material="ut_concrete"/>
+    <site name="ut_rescue_shaft_70cm" type="cylinder" pos="5 -10.65 1.46" size="0.35 0.01" rgba="0.9 0.05 0.02 0.28"/>
+
+    <!-- 0.8 m clear, 10 m long horizontal tunnel (square shell approximates an 0.8 m pipe). -->
+    <geom name="ut_rescue_tunnel_floor" type="box" pos="0 -20.0 -0.02" size="5.0 0.50 0.04" material="ut_metal"/>
+    <geom name="ut_rescue_tunnel_wall_l" type="box" pos="0 -20.50 0.40" size="5.0 0.10 0.40" material="ut_metal"/>
+    <geom name="ut_rescue_tunnel_wall_r" type="box" pos="0 -19.50 0.40" size="5.0 0.10 0.40" material="ut_metal"/>
+    <geom name="ut_rescue_tunnel_roof" type="box" pos="0 -20.0 0.90" size="5.0 0.60 0.10" material="ut_metal"/>
+
+    <!-- Burned ground with 3 cm ash layer. -->
+    <geom name="ut_rescue_burned_floor" type="box" pos="-6.0 -15.0 -0.035" size="1.5 1.3 0.04" material="ut_ash" friction="0.62 0.025 0.006"/>
+    <geom name="ut_rescue_ash_layer" type="box" pos="-6.0 -15.0 0.015" size="1.2 1.0 0.015" material="ut_ash" friction="0.50 0.035 0.008"/>
+    <geom name="ut_rescue_charred_beam" type="cylinder" pos="-6.0 -15.0 0.16" size="0.16 1.0" quat="0.707107 0.707107 0 0" material="ut_ash"/>
+
+    <!-- Flooded-basement tank, 30 cm water depth (within requested 20-50 cm). -->
+    <geom name="ut_rescue_basement_bottom" type="box" pos="-2.2 -15.2 -0.035" size="1.4 1.2 0.04" material="ut_concrete" friction="0.45 0.02 0.003"/>
+    <geom name="ut_rescue_basement_wall_w" type="box" pos="-3.65 -15.2 0.30" size="0.05 1.25 0.30" material="ut_concrete"/>
+    <geom name="ut_rescue_basement_wall_e" type="box" pos="-0.75 -15.2 0.30" size="0.05 1.25 0.30" material="ut_concrete"/>
+    <geom name="ut_rescue_basement_wall_n" type="box" pos="-2.2 -16.45 0.30" size="1.5 0.05 0.30" material="ut_concrete"/>
+    <geom name="ut_rescue_basement_water_30cm" type="box" pos="-2.2 -15.2 0.15" size="1.4 1.2 0.15" material="ut_water" contype="0" conaffinity="0"/>
+    <site name="ut_rescue_basement_depth_20cm" pos="-2.8 -14.1 0.2" size="0.025" rgba="0.1 0.8 1 1"/>
+    <site name="ut_rescue_basement_depth_50cm" pos="-1.6 -14.1 0.5" size="0.025" rgba="0.1 0.4 1 1"/>
+
+    <!-- Inclined floor slabs at 10, 20 and 30 degrees. -->
+    <geom name="ut_rescue_tilted_slab_10deg" type="box" pos="1.2 -15.6 0.25" size="1.2 0.45 0.08" quat="0.996195 0 0.087156 0" material="ut_concrete"/>
+    <geom name="ut_rescue_tilted_slab_20deg" type="box" pos="4.0 -15.6 0.48" size="1.2 0.45 0.08" quat="0.984808 0 0.173648 0" material="ut_concrete"/>
+    <geom name="ut_rescue_tilted_slab_30deg" type="box" pos="6.6 -15.6 0.68" size="1.2 0.45 0.08" quat="0.965926 0 0.258819 0" material="ut_concrete"/>
+
+    <!-- Broken stair with two missing middle steps. -->
+    <geom name="ut_rescue_broken_stair_1" type="box" pos="-6.6 -18.0 0.10" size="0.65 0.22 0.10" material="ut_concrete"/>
+    <geom name="ut_rescue_broken_stair_2" type="box" pos="-6.6 -17.56 0.20" size="0.65 0.22 0.20" material="ut_concrete"/>
+    <geom name="ut_rescue_broken_stair_5" type="box" pos="-6.6 -16.24 0.50" size="0.65 0.22 0.50" material="ut_concrete"/>
+    <geom name="ut_rescue_broken_stair_6" type="box" pos="-6.6 -15.80 0.60" size="0.65 0.22 0.60" material="ut_concrete"/>
+    <site name="ut_rescue_missing_stairs_3_4" type="box" pos="-6.6 -16.9 0.35" size="0.62 0.42 0.02" rgba="1 0 0 0.22"/>
+
+    <!-- Glass-shard field (thin, sharp-edged collision boxes). -->
+    <geom name="ut_rescue_glass_floor" type="box" pos="-3.8 -18.3 -0.025" size="1.2 0.75 0.03" material="ut_concrete"/>
+    <geom name="ut_rescue_glass_01" type="box" pos="-4.4 -18.4 0.025" size="0.18 0.025 0.025" euler="0.2 0.3 0.5" material="ut_glass"/>
+    <geom name="ut_rescue_glass_02" type="box" pos="-3.9 -18.0 0.035" size="0.22 0.02 0.035" euler="-0.2 0.4 -0.3" material="ut_glass"/>
+    <geom name="ut_rescue_glass_03" type="box" pos="-3.3 -18.5 0.03" size="0.16 0.025 0.03" euler="0.3 -0.25 0.8" material="ut_glass"/>
+    <geom name="ut_rescue_glass_04" type="box" pos="-3.7 -18.7 0.04" size="0.25 0.018 0.04" euler="-0.35 0.1 0.2" material="ut_glass"/>
+
+    <!-- Visual smoke occluders only; collision disabled. -->
+    <geom name="ut_rescue_smoke_1" type="sphere" pos="0.2 -18.0 0.8" size="0.8" material="ut_smoke" contype="0" conaffinity="0"/>
+    <geom name="ut_rescue_smoke_2" type="sphere" pos="0.8 -18.2 1.2" size="1.0" material="ut_smoke" contype="0" conaffinity="0"/>
+    <geom name="ut_rescue_smoke_3" type="sphere" pos="1.4 -18.0 0.9" size="0.85" material="ut_smoke" contype="0" conaffinity="0"/>
+    <site name="ut_rescue_smoke_control" type="sphere" pos="0.8 -18.1 1.0" size="0.08" rgba="0.8 0.8 0.8 0.8"/>
+
+    <!-- 60/70/80 C named zones for upper-layer thermal logic; MuJoCo itself has no temperature field. -->
+    <geom name="ut_rescue_heat_floor" type="box" pos="5.0 -18.2 -0.025" size="1.6 0.8 0.03" material="ut_ash" friction="0.75 0.01 0.001"/>
+    <site name="ut_rescue_temperature_60C" type="box" pos="4.0 -18.2 0.01" size="0.45 0.7 0.01" rgba="1 0.35 0.02 0.35"/>
+    <site name="ut_rescue_temperature_70C" type="box" pos="5.0 -18.2 0.01" size="0.45 0.7 0.01" rgba="1 0.15 0.01 0.42"/>
+    <site name="ut_rescue_temperature_80C" type="box" pos="6.0 -18.2 0.01" size="0.45 0.7 0.01" rgba="0.8 0.01 0.01 0.5"/>
+  </worldbody>
+</mujocoinclude>

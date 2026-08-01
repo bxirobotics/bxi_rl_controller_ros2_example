@@ -1,0 +1,94 @@
+<mujocoinclude>
+  <worldbody>
+    <!-- INDUSTRIAL / BUILDING, north side: features occupy a 16 x 16 m district. -->
+    <geom name="ut_industrial_main_floor" type="box" pos="0 10.5 -0.035" size="7.9 1.4 0.04" material="ut_concrete" friction="0.95 0.01 0.001"/>
+
+    <!-- GB-style civil stair: 15 cm rise, 28 cm tread depth, 1.2 m clear width. -->
+    <geom name="ut_industrial_civil_step_1" type="box" pos="-6.6 12.28 0.075" size="0.6 0.14 0.075" material="ut_concrete"/>
+    <geom name="ut_industrial_civil_step_2" type="box" pos="-6.6 12.56 0.15" size="0.6 0.14 0.15" material="ut_concrete"/>
+    <geom name="ut_industrial_civil_step_3" type="box" pos="-6.6 12.84 0.225" size="0.6 0.14 0.225" material="ut_concrete"/>
+    <geom name="ut_industrial_civil_step_4" type="box" pos="-6.6 13.12 0.30" size="0.6 0.14 0.30" material="ut_concrete"/>
+    <geom name="ut_industrial_civil_step_5" type="box" pos="-6.6 13.40 0.375" size="0.6 0.14 0.375" material="ut_concrete"/>
+
+    <!-- Industrial open-tread stair: 20 cm rise, 25 cm depth. -->
+    <geom name="ut_industrial_open_tread_1" type="box" pos="-4.7 12.25 0.20" size="0.65 0.125 0.025" material="ut_metal"/>
+    <geom name="ut_industrial_open_tread_2" type="box" pos="-4.7 12.50 0.40" size="0.65 0.125 0.025" material="ut_metal"/>
+    <geom name="ut_industrial_open_tread_3" type="box" pos="-4.7 12.75 0.60" size="0.65 0.125 0.025" material="ut_metal"/>
+    <geom name="ut_industrial_open_tread_4" type="box" pos="-4.7 13.00 0.80" size="0.65 0.125 0.025" material="ut_metal"/>
+    <geom name="ut_industrial_open_stringer_l" type="capsule" fromto="-5.28 12.1 0.05 -5.28 13.1 0.85" size="0.035" material="ut_metal"/>
+    <geom name="ut_industrial_open_stringer_r" type="capsule" fromto="-4.12 12.1 0.05 -4.12 13.1 0.85" size="0.035" material="ut_metal"/>
+
+    <!-- Spiral stair, 25 cm rise; successive treads rotate about a central mast. -->
+    <geom name="ut_industrial_spiral_mast" type="cylinder" pos="-2.4 13.1 0.85" size="0.07 0.85" material="ut_metal"/>
+    <geom name="ut_industrial_spiral_1" type="box" pos="-2.0 13.1 0.18" size="0.42 0.24 0.035" material="ut_metal"/>
+    <geom name="ut_industrial_spiral_2" type="box" pos="-2.12 13.45 0.43" size="0.42 0.24 0.035" euler="0 0 0.785398" material="ut_metal"/>
+    <geom name="ut_industrial_spiral_3" type="box" pos="-2.4 13.55 0.68" size="0.42 0.24 0.035" euler="0 0 1.570796" material="ut_metal"/>
+    <geom name="ut_industrial_spiral_4" type="box" pos="-2.72 13.42 0.93" size="0.42 0.24 0.035" euler="0 0 2.356194" material="ut_metal"/>
+    <geom name="ut_industrial_spiral_5" type="box" pos="-2.82 13.1 1.18" size="0.42 0.24 0.035" euler="0 0 3.141593" material="ut_metal"/>
+
+    <!-- 60 cm-wide stair with no handrail. -->
+    <geom name="ut_industrial_narrow_step_1" type="box" pos="-0.4 12.3 0.10" size="0.30 0.20 0.10" material="ut_concrete"/>
+    <geom name="ut_industrial_narrow_step_2" type="box" pos="-0.4 12.7 0.20" size="0.30 0.20 0.20" material="ut_concrete"/>
+    <geom name="ut_industrial_narrow_step_3" type="box" pos="-0.4 13.1 0.30" size="0.30 0.20 0.30" material="ut_concrete"/>
+    <geom name="ut_industrial_narrow_step_4" type="box" pos="-0.4 13.5 0.40" size="0.30 0.20 0.40" material="ut_concrete"/>
+
+    <!-- Material comparison stairs: wood, marble, anti-slip metal and cement. -->
+    <geom name="ut_industrial_material_wood" type="box" pos="1.0 12.35 0.10" size="0.45 0.35 0.10" material="ut_wood" friction="0.75 0.01 0.001"/>
+    <geom name="ut_industrial_material_marble" type="box" pos="2.0 12.35 0.10" size="0.45 0.35 0.10" material="ut_marble" friction="0.35 0.005 0.0005"/>
+    <geom name="ut_industrial_material_antislip_metal" type="box" pos="3.0 12.35 0.10" size="0.45 0.35 0.10" material="ut_metal" friction="1.20 0.015 0.001"/>
+    <geom name="ut_industrial_material_cement" type="box" pos="4.0 12.35 0.10" size="0.45 0.35 0.10" material="ut_concrete" friction="1.0 0.01 0.001"/>
+
+    <!-- Damaged stair: split tread leaves a missing corner; mocap tread can be rocked by test code. -->
+    <geom name="ut_industrial_broken_step_left" type="box" pos="5.1 12.3 0.12" size="0.28 0.30 0.12" material="ut_concrete"/>
+    <geom name="ut_industrial_broken_step_right_rear" type="box" pos="5.55 12.43 0.12" size="0.17 0.17 0.12" material="ut_concrete"/>
+    <body name="ut_industrial_loose_tread" mocap="true" pos="5.4 13.0 0.22">
+      <geom name="ut_industrial_loose_tread_geom" type="box" size="0.55 0.28 0.045" material="ut_concrete" density="650"/>
+    </body>
+
+    <!-- Pipe-rack corridor: 0.8 m clear width and 2.0 m clear height. -->
+    <geom name="ut_industrial_pipe_corridor_floor" type="box" pos="7.0 16.0 -0.035" size="0.50 3.0 0.04" material="ut_metal"/>
+    <geom name="ut_industrial_pipe_corridor_wall_l" type="box" pos="6.50 16.0 1.0" size="0.10 3.0 1.0" material="ut_metal"/>
+    <geom name="ut_industrial_pipe_corridor_wall_r" type="box" pos="7.50 16.0 1.0" size="0.10 3.0 1.0" material="ut_metal"/>
+    <geom name="ut_industrial_pipe_corridor_roof" type="box" pos="7.0 16.0 2.10" size="0.60 3.0 0.10" material="ut_metal"/>
+
+    <!-- Oil-contaminated floor. -->
+    <geom name="ut_industrial_oil_floor" type="box" pos="4.3 15.2 -0.025" size="1.4 1.2 0.03" material="ut_oil" friction="0.08 0.002 0.0001" condim="3"/>
+
+    <!-- Raised bolt field, 30 cm grid, heights 2/3.5/5 cm. -->
+    <geom name="ut_industrial_bolt_01" type="cylinder" pos="0.0 15.0 0.010" size="0.04 0.010" material="ut_metal"/>
+    <geom name="ut_industrial_bolt_02" type="cylinder" pos="0.3 15.0 0.0175" size="0.04 0.0175" material="ut_metal"/>
+    <geom name="ut_industrial_bolt_03" type="cylinder" pos="0.6 15.0 0.025" size="0.04 0.025" material="ut_metal"/>
+    <geom name="ut_industrial_bolt_04" type="cylinder" pos="0.0 15.3 0.025" size="0.04 0.025" material="ut_metal"/>
+    <geom name="ut_industrial_bolt_05" type="cylinder" pos="0.3 15.3 0.010" size="0.04 0.010" material="ut_metal"/>
+    <geom name="ut_industrial_bolt_06" type="cylinder" pos="0.6 15.3 0.0175" size="0.04 0.0175" material="ut_metal"/>
+    <geom name="ut_industrial_bolt_07" type="cylinder" pos="0.0 15.6 0.0175" size="0.04 0.0175" material="ut_metal"/>
+    <geom name="ut_industrial_bolt_08" type="cylinder" pos="0.3 15.6 0.025" size="0.04 0.025" material="ut_metal"/>
+    <geom name="ut_industrial_bolt_09" type="cylinder" pos="0.6 15.6 0.010" size="0.04 0.010" material="ut_metal"/>
+
+    <!-- 20/35/50 cm potholes with true 5/10/15 cm depressed bottoms. The surface is tiled around, never across, each opening. -->
+    <geom name="ut_industrial_pothole_surface_north" type="box" pos="-3.3 16.7 0.16" size="1.9 0.5 0.04" material="ut_concrete"/>
+    <geom name="ut_industrial_pothole_surface_south" type="box" pos="-3.3 15.3 0.16" size="1.9 0.5 0.04" material="ut_concrete"/>
+    <geom name="ut_industrial_pothole_surface_left" type="box" pos="-4.85 16.0 0.16" size="0.35 0.20 0.04" material="ut_concrete"/>
+    <geom name="ut_industrial_pothole_surface_mid_1" type="box" pos="-3.8875 16.0 0.16" size="0.4125 0.20 0.04" material="ut_concrete"/>
+    <geom name="ut_industrial_pothole_surface_mid_2" type="box" pos="-2.7375 16.0 0.16" size="0.3875 0.20 0.04" material="ut_concrete"/>
+    <geom name="ut_industrial_pothole_surface_right" type="box" pos="-1.625 16.0 0.16" size="0.225 0.20 0.04" material="ut_concrete"/>
+    <geom name="ut_industrial_pothole_20cm_depth05cm" type="cylinder" pos="-4.4 16.0 0.10" size="0.10 0.05" material="ut_rock" friction="0.8 0.01 0.001"/>
+    <geom name="ut_industrial_pothole_35cm_depth10cm" type="cylinder" pos="-3.3 16.0 0.05" size="0.175 0.05" material="ut_rock" friction="0.8 0.01 0.001"/>
+    <geom name="ut_industrial_pothole_50cm_depth15cm" type="cylinder" pos="-2.1 16.0 0.00" size="0.25 0.05" material="ut_rock" friction="0.8 0.01 0.001"/>
+
+    <!-- Cable trench with one fixed and one mocap-controlled raised cover. -->
+    <geom name="ut_industrial_trench_left" type="box" pos="1.7 18.1 0.27" size="1.4 0.35 0.03" material="ut_concrete"/>
+    <geom name="ut_industrial_trench_right" type="box" pos="1.7 19.1 0.27" size="1.4 0.35 0.03" material="ut_concrete"/>
+    <geom name="ut_industrial_trench_bottom" type="box" pos="1.7 18.6 0.10" size="1.4 0.15 0.03" material="ut_ash"/>
+    <geom name="ut_industrial_cover_fixed" type="box" pos="1.0 18.6 0.325" size="0.6 0.30 0.025" material="ut_metal"/>
+    <body name="ut_industrial_cover_loose" mocap="true" pos="2.45 18.30 0.38" euler="-0.18 0 0">
+      <geom name="ut_industrial_cover_loose_geom" type="box" pos="0 0.30 0" size="0.65 0.30 0.025" material="ut_metal" density="700"/>
+    </body>
+
+    <!-- Scaffold bars require ducking (1.10 m) and crawling (0.65 m). -->
+    <geom name="ut_industrial_scaffold_post_l" type="capsule" fromto="-6.4 18.2 0 -6.4 18.2 2.1" size="0.045" material="ut_metal"/>
+    <geom name="ut_industrial_scaffold_post_r" type="capsule" fromto="-4.8 18.2 0 -4.8 18.2 2.1" size="0.045" material="ut_metal"/>
+    <geom name="ut_industrial_scaffold_bar_duck" type="capsule" fromto="-6.4 18.2 1.10 -4.8 18.2 1.10" size="0.055" material="ut_yellow"/>
+    <geom name="ut_industrial_scaffold_bar_crawl" type="capsule" fromto="-6.4 19.2 0.65 -4.8 19.2 0.65" size="0.055" material="ut_orange"/>
+  </worldbody>
+</mujocoinclude>
