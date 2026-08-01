@@ -1,0 +1,100 @@
+<mujocoinclude>
+  <worldbody>
+    <!--
+      Compound-obstacle and humanoid-clearance district, south of the rescue
+      area. All mechanisms are deliberately fixed; no joints/freejoints exist.
+    -->
+
+    <!-- Compound route: low friction + camber, slopes, curbs, overheads and clutter. -->
+    <geom name="ut_combo_start" type="box" pos="-48 -34 -0.04" size="3.0 1.5 0.06" material="ut_asphalt"/>
+    <geom name="ut_combo_wet_camber" type="box" pos="-41 -34 0.153" size="4.0 1.5 0.05" euler="0.122173 0 0" material="ut_marble" friction="0.12 0.002 0.0001"/>
+    <geom name="ut_combo_camber_exit" type="box" pos="-35 -34 -0.04" size="2.0 1.5 0.06" material="ut_concrete"/>
+    <geom name="ut_combo_curb_after_turn" type="box" pos="-34.0 -34 0.095" size="0.16 1.35 0.075" material="ut_yellow"/>
+    <geom name="ut_combo_low_bar_after_curb" type="capsule" fromto="-32.8 -35.45 1.10 -32.8 -32.55 1.10" size="0.055" material="ut_metal"/>
+
+    <!-- 15 degree rubble ramp, fixed embedded stones, level crest and descent. -->
+    <geom name="ut_combo_rubble_ramp_up" type="box" pos="-28.5 -34 0.748" size="3.0 1.45 0.05" euler="0 -0.261799 0" material="ut_rubble" friction="0.58 0.02 0.004"/>
+    <geom name="ut_combo_rubble_rock_01" type="box" pos="-29.5 -34.5 0.60" size="0.18 0.14 0.10" euler="0.1 0.2 0.3" material="ut_rock"/>
+    <geom name="ut_combo_rubble_rock_02" type="ellipsoid" pos="-27.8 -33.5 1.05" size="0.20 0.15 0.12" material="ut_rock"/>
+    <geom name="ut_combo_rubble_crest" type="box" pos="-23.5 -34 1.515" size="2.0 1.45 0.06" material="ut_rubble" friction="0.58 0.02 0.004"/>
+    <geom name="ut_combo_rubble_ramp_down" type="box" pos="-18.5 -34 0.748" size="3.0 1.45 0.05" euler="0 0.261799 0" material="ut_rubble" friction="0.58 0.02 0.004"/>
+
+    <!-- Stairs exit directly through a static door frame and 4 cm threshold. -->
+    <geom name="ut_combo_stair_floor" type="box" pos="-13.8 -34 -0.04" size="1.6 1.5 0.06" material="ut_tile"/>
+    <geom name="ut_combo_stair_01" type="box" pos="-14.8 -34 0.075" size="0.14 1.25 0.075" material="ut_concrete"/>
+    <geom name="ut_combo_stair_02" type="box" pos="-14.52 -34 0.150" size="0.14 1.25 0.150" material="ut_concrete"/>
+    <geom name="ut_combo_stair_03" type="box" pos="-14.24 -34 0.225" size="0.14 1.25 0.225" material="ut_concrete"/>
+    <geom name="ut_combo_stair_landing" type="box" pos="-12.6 -34 0.45" size="1.5 1.25 0.05" material="ut_tile"/>
+    <geom name="ut_combo_doorpost_l" type="box" pos="-11.8 -35.05 1.15" size="0.12 0.16 0.70" material="ut_metal"/>
+    <geom name="ut_combo_doorpost_r" type="box" pos="-11.8 -32.95 1.15" size="0.12 0.16 0.70" material="ut_metal"/>
+    <geom name="ut_combo_door_lintel" type="box" pos="-11.8 -34 1.90" size="0.12 1.20 0.08" material="ut_metal"/>
+    <geom name="ut_combo_door_threshold_04cm" type="box" pos="-11.8 -34 0.49" size="0.08 0.90 0.02" material="ut_metal"/>
+    <geom name="ut_combo_stair_down_03" type="box" pos="-10.8 -34 0.225" size="0.14 1.25 0.225" material="ut_concrete"/>
+    <geom name="ut_combo_stair_down_02" type="box" pos="-10.52 -34 0.150" size="0.14 1.25 0.150" material="ut_concrete"/>
+    <geom name="ut_combo_stair_down_01" type="box" pos="-10.24 -34 0.075" size="0.14 1.25 0.075" material="ut_concrete"/>
+
+    <!-- Narrow bolt corridor transitions immediately into irregular stepping stones. -->
+    <geom name="ut_combo_bolt_floor" type="box" pos="-5.5 -34 -0.04" size="3.0 1.25 0.06" material="ut_concrete"/>
+    <geom name="ut_combo_bolt_wall_l" type="box" pos="-5.5 -35.35 0.65" size="3.0 0.10 0.65" material="ut_metal"/>
+    <geom name="ut_combo_bolt_wall_r" type="box" pos="-5.5 -32.65 0.65" size="3.0 0.10 0.65" material="ut_metal"/>
+    <geom name="ut_combo_bolt_01" type="cylinder" pos="-7.5 -34.4 0.035" size="0.05 0.035" material="ut_metal"/>
+    <geom name="ut_combo_bolt_02" type="cylinder" pos="-6.9 -33.7 0.050" size="0.05 0.050" material="ut_metal"/>
+    <geom name="ut_combo_bolt_03" type="cylinder" pos="-6.3 -34.2 0.025" size="0.05 0.025" material="ut_metal"/>
+    <geom name="ut_combo_bolt_04" type="cylinder" pos="-5.7 -33.6 0.045" size="0.05 0.045" material="ut_metal"/>
+    <geom name="ut_combo_bolt_05" type="cylinder" pos="-5.1 -34.5 0.030" size="0.05 0.030" material="ut_metal"/>
+    <geom name="ut_combo_bolt_06" type="cylinder" pos="-4.5 -33.8 0.055" size="0.05 0.055" material="ut_metal"/>
+    <geom name="ut_combo_bolt_07" type="cylinder" pos="-3.9 -34.3 0.040" size="0.05 0.040" material="ut_metal"/>
+
+    <geom name="ut_combo_stone_mud" type="box" pos="2 -34 -0.05" size="4.0 1.5 0.07" material="ut_mud" friction="0.25 0.035 0.006"/>
+    <geom name="ut_combo_stone_01" type="cylinder" pos="-1.0 -34.4 0.08" size="0.24 0.08" material="ut_rock"/>
+    <geom name="ut_combo_stone_02" type="cylinder" pos="-0.2 -33.6 0.13" size="0.23 0.13" material="ut_rock"/>
+    <geom name="ut_combo_stone_03" type="cylinder" pos="0.7 -34.2 0.10" size="0.22 0.10" material="ut_rock"/>
+    <geom name="ut_combo_stone_04" type="cylinder" pos="1.6 -33.5 0.16" size="0.23 0.16" material="ut_rock"/>
+    <geom name="ut_combo_stone_05" type="cylinder" pos="2.5 -34.5 0.11" size="0.24 0.11" material="ut_rock"/>
+    <geom name="ut_combo_stone_06" type="cylinder" pos="3.4 -33.7 0.15" size="0.22 0.15" material="ut_rock"/>
+    <geom name="ut_combo_stone_07" type="cylinder" pos="4.3 -34.3 0.09" size="0.23 0.09" material="ut_rock"/>
+
+    <!-- Long grass visually hides fixed stones without adding deformable bodies. -->
+    <geom name="ut_combo_hidden_grass_floor" type="box" pos="10 -34 -0.04" size="3.5 1.5 0.06" material="ut_grass" friction="0.50 0.025 0.004"/>
+    <geom name="ut_combo_hidden_rock_01" type="ellipsoid" pos="8.0 -34.5 0.11" size="0.30 0.23 0.11" material="ut_rock"/>
+    <geom name="ut_combo_hidden_rock_02" type="ellipsoid" pos="9.5 -33.5 0.16" size="0.36 0.28 0.16" material="ut_rock"/>
+    <geom name="ut_combo_hidden_rock_03" type="ellipsoid" pos="11.2 -34.2 0.08" size="0.25 0.20 0.08" material="ut_rock"/>
+    <geom name="ut_combo_hidden_rock_04" type="ellipsoid" pos="12.4 -33.6 0.14" size="0.32 0.24 0.14" material="ut_rock"/>
+    <geom name="ut_combo_grass_screen_01" type="box" pos="8.0 -34.5 0.17" size="0.40 0.30 0.14" material="ut_grass" contype="0" conaffinity="0"/>
+    <geom name="ut_combo_grass_screen_02" type="box" pos="9.5 -33.5 0.22" size="0.45 0.34 0.18" material="ut_grass" contype="0" conaffinity="0"/>
+    <geom name="ut_combo_grass_screen_03" type="box" pos="11.2 -34.2 0.14" size="0.35 0.28 0.12" material="ut_grass" contype="0" conaffinity="0"/>
+    <geom name="ut_combo_finish" type="box" pos="16 -34 -0.04" size="2.5 1.5 0.06" material="ut_asphalt"/>
+
+    <!-- Clearance lane floor, 90 m long and 4 m wide. -->
+    <geom name="ut_clearance_floor" type="box" pos="-5 -46 -0.04" size="45 2.0 0.06" material="ut_concrete"/>
+
+    <!-- Door openings of 60/70/80/90 cm; each wall spans the rest of the 4 m lane. -->
+    <geom name="ut_clearance_60_l" type="box" pos="-42 -47.15 1.0" size="0.15 0.85 1.0" material="ut_concrete"/>
+    <geom name="ut_clearance_60_r" type="box" pos="-42 -44.85 1.0" size="0.15 0.85 1.0" material="ut_concrete"/>
+    <geom name="ut_clearance_70_l" type="box" pos="-37 -47.175 1.0" size="0.15 0.825 1.0" material="ut_concrete"/>
+    <geom name="ut_clearance_70_r" type="box" pos="-37 -44.825 1.0" size="0.15 0.825 1.0" material="ut_concrete"/>
+    <geom name="ut_clearance_80_l" type="box" pos="-32 -47.20 1.0" size="0.15 0.80 1.0" material="ut_concrete"/>
+    <geom name="ut_clearance_80_r" type="box" pos="-32 -44.80 1.0" size="0.15 0.80 1.0" material="ut_concrete"/>
+    <geom name="ut_clearance_90_l" type="box" pos="-27 -47.225 1.0" size="0.15 0.775 1.0" material="ut_concrete"/>
+    <geom name="ut_clearance_90_r" type="box" pos="-27 -44.775 1.0" size="0.15 0.775 1.0" material="ut_concrete"/>
+
+    <!-- Graduated overhead bars: 60/90/120/150/180 cm. -->
+    <geom name="ut_clearance_bar_060" type="capsule" fromto="-21 -47.9 0.60 -21 -44.1 0.60" size="0.05" material="ut_yellow"/>
+    <geom name="ut_clearance_bar_090" type="capsule" fromto="-17 -47.9 0.90 -17 -44.1 0.90" size="0.05" material="ut_orange"/>
+    <geom name="ut_clearance_bar_120" type="capsule" fromto="-13 -47.9 1.20 -13 -44.1 1.20" size="0.05" material="ut_red"/>
+    <geom name="ut_clearance_bar_150" type="capsule" fromto="-9 -47.9 1.50 -9 -44.1 1.50" size="0.05" material="ut_blue"/>
+    <geom name="ut_clearance_bar_180" type="capsule" fromto="-5 -47.9 1.80 -5 -44.1 1.80" size="0.05" material="ut_metal"/>
+
+    <!-- 80 cm corridor, right-angle choke and S-shaped shoulder-clearance path. -->
+    <geom name="ut_clearance_corridor_l" type="box" pos="2 -46.5 0.9" size="4.0 0.10 0.9" material="ut_metal"/>
+    <geom name="ut_clearance_corridor_r" type="box" pos="2 -45.5 0.9" size="4.0 0.10 0.9" material="ut_metal"/>
+    <geom name="ut_clearance_corner_a" type="box" pos="7 -47.1 0.9" size="1.0 0.10 0.9" material="ut_metal"/>
+    <geom name="ut_clearance_corner_b" type="box" pos="8 -46.1 0.9" size="0.10 1.0 0.9" material="ut_metal"/>
+    <geom name="ut_clearance_s_wall_1" type="box" pos="12 -46.9 0.8" size="1.3 0.55 0.8" euler="0 0 -0.25" material="ut_concrete"/>
+    <geom name="ut_clearance_s_wall_2" type="box" pos="15 -45.1 0.8" size="1.3 0.55 0.8" euler="0 0 0.25" material="ut_concrete"/>
+    <geom name="ut_clearance_s_wall_3" type="box" pos="18 -46.9 0.8" size="1.3 0.55 0.8" euler="0 0 -0.25" material="ut_concrete"/>
+
+    <site name="ut_combo_route_start" type="cylinder" pos="-49 -34 0.025" size="0.18 0.005" rgba="0.1 0.9 0.2 0.8"/>
+    <site name="ut_clearance_route_start" type="cylinder" pos="-49 -46 0.025" size="0.18 0.005" rgba="0.1 0.9 0.2 0.8"/>
+  </worldbody>
+</mujocoinclude>

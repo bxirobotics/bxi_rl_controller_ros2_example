@@ -15,7 +15,7 @@ logging:
 # 控制运行时。所有平台适配器共用同一套绝对时间调度和维护策略。
 control_runtime:
   period_sec: 0.02
-  compute_budget_sec: 0.010
+  compute_budget_sec: 0.005
   deadline_tolerance_sec: 0.001
 
   maintenance_hz: 5.0

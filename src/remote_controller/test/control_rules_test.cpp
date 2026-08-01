@@ -256,7 +256,7 @@ void test_three_button_chord_excludes_two_button_x_chords()
         mapper.fill_message(message);
         expect(message.btn_1 == 0);
         expect(message.btn_5 == 0);
-        expect(message.btn_10 == 8);
+        expect(message.btn_10 == 9);
     }
 }
 

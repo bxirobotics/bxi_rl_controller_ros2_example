@@ -7,4 +7,8 @@
   <include file="outdoor.xml"/>
   <include file="rescue.xml"/>
   <include file="straight_obstacle_course.xml"/>
+  <include file="endurance_routes.xml"/>
+  <include file="building_negative.xml"/>
+  <include file="combined_clearance.xml"/>
+  <include file="indoor_perception.xml"/>
 </mujocoinclude>

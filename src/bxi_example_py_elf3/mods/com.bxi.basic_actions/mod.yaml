@@ -218,7 +218,9 @@ routes:
   - from: pd_brake
     event: recover
     to: recover
-    transition: first_frame_switch
+    transition:
+      profile: dual_running_blend
+      duration: 1.0
 
   - from: normal
     event: normal_run

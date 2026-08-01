@@ -30,5 +30,12 @@
     <material name="ut_rubble" rgba="0.38 0.34 0.31 1"/>
     <material name="ut_smoke" rgba="0.20 0.20 0.20 0.13"/>
     <material name="ut_heat" rgba="0.85 0.08 0.015 0.45"/>
+    <material name="ut_black_absorb" rgba="0.008 0.008 0.010 1" reflectance="0" shininess="0"/>
+    <material name="ut_mirror" rgba="0.82 0.86 0.90 1" reflectance="0.95" shininess="1" specular="1"/>
+    <material name="ut_white_matte" rgba="0.96 0.96 0.95 1" reflectance="0" shininess="0"/>
+    <material name="ut_rubber" rgba="0.10 0.11 0.12 1" reflectance="0.02"/>
+    <material name="ut_carpet" rgba="0.24 0.16 0.12 1" reflectance="0"/>
+    <texture type="2d" name="ut_repetitive_checker" builtin="checker" rgb1="0.72 0.72 0.70" rgb2="0.58 0.58 0.56" width="256" height="256"/>
+    <material name="ut_repetitive" texture="ut_repetitive_checker" texuniform="true" texrepeat="12 12" reflectance="0.02"/>
   </asset>
 </mujocoinclude>

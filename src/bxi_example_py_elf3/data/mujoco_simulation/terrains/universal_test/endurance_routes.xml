@@ -1,0 +1,70 @@
+<mujocoinclude>
+  <worldbody>
+    <!--
+      Long-duration locomotion district, north of the original map.
+      Every body-contacting object is a fixed geom. Travel direction for the
+      five material lanes is -X to +X; each lane has 3 m of clear width and
+      20 m of uninterrupted test surface.
+    -->
+
+    <!-- Long material lanes with independent run-up and run-out aprons. -->
+    <geom name="ut_endurance_sand_entry" type="box" pos="-14 38 -0.04" size="4 1.5 0.06" material="ut_concrete"/>
+    <geom name="ut_endurance_sand_20m" type="box" pos="0 38 -0.04" size="10 1.5 0.06" material="ut_sand" friction="0.55 0.025 0.004" solref="0.035 1"/>
+    <geom name="ut_endurance_sand_exit" type="box" pos="14 38 -0.04" size="4 1.5 0.06" material="ut_concrete"/>
+
+    <geom name="ut_endurance_mud_entry" type="box" pos="-14 42 -0.04" size="4 1.5 0.06" material="ut_concrete"/>
+    <geom name="ut_endurance_mud_20m" type="box" pos="0 42 -0.055" size="10 1.5 0.075" material="ut_mud" friction="0.24 0.04 0.008" solref="0.07 1"/>
+    <geom name="ut_endurance_mud_exit" type="box" pos="14 42 -0.04" size="4 1.5 0.06" material="ut_concrete"/>
+
+    <geom name="ut_endurance_ice_entry" type="box" pos="-14 46 -0.04" size="4 1.5 0.06" material="ut_concrete"/>
+    <geom name="ut_endurance_ice_20m" type="box" pos="0 46 -0.04" size="10 1.5 0.06" material="ut_ice" friction="0.025 0.001 0.00005" condim="3"/>
+    <geom name="ut_endurance_ice_exit" type="box" pos="14 46 -0.04" size="4 1.5 0.06" material="ut_concrete"/>
+
+    <geom name="ut_endurance_grass_entry" type="box" pos="-14 50 -0.04" size="4 1.5 0.06" material="ut_concrete"/>
+    <geom name="ut_endurance_grass_20m" type="box" pos="0 50 -0.04" size="10 1.5 0.06" material="ut_grass" friction="0.66 0.025 0.004"/>
+    <geom name="ut_endurance_grass_exit" type="box" pos="14 50 -0.04" size="4 1.5 0.06" material="ut_concrete"/>
+
+    <geom name="ut_endurance_gravel_entry" type="box" pos="-14 54 -0.04" size="4 1.5 0.06" material="ut_concrete"/>
+    <geom name="ut_endurance_gravel_20m" type="box" pos="0 54 -0.04" size="10 1.5 0.06" material="ut_rock" friction="0.72 0.025 0.004"/>
+    <geom name="ut_endurance_gravel_01" type="ellipsoid" pos="-8.5 53.45 0.045" size="0.09 0.065 0.045" material="ut_rock"/>
+    <geom name="ut_endurance_gravel_02" type="ellipsoid" pos="-7.2 54.55 0.060" size="0.12 0.08 0.060" material="ut_rock"/>
+    <geom name="ut_endurance_gravel_03" type="ellipsoid" pos="-5.8 53.80 0.050" size="0.10 0.07 0.050" material="ut_rock"/>
+    <geom name="ut_endurance_gravel_04" type="ellipsoid" pos="-4.1 54.40 0.075" size="0.14 0.09 0.075" material="ut_rock"/>
+    <geom name="ut_endurance_gravel_05" type="ellipsoid" pos="-2.4 53.55 0.055" size="0.11 0.08 0.055" material="ut_rock"/>
+    <geom name="ut_endurance_gravel_06" type="ellipsoid" pos="-0.8 54.65 0.065" size="0.13 0.08 0.065" material="ut_rock"/>
+    <geom name="ut_endurance_gravel_07" type="ellipsoid" pos="0.9 53.75 0.045" size="0.09 0.07 0.045" material="ut_rock"/>
+    <geom name="ut_endurance_gravel_08" type="ellipsoid" pos="2.7 54.35 0.070" size="0.14 0.10 0.070" material="ut_rock"/>
+    <geom name="ut_endurance_gravel_09" type="ellipsoid" pos="4.3 53.50 0.050" size="0.10 0.08 0.050" material="ut_rock"/>
+    <geom name="ut_endurance_gravel_10" type="ellipsoid" pos="5.9 54.60 0.060" size="0.12 0.09 0.060" material="ut_rock"/>
+    <geom name="ut_endurance_gravel_11" type="ellipsoid" pos="7.5 53.90 0.080" size="0.15 0.10 0.080" material="ut_rock"/>
+    <geom name="ut_endurance_gravel_12" type="ellipsoid" pos="8.8 54.45 0.050" size="0.11 0.07 0.050" material="ut_rock"/>
+    <geom name="ut_endurance_gravel_exit" type="box" pos="14 54 -0.04" size="4 1.5 0.06" material="ut_concrete"/>
+
+    <!-- 20 m cross-slope lane: 5 degrees of constant roll. -->
+    <geom name="ut_endurance_camber_entry" type="box" pos="-14 59 -0.04" size="4 1.5 0.06" material="ut_asphalt"/>
+    <geom name="ut_endurance_camber_20m" type="box" pos="0 59 0.1015" size="10 1.5 0.05" euler="0.087266 0 0" material="ut_asphalt" friction="0.90 0.01 0.001"/>
+    <geom name="ut_endurance_camber_exit" type="box" pos="14 59 -0.04" size="4 1.5 0.06" material="ut_asphalt"/>
+
+    <!-- 24 m continuous 10 degree up/level/down route with 8 m run-up. -->
+    <geom name="ut_endurance_slope_runup" type="box" pos="20 63 -0.04" size="4 1.5 0.06" material="ut_concrete"/>
+    <geom name="ut_endurance_slope_up_10deg" type="box" pos="28 63 0.665" size="4 1.5 0.05" euler="0 -0.174533 0" material="ut_concrete" friction="0.95 0.01 0.001"/>
+    <geom name="ut_endurance_slope_plateau" type="box" pos="36 63 1.349" size="4 1.5 0.06" material="ut_concrete" friction="0.95 0.01 0.001"/>
+    <geom name="ut_endurance_slope_down_10deg" type="box" pos="44 63 0.665" size="4 1.5 0.05" euler="0 0.174533 0" material="ut_concrete" friction="0.95 0.01 0.001"/>
+    <geom name="ut_endurance_slope_runout" type="box" pos="52 63 -0.04" size="4 1.5 0.06" material="ut_concrete"/>
+
+    <!-- 104 m closed endurance loop. Each segment uses a distinct surface. -->
+    <geom name="ut_endurance_loop_south_1" type="box" pos="-15 68 -0.04" size="5 1.0 0.06" material="ut_asphalt" friction="0.95 0.01 0.001"/>
+    <geom name="ut_endurance_loop_south_2" type="box" pos="-5 68 -0.04" size="5 1.0 0.06" material="ut_sand" friction="0.55 0.025 0.004"/>
+    <geom name="ut_endurance_loop_south_3" type="box" pos="5 68 -0.04" size="5 1.0 0.06" material="ut_grass" friction="0.66 0.02 0.003"/>
+    <geom name="ut_endurance_loop_south_4" type="box" pos="15 68 -0.04" size="5 1.0 0.06" material="ut_concrete" friction="1.0 0.01 0.001"/>
+    <geom name="ut_endurance_loop_east" type="box" pos="20 74 -0.04" size="1.0 6.0 0.06" material="ut_marble" friction="0.22 0.003 0.0002"/>
+    <geom name="ut_endurance_loop_north_1" type="box" pos="15 80 -0.04" size="5 1.0 0.06" material="ut_metal" friction="0.65 0.008 0.0005"/>
+    <geom name="ut_endurance_loop_north_2" type="box" pos="5 80 -0.04" size="5 1.0 0.06" material="ut_mud" friction="0.28 0.035 0.006"/>
+    <geom name="ut_endurance_loop_north_3" type="box" pos="-5 80 -0.04" size="5 1.0 0.06" material="ut_rock" friction="0.72 0.02 0.003"/>
+    <geom name="ut_endurance_loop_north_4" type="box" pos="-15 80 -0.04" size="5 1.0 0.06" material="ut_wood" friction="0.75 0.01 0.001"/>
+    <geom name="ut_endurance_loop_west" type="box" pos="-20 74 -0.04" size="1.0 6.0 0.06" material="ut_tile" friction="0.35 0.005 0.0005"/>
+
+    <site name="ut_endurance_lanes_start" type="cylinder" pos="-16.5 46 0.025" size="0.18 0.005" rgba="0.1 0.9 0.2 0.8"/>
+    <site name="ut_endurance_loop_start" type="cylinder" pos="-15 68 0.025" size="0.18 0.005" rgba="0.1 0.9 0.2 0.8"/>
+  </worldbody>
+</mujocoinclude>
