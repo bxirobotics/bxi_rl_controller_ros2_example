@@ -1,0 +1,180 @@
+<mujocoinclude>
+  <worldbody>
+    <!--
+      100 m straight comprehensive obstacle course, centred at y=25 m.
+      Travel direction is -X to +X. All objects are fixed geoms: this file
+      deliberately adds no joints, actuators or dynamic bodies.
+
+      The common infinite plane is at z=0. Course slabs finish at z=0.02,
+      avoiding coplanar flicker while keeping the entry step negligible.
+    -->
+
+    <!-- Start apron and high-visibility lane edges. -->
+    <geom name="ut_course_start" type="box" pos="-48 25 -0.04" size="3.0 1.5 0.06" material="ut_asphalt" friction="1.0 0.01 0.001"/>
+    <geom name="ut_course_start_line" type="box" pos="-45.1 25 0.025" size="0.08 1.45 0.005" material="ut_white" contype="0" conaffinity="0"/>
+    <geom name="ut_course_edge_start_l" type="box" pos="-48 23.52 0.025" size="3.0 0.025 0.005" material="ut_yellow" contype="0" conaffinity="0"/>
+    <geom name="ut_course_edge_start_r" type="box" pos="-48 26.48 0.025" size="3.0 0.025 0.005" material="ut_yellow" contype="0" conaffinity="0"/>
+
+    <!-- 5/10/15 cm transverse curbs, with clear gaps between tests. -->
+    <geom name="ut_course_curb_floor" type="box" pos="-41.5 25 -0.04" size="3.5 1.5 0.06" material="ut_concrete"/>
+    <geom name="ut_course_curb_05" type="box" pos="-44.0 25 0.045" size="0.16 1.35 0.025" material="ut_yellow"/>
+    <geom name="ut_course_curb_10" type="box" pos="-41.5 25 0.070" size="0.18 1.35 0.050" material="ut_orange"/>
+    <geom name="ut_course_curb_15" type="box" pos="-39.0 25 0.095" size="0.20 1.35 0.075" material="ut_red"/>
+
+    <!-- Closely spaced rounded speed bumps. -->
+    <geom name="ut_course_hump_floor" type="box" pos="-35.8 25 -0.04" size="2.2 1.5 0.06" material="ut_asphalt"/>
+    <geom name="ut_course_hump_1" type="capsule" fromto="-37.2 23.65 0.065 -37.2 26.35 0.065" size="0.045" material="ut_yellow"/>
+    <geom name="ut_course_hump_2" type="capsule" fromto="-36.25 23.65 0.080 -36.25 26.35 0.080" size="0.060" material="ut_yellow"/>
+    <geom name="ut_course_hump_3" type="capsule" fromto="-35.25 23.65 0.095 -35.25 26.35 0.095" size="0.075" material="ut_yellow"/>
+    <geom name="ut_course_hump_4" type="capsule" fromto="-34.25 23.65 0.080 -34.25 26.35 0.080" size="0.060" material="ut_yellow"/>
+
+    <!-- Alternating pitch creates a continuous corrugated/wave road. -->
+    <geom name="ut_course_wave_1" type="box" pos="-32.70 25 0.085" size="0.55 1.45 0.055" euler="0 -0.12 0" material="ut_concrete"/>
+    <geom name="ut_course_wave_2" type="box" pos="-31.62 25 0.085" size="0.55 1.45 0.055" euler="0 0.12 0" material="ut_concrete"/>
+    <geom name="ut_course_wave_3" type="box" pos="-30.54 25 0.105" size="0.55 1.45 0.055" euler="0 -0.18 0" material="ut_concrete"/>
+    <geom name="ut_course_wave_4" type="box" pos="-29.46 25 0.105" size="0.55 1.45 0.055" euler="0 0.18 0" material="ut_concrete"/>
+
+    <!-- Random hard bumps, embedded stones and shallow depressions. -->
+    <geom name="ut_course_rough_floor" type="box" pos="-26.5 25 -0.04" size="2.0 1.5 0.06" material="ut_rubble" friction="1.1 0.015 0.001"/>
+    <geom name="ut_course_rough_01" type="ellipsoid" pos="-28.0 24.25 0.10" size="0.28 0.20 0.10" euler="0.1 0.2 0.2" material="ut_rock"/>
+    <geom name="ut_course_rough_02" type="ellipsoid" pos="-27.55 25.25 0.14" size="0.34 0.24 0.14" euler="-0.2 0.1 -0.4" material="ut_rock"/>
+    <geom name="ut_course_rough_03" type="box" pos="-27.0 26.0 0.10" size="0.25 0.20 0.10" euler="0.12 -0.08 0.35" material="ut_rock"/>
+    <geom name="ut_course_rough_04" type="ellipsoid" pos="-26.35 24.65 0.075" size="0.22 0.18 0.075" material="ut_rock"/>
+    <geom name="ut_course_rough_05" type="box" pos="-25.75 25.65 0.13" size="0.30 0.22 0.13" euler="-0.15 0.15 -0.2" material="ut_rock"/>
+    <geom name="ut_course_rough_06" type="ellipsoid" pos="-25.0 24.0 0.16" size="0.38 0.27 0.16" euler="0.1 -0.25 0.5" material="ut_rock"/>
+    <geom name="ut_course_rough_07" type="box" pos="-24.75 25.2 0.07" size="0.20 0.30 0.07" euler="0.08 0.12 0.15" material="ut_rock"/>
+
+    <!-- Alternating cross-slope slabs: tests ankle roll and body attitude. -->
+    <geom name="ut_course_cant_1" type="box" pos="-23.6 25 0.13" size="0.7 1.48 0.07" euler="0.10 0 0" material="ut_concrete"/>
+    <geom name="ut_course_cant_2" type="box" pos="-22.2 25 0.13" size="0.7 1.48 0.07" euler="-0.10 0 0" material="ut_concrete"/>
+    <geom name="ut_course_cant_3" type="box" pos="-20.8 25 0.18" size="0.7 1.48 0.07" euler="0.16 0 0" material="ut_concrete"/>
+
+    <!-- Narrow beam and staggered side blocks. -->
+    <geom name="ut_course_balance_apron_a" type="box" pos="-19.55 25 0.07" size="0.55 1.5 0.05" material="ut_asphalt"/>
+    <geom name="ut_course_balance_beam" type="box" pos="-17.9 25 0.18" size="1.1 0.25 0.16" material="ut_wood" friction="0.9 0.01 0.001"/>
+    <geom name="ut_course_balance_apron_b" type="box" pos="-16.25 25 0.07" size="0.55 1.5 0.05" material="ut_asphalt"/>
+    <geom name="ut_course_balance_guard_l1" type="box" pos="-18.45 24.0 0.22" size="0.22 0.22 0.20" material="ut_orange"/>
+    <geom name="ut_course_balance_guard_r1" type="box" pos="-17.90 26.0 0.22" size="0.22 0.22 0.20" material="ut_orange"/>
+    <geom name="ut_course_balance_guard_l2" type="box" pos="-17.35 24.0 0.22" size="0.22 0.22 0.20" material="ut_orange"/>
+
+    <!-- Elevated plum-blossom piles. Tops vary from 12 to 32 cm. -->
+    <geom name="ut_course_pile_entry_1" type="box" pos="-15.45 25 0.08" size="0.25 1.45 0.08" material="ut_concrete"/>
+    <geom name="ut_course_pile_01" type="cylinder" pos="-14.85 25.00 0.08" size="0.24 0.08" material="ut_wood"/>
+    <geom name="ut_course_pile_02" type="cylinder" pos="-14.20 24.55 0.12" size="0.23 0.12" material="ut_wood"/>
+    <geom name="ut_course_pile_03" type="cylinder" pos="-13.55 25.35 0.16" size="0.22 0.16" material="ut_wood"/>
+    <geom name="ut_course_pile_04" type="cylinder" pos="-12.90 24.75 0.11" size="0.21 0.11" material="ut_wood"/>
+    <geom name="ut_course_pile_05" type="cylinder" pos="-12.25 25.45 0.15" size="0.22 0.15" material="ut_wood"/>
+    <geom name="ut_course_pile_06" type="cylinder" pos="-11.60 24.65 0.10" size="0.23 0.10" material="ut_wood"/>
+    <geom name="ut_course_pile_07" type="cylinder" pos="-10.95 25.15 0.14" size="0.24 0.14" material="ut_wood"/>
+    <geom name="ut_course_pile_exit" type="box" pos="-10.35 25 0.08" size="0.25 1.45 0.08" material="ut_concrete"/>
+
+    <!-- Raised trench deck. The infinite plane 30 cm below is the ditch bottom. -->
+    <geom name="ut_course_trench_ramp_up" type="box" pos="-9.10 25 0.16" size="1.10 1.5 0.06" euler="0 -0.125 0" material="ut_concrete"/>
+    <geom name="ut_course_trench_deck_a" type="box" pos="-7.15 25 0.27" size="0.85 1.5 0.05" material="ut_concrete"/>
+    <geom name="ut_course_trench_wall_a" type="box" pos="-6.25 25 0.15" size="0.05 1.5 0.15" material="ut_yellow"/>
+    <geom name="ut_course_trench_wall_b" type="box" pos="-5.65 25 0.15" size="0.05 1.5 0.15" material="ut_yellow"/>
+    <geom name="ut_course_trench_deck_b" type="box" pos="-4.75 25 0.27" size="0.85 1.5 0.05" material="ut_concrete"/>
+    <geom name="ut_course_trench_bridge" type="box" pos="-5.95 24.20 0.34" size="0.35 0.28 0.04" material="ut_metal"/>
+    <geom name="ut_course_trench_ramp_down" type="box" pos="-2.80 25 0.16" size="1.10 1.5 0.06" euler="0 0.125 0" material="ut_concrete"/>
+
+    <!-- Standard civil stairs: 15 cm rise, 28 cm tread, up and down. -->
+    <geom name="ut_course_stair_up_1" type="box" pos="-1.45 25 0.075" size="0.14 1.40 0.075" material="ut_concrete"/>
+    <geom name="ut_course_stair_up_2" type="box" pos="-1.17 25 0.150" size="0.14 1.40 0.150" material="ut_concrete"/>
+    <geom name="ut_course_stair_up_3" type="box" pos="-0.89 25 0.225" size="0.14 1.40 0.225" material="ut_concrete"/>
+    <geom name="ut_course_stair_up_4" type="box" pos="-0.61 25 0.300" size="0.14 1.40 0.300" material="ut_concrete"/>
+    <geom name="ut_course_stair_up_5" type="box" pos="-0.33 25 0.375" size="0.14 1.40 0.375" material="ut_concrete"/>
+    <geom name="ut_course_stair_platform" type="box" pos="1.0 25 0.70" size="1.18 1.40 0.05" material="ut_concrete"/>
+    <geom name="ut_course_stair_down_5" type="box" pos="2.33 25 0.375" size="0.14 1.40 0.375" material="ut_concrete"/>
+    <geom name="ut_course_stair_down_4" type="box" pos="2.61 25 0.300" size="0.14 1.40 0.300" material="ut_concrete"/>
+    <geom name="ut_course_stair_down_3" type="box" pos="2.89 25 0.225" size="0.14 1.40 0.225" material="ut_concrete"/>
+    <geom name="ut_course_stair_down_2" type="box" pos="3.17 25 0.150" size="0.14 1.40 0.150" material="ut_concrete"/>
+    <geom name="ut_course_stair_down_1" type="box" pos="3.45 25 0.075" size="0.14 1.40 0.075" material="ut_concrete"/>
+
+    <!-- Industrial 20 cm stairs and a deliberately missing middle tread. -->
+    <geom name="ut_course_industrial_entry" type="box" pos="4.15 25 -0.04" size="0.55 1.5 0.06" material="ut_metal"/>
+    <geom name="ut_course_industrial_up_1" type="box" pos="4.825 25 0.10" size="0.125 1.35 0.10" material="ut_metal"/>
+    <geom name="ut_course_industrial_up_2" type="box" pos="5.075 25 0.20" size="0.125 1.35 0.20" material="ut_metal"/>
+    <geom name="ut_course_industrial_up_3" type="box" pos="5.325 25 0.30" size="0.125 1.35 0.30" material="ut_metal"/>
+    <geom name="ut_course_industrial_up_4" type="box" pos="5.575 25 0.40" size="0.125 1.35 0.40" material="ut_metal"/>
+    <geom name="ut_course_industrial_platform" type="box" pos="6.70 25 0.75" size="1.0 1.35 0.05" material="ut_metal"/>
+    <geom name="ut_course_broken_down_4" type="box" pos="7.825 25 0.40" size="0.125 1.35 0.40" material="ut_concrete"/>
+    <geom name="ut_course_broken_down_3_l" type="box" pos="8.075 24.55 0.30" size="0.125 0.45 0.30" material="ut_concrete"/>
+    <geom name="ut_course_broken_down_3_r" type="box" pos="8.075 25.95 0.30" size="0.125 0.40 0.30" material="ut_concrete"/>
+    <!-- x=8.325 is the intentionally absent second tread. -->
+    <geom name="ut_course_broken_down_1" type="box" pos="8.575 25 0.10" size="0.125 1.35 0.10" material="ut_concrete"/>
+
+    <!-- Consecutive 20 and 30 degree ramps with a short crest. -->
+    <geom name="ut_course_ramp20" type="box" pos="10.25 25 0.37" size="1.45 1.42 0.055" euler="0 -0.349066 0" material="ut_asphalt"/>
+    <geom name="ut_course_ramp_crest" type="box" pos="11.75 25 0.66" size="0.20 1.42 0.05" material="ut_asphalt"/>
+    <geom name="ut_course_ramp30" type="box" pos="13.05 25 0.37" size="1.35 1.42 0.055" euler="0 0.523599 0" material="ut_asphalt"/>
+
+    <!-- Uneven stepping slabs: height, roll, pitch and yaw all vary. -->
+    <geom name="ut_course_slab_floor" type="box" pos="16.3 25 -0.04" size="2.0 1.5 0.06" material="ut_rubble"/>
+    <geom name="ut_course_slab_01" type="box" pos="14.75 24.45 0.10" size="0.38 0.34 0.10" euler="0.08 -0.10 0.12" material="ut_rock"/>
+    <geom name="ut_course_slab_02" type="box" pos="15.45 25.35 0.15" size="0.42 0.30 0.15" euler="-0.12 0.08 -0.18" material="ut_rock"/>
+    <geom name="ut_course_slab_03" type="box" pos="16.15 24.65 0.08" size="0.35 0.40 0.08" euler="0.15 0.06 0.25" material="ut_rock"/>
+    <geom name="ut_course_slab_04" type="box" pos="16.90 25.45 0.18" size="0.45 0.32 0.18" euler="-0.08 -0.12 -0.2" material="ut_rock"/>
+    <geom name="ut_course_slab_05" type="box" pos="17.60 24.55 0.12" size="0.36 0.36 0.12" euler="0.12 0.1 0.1" material="ut_rock"/>
+
+    <!-- Rolling-log field followed by a low crawl-over bar. -->
+    <geom name="ut_course_log_floor" type="box" pos="20.0 25 -0.04" size="1.7 1.5 0.06" material="ut_sand" friction="0.8 0.01 0.001"/>
+    <geom name="ut_course_log_1" type="capsule" fromto="18.65 23.65 0.11 18.65 26.35 0.11" size="0.11" material="ut_wood"/>
+    <geom name="ut_course_log_2" type="capsule" fromto="19.40 23.65 0.14 19.40 26.35 0.14" size="0.14" material="ut_wood"/>
+    <geom name="ut_course_log_3" type="capsule" fromto="20.25 23.65 0.09 20.25 26.35 0.09" size="0.09" material="ut_wood"/>
+    <geom name="ut_course_log_4" type="capsule" fromto="21.00 23.65 0.16 21.00 26.35 0.16" size="0.16" material="ut_wood"/>
+    <geom name="ut_course_low_bar" type="capsule" fromto="21.55 23.55 0.52 21.55 26.45 0.52" size="0.06" material="ut_metal"/>
+
+    <!-- Raised bolt grid (30 cm spacing, 2-5 cm high). -->
+    <geom name="ut_course_bolt_floor" type="box" pos="23.6 25 -0.04" size="1.4 1.5 0.06" material="ut_concrete"/>
+    <geom name="ut_course_bolt_01" type="cylinder" pos="22.55 24.4 0.045" size="0.05 0.025" material="ut_metal"/>
+    <geom name="ut_course_bolt_02" type="cylinder" pos="22.85 24.7 0.035" size="0.05 0.015" material="ut_metal"/>
+    <geom name="ut_course_bolt_03" type="cylinder" pos="23.15 25.0 0.060" size="0.05 0.040" material="ut_metal"/>
+    <geom name="ut_course_bolt_04" type="cylinder" pos="23.45 25.3 0.045" size="0.05 0.025" material="ut_metal"/>
+    <geom name="ut_course_bolt_05" type="cylinder" pos="23.75 25.6 0.070" size="0.05 0.050" material="ut_metal"/>
+    <geom name="ut_course_bolt_06" type="cylinder" pos="24.05 24.4 0.055" size="0.05 0.035" material="ut_metal"/>
+    <geom name="ut_course_bolt_07" type="cylinder" pos="24.35 24.7 0.040" size="0.05 0.020" material="ut_metal"/>
+    <geom name="ut_course_bolt_08" type="cylinder" pos="24.65 25.0 0.065" size="0.05 0.045" material="ut_metal"/>
+    <geom name="ut_course_bolt_09" type="cylinder" pos="24.95 25.3 0.050" size="0.05 0.030" material="ut_metal"/>
+
+    <!-- Stepping-stone matrix with intentionally irregular spacing. -->
+    <geom name="ut_course_stone_floor" type="box" pos="27.4 25 -0.04" size="2.2 1.5 0.06" material="ut_mud" friction="0.45 0.005 0.0005"/>
+    <geom name="ut_course_stone_01" type="ellipsoid" pos="25.6 24.5 0.10" size="0.34 0.28 0.10" material="ut_rock"/>
+    <geom name="ut_course_stone_02" type="ellipsoid" pos="26.25 25.35 0.13" size="0.30 0.25 0.13" material="ut_rock"/>
+    <geom name="ut_course_stone_03" type="ellipsoid" pos="26.95 24.75 0.16" size="0.38 0.31 0.16" material="ut_rock"/>
+    <geom name="ut_course_stone_04" type="ellipsoid" pos="27.65 25.45 0.11" size="0.31 0.27 0.11" material="ut_rock"/>
+    <geom name="ut_course_stone_05" type="ellipsoid" pos="28.35 24.55 0.18" size="0.39 0.30 0.18" material="ut_rock"/>
+    <geom name="ut_course_stone_06" type="ellipsoid" pos="29.05 25.20 0.14" size="0.33 0.29 0.14" material="ut_rock"/>
+
+    <!-- Offset blocks force an S-shaped footpath without changing road direction. -->
+    <geom name="ut_course_slalom_floor" type="box" pos="32.4 25 -0.04" size="2.5 1.5 0.06" material="ut_asphalt"/>
+    <geom name="ut_course_slalom_1" type="box" pos="30.55 24.15 0.37" size="0.22 0.65 0.35" material="ut_orange"/>
+    <geom name="ut_course_slalom_2" type="box" pos="31.45 25.85 0.37" size="0.22 0.65 0.35" material="ut_orange"/>
+    <geom name="ut_course_slalom_3" type="box" pos="32.35 24.15 0.37" size="0.22 0.65 0.35" material="ut_orange"/>
+    <geom name="ut_course_slalom_4" type="box" pos="33.25 25.85 0.37" size="0.22 0.65 0.35" material="ut_orange"/>
+    <geom name="ut_course_slalom_5" type="box" pos="34.15 24.15 0.37" size="0.22 0.65 0.35" material="ut_orange"/>
+
+    <!-- Narrowing gate, low lintel and side squeeze. -->
+    <geom name="ut_course_gate_floor" type="box" pos="36.3 25 -0.04" size="1.4 1.5 0.06" material="ut_concrete"/>
+    <geom name="ut_course_gate_left" type="box" pos="36.1 24.15 0.75" size="0.18 0.55 0.75" material="ut_metal"/>
+    <geom name="ut_course_gate_right" type="box" pos="36.1 25.85 0.75" size="0.18 0.55 0.75" material="ut_metal"/>
+    <geom name="ut_course_gate_lintel" type="box" pos="36.1 25 1.62" size="0.18 1.40 0.10" material="ut_metal"/>
+    <geom name="ut_course_squeeze_left" type="box" pos="37.3 24.50 0.45" size="0.55 0.35 0.45" euler="0 0 -0.15" material="ut_concrete"/>
+    <geom name="ut_course_squeeze_right" type="box" pos="37.3 25.50 0.45" size="0.55 0.35 0.45" euler="0 0 0.15" material="ut_concrete"/>
+
+    <!-- Alternating soft/low-friction strips and a final checkerboard. -->
+    <geom name="ut_course_surface_sand" type="box" pos="39.15 25 -0.04" size="0.65 1.5 0.06" material="ut_sand" friction="0.55 0.005 0.0005"/>
+    <geom name="ut_course_surface_mud" type="box" pos="40.45 25 -0.04" size="0.65 1.5 0.06" material="ut_mud" friction="0.25 0.003 0.0002"/>
+    <geom name="ut_course_surface_metal" type="box" pos="41.75 25 -0.04" size="0.65 1.5 0.06" material="ut_metal" friction="0.65 0.006 0.0005"/>
+    <geom name="ut_course_surface_marble" type="box" pos="43.05 25 -0.04" size="0.65 1.5 0.06" material="ut_marble" friction="0.18 0.002 0.0001"/>
+
+    <!-- Finish apron, stop wall and lane identifier markers. -->
+    <geom name="ut_course_finish" type="box" pos="46.5 25 -0.04" size="2.8 1.5 0.06" material="ut_asphalt"/>
+    <geom name="ut_course_finish_line_1" type="box" pos="44.15 24.75 0.025" size="0.20 0.25 0.005" material="ut_white" contype="0" conaffinity="0"/>
+    <geom name="ut_course_finish_line_2" type="box" pos="44.15 25.25 0.025" size="0.20 0.25 0.005" material="ut_ground" contype="0" conaffinity="0"/>
+    <geom name="ut_course_finish_line_3" type="box" pos="44.55 24.75 0.025" size="0.20 0.25 0.005" material="ut_ground" contype="0" conaffinity="0"/>
+    <geom name="ut_course_finish_line_4" type="box" pos="44.55 25.25 0.025" size="0.20 0.25 0.005" material="ut_white" contype="0" conaffinity="0"/>
+    <geom name="ut_course_stop_wall" type="box" pos="49.35 25 0.30" size="0.10 1.5 0.30" material="ut_red"/>
+    <site name="ut_course_start_site" type="cylinder" pos="-49.5 25 0.025" size="0.18 0.005" rgba="0.1 0.9 0.2 0.8"/>
+    <site name="ut_course_finish_site" type="cylinder" pos="47.5 25 0.025" size="0.18 0.005" rgba="0.9 0.1 0.05 0.8"/>
+  </worldbody>
+</mujocoinclude>

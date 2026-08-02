@@ -107,7 +107,7 @@ states:
       group: Advanced
       icon: sports_esports
       confirm: true
-      confirm_message: 进入后先保持idle站立；若启用夹爪，请先松开左右trigger并确认周围安全
+      confirm_message: 使用前务必查看官方WIKI，进入后先保持idle站立；若启用夹爪，请先松开左右trigger并确认周围安全
     params:
       require_live_reference: false
       yaw_bias_rad: 1.57079632679

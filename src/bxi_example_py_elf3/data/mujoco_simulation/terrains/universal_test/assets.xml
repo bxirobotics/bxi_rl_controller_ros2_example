@@ -1,0 +1,41 @@
+<mujocoinclude>
+  <asset>
+    <texture type="skybox" name="ut_sky" builtin="gradient" rgb1="0.28 0.42 0.58" rgb2="0.02 0.03 0.05" width="512" height="3072"/>
+    <material name="ut_ground" rgba="0.25 0.27 0.28 1" reflectance="0.03" shininess="0.05"/>
+    <material name="ut_concrete" rgba="0.46 0.47 0.46 1"/>
+    <material name="ut_crack" rgba="0.07 0.065 0.06 1"/>
+    <material name="ut_tile" rgba="0.72 0.75 0.77 1" reflectance="0.55"/>
+    <material name="ut_marble" rgba="0.84 0.86 0.82 1" reflectance="0.7"/>
+    <material name="ut_tactile" rgba="0.92 0.72 0.08 1"/>
+    <material name="ut_asphalt" rgba="0.12 0.13 0.14 1"/>
+    <material name="ut_white" rgba="0.92 0.92 0.88 1"/>
+    <material name="ut_red" rgba="0.72 0.08 0.05 1"/>
+    <material name="ut_orange" rgba="0.95 0.35 0.03 1"/>
+    <material name="ut_yellow" rgba="0.96 0.78 0.05 1"/>
+    <material name="ut_blue" rgba="0.08 0.3 0.68 1"/>
+    <material name="ut_glass" rgba="0.45 0.75 0.85 0.28" reflectance="0.6"/>
+    <material name="ut_metal" rgba="0.32 0.35 0.38 1" reflectance="0.55"/>
+    <material name="ut_wood" rgba="0.38 0.20 0.08 1"/>
+    <material name="ut_oil" rgba="0.055 0.045 0.035 0.92" reflectance="0.75"/>
+    <material name="ut_sand" rgba="0.72 0.58 0.34 1"/>
+    <material name="ut_wet_sand" rgba="0.42 0.31 0.18 1"/>
+    <material name="ut_rock" rgba="0.32 0.30 0.28 1"/>
+    <material name="ut_grass" rgba="0.16 0.36 0.12 1"/>
+    <material name="ut_mud" rgba="0.22 0.12 0.055 1"/>
+    <material name="ut_snow" rgba="0.91 0.95 0.98 1" reflectance="0.35"/>
+    <material name="ut_ice" rgba="0.58 0.78 0.9 0.72" reflectance="0.85"/>
+    <material name="ut_leaf" rgba="0.45 0.19 0.035 1"/>
+    <material name="ut_water" rgba="0.05 0.34 0.56 0.42" reflectance="0.8"/>
+    <material name="ut_ash" rgba="0.07 0.065 0.06 1"/>
+    <material name="ut_rubble" rgba="0.38 0.34 0.31 1"/>
+    <material name="ut_smoke" rgba="0.20 0.20 0.20 0.13"/>
+    <material name="ut_heat" rgba="0.85 0.08 0.015 0.45"/>
+    <material name="ut_black_absorb" rgba="0.008 0.008 0.010 1" reflectance="0" shininess="0"/>
+    <material name="ut_mirror" rgba="0.82 0.86 0.90 1" reflectance="0.95" shininess="1" specular="1"/>
+    <material name="ut_white_matte" rgba="0.96 0.96 0.95 1" reflectance="0" shininess="0"/>
+    <material name="ut_rubber" rgba="0.10 0.11 0.12 1" reflectance="0.02"/>
+    <material name="ut_carpet" rgba="0.24 0.16 0.12 1" reflectance="0"/>
+    <texture type="2d" name="ut_repetitive_checker" builtin="checker" rgb1="0.72 0.72 0.70" rgb2="0.58 0.58 0.56" width="256" height="256"/>
+    <material name="ut_repetitive" texture="ut_repetitive_checker" texuniform="true" texrepeat="12 12" reflectance="0.02"/>
+  </asset>
+</mujocoinclude>

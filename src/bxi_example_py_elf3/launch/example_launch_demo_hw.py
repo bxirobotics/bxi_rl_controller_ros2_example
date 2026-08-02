@@ -5,7 +5,8 @@ import sys
 
 from ament_index_python.packages import get_package_share_path
 from launch import LaunchDescription
-from launch.actions import OpaqueFunction
+from launch.actions import IncludeLaunchDescription, OpaqueFunction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from bxi_example_py_elf3.framework.mod_api.hardware_launch import (
     declare_hardware_launch_arguments,
@@ -93,10 +94,17 @@ def generate_launch_description():
         get_package_share_path("bxi_example_py_elf3"),
         "config/elf3_state_machine.yaml",
     )
+    cameras_launch = os.path.join(
+        get_package_share_path("bxi_depth_camera"),
+        "launch/cameras.launch.py",
+    )
 
     return LaunchDescription(
         declare_hardware_launch_arguments()
         + [
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(cameras_launch),
+            ),
             OpaqueFunction(
                 function=lambda context: [hardware_node_from_context(context)]
             ),

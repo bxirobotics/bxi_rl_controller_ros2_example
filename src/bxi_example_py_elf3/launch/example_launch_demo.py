@@ -23,7 +23,6 @@ def generate_launch_description():
                     {"simulation/model_file": xml_file},
                 ],
                 emulate_tty=True,
-                arguments=[("__log_level:=debug")],
             ),
 
             Node(
@@ -36,7 +35,6 @@ def generate_launch_description():
                     {"/state_machine_config": state_machine_config},
                 ],
                 emulate_tty=True,
-                arguments=[("__log_level:=debug")],
             ),
         ]
     )

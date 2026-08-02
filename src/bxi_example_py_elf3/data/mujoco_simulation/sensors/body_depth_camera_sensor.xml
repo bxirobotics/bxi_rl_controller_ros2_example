@@ -1,0 +1,158 @@
+<mujocoinclude>
+  <!--
+    Independent Color and Depth stream layout (11 values):
+
+      color_width color_height color_vfov_deg
+      depth_width depth_height depth_vfov_deg
+      common_fps depth_enabled depth_min_m depth_max_m preview_enabled
+
+    Enable exactly one <user> element. Color and Depth values may be combined
+    independently when both modes are supported at the selected common FPS.
+    FOV values below were calculated as 2*atan(height/(2*fy)) from the SDK
+    intrinsics measured on the connected physical cameras on 2026-08-01:
+      D435I SN 349422070502; Gemini 335 SN CP0F4630000L.
+  -->
+
+  <!-- ENABLED: Intel RealSense D435I.
+       Color 1280x720, fy=909.874146, VFOV 43.173360 deg;
+       Depth 848x480, fy=427.622711, VFOV 58.605976 deg; common 30 Hz. -->
+  <user name="body_depth_camera"
+        objtype="camera"
+        objname="body_depth_camera"
+        dim="1"
+        datatype="real"
+        needstage="pos"
+        user="1280 720 43.173360 848 480 58.605976 30 1 0.1 10.0 1"/>
+
+  <!--
+    Measured D435I Color modes (resolution: fy, VFOV deg):
+      1920x1080: 1364.811157, 43.173362
+      1280x720 :  909.874146, 43.173360
+       960x540 :  682.405579, 43.173362
+       848x480 :  606.582764, 43.173360
+       640x480 :  606.582764, 43.173360 (horizontal crop)
+       640x360 :  454.937073, 43.173360
+       424x240 :  303.291382, 43.173360
+       320x240 :  303.291382, 43.173360 (horizontal crop)
+       320x180 :  227.468536, 43.173360
+  -->
+
+  <!-- D435I alternatives. All use measured Color 1280x720 / 43.173360 deg. -->
+
+  <!-- Depth 1280x720; VFOV 58.299843 deg; FPS: 30/15/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 43.173360 1280 720 58.299843 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Depth 848x100; VFOV 13.338111 deg; FPS: 300/100.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 43.173360 848 100 13.338111 100 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Depth 640x480; VFOV 63.573418 deg; FPS: 90/60/30/15/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 43.173360 640 480 63.573418 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Depth 640x360; VFOV 58.299843 deg; FPS: 90/60/30/15/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 43.173360 640 360 58.299843 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Depth 480x270; VFOV 58.299843 deg; FPS: 90/60/30/15/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 43.173360 480 270 58.299843 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Depth 424x240; VFOV 58.605976 deg; FPS: 90/60/30/15/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 43.173360 424 240 58.605976 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Depth 256x144; cropped high-speed mode, VFOV 12.729713 deg; FPS: 300/90.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 43.173360 256 144 12.729713 90 1 0.1 10.0 1"/>
+  -->
+
+  <!--
+    Measured Gemini 335 Color modes (resolution: fy, VFOV deg):
+      1920x1080: 1037.877441, 54.975257
+      1280x720 :  691.918335, 54.975254
+       960x540 :  518.938721, 54.975257
+       848x480 :  461.278870, 54.975256
+       640x480 :  461.278870, 54.975256 (horizontal crop)
+       640x360 :  345.959167, 54.975254
+       424x240 :  230.639435, 54.975256
+       320x240 :  230.639435, 54.975256 (horizontal crop)
+       320x180 :  172.979584, 54.975254
+
+    The presets below use Color 1280x720 / 54.975254 deg.
+  -->
+
+  <!-- Color 1280x720 / 54.975254 deg; Depth 1280x800 / 65.376824 deg; FPS: 30/15/10/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 54.975254 1280 800 65.376824 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Color 1280x720 / 54.975254 deg; Depth 1280x720 / 60.015679 deg; FPS: 30/15/10/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 54.975254 1280 720 60.015679 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Color 1280x720 / 54.975254 deg; Depth 848x480 / 60.327310 deg; FPS: 60/30/15/10/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 54.975254 848 480 60.327310 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Color 1280x720 / 54.975254 deg; Depth 640x480 / 65.376823 deg; FPS: 90/60/30/15/10/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 54.975254 640 480 65.376823 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Color 1280x720 / 54.975254 deg; Depth 640x400 / 65.115953 deg; FPS: 30/15/10/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 54.975254 640 400 65.115953 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Color 1280x720 / 54.975254 deg; Depth 640x360 / 59.767172 deg; FPS: 90/60/30/15/10/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 54.975254 640 360 59.767172 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Color 1280x720 / 54.975254 deg; Depth 480x270 / 59.767171 deg; FPS: 90/60/30/15/10/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 54.975254 480 270 59.767171 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Color 1280x720 / 54.975254 deg; Depth 424x266 / 65.246513 deg; FPS: 30/15/10/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 54.975254 424 266 65.246513 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Color 1280x720 / 54.975254 deg; Depth 424x240 / 60.078021 deg; FPS: 90/60/30/15/10/6.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 54.975254 424 240 60.078021 30 1 0.1 10.0 1"/>
+  -->
+
+  <!-- Color 1280x720 / 54.975254 deg; Depth 848x100 / 13.901096 deg; FPS: 100.
+  <user name="body_depth_camera" objtype="camera" objname="body_depth_camera" dim="1"
+        datatype="real" needstage="pos"
+        user="1280 720 54.975254 848 100 13.901096 100 1 0.1 10.0 1"/>
+  -->
+</mujocoinclude>

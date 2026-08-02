@@ -19,3 +19,4 @@ MUJOCO_LOG.TXT
 !.github/
 src/http_motion_bridge/
 rosbag2_*/
+*.build.lock
