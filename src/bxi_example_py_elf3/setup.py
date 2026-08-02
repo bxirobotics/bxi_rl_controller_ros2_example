@@ -151,7 +151,10 @@ def get_launch_files():
 
     # 遍历源目录下的所有文件和子目录
     for root, dirs, files in os.walk(source_dir):
+        dirs[:] = [directory for directory in dirs if directory != "__pycache__"]
         for file in files:
+            if file.endswith((".pyc", ".pyo")):
+                continue
             file_path = os.path.join(root, file)
             # 计算相对于源目录的相对路径，以保持子目录结构
             relative_path = os.path.relpath(root, source_dir)
@@ -243,6 +246,7 @@ setup(
     maintainer_email="popsay@163.com",
     description="TODO: Package description",
     license="TODO: License declaration",
+    tests_require=["pytest"],
     cmdclass=command_classes,
     entry_points={
         "console_scripts": [

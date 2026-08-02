@@ -1,0 +1,14 @@
+<mujocoinclude>
+  <!-- The robot models include only this file; the terrain stays modular here. -->
+  <include file="assets.xml"/>
+  <include file="base.xml"/>
+  <include file="urban.xml"/>
+  <include file="industrial.xml"/>
+  <include file="outdoor.xml"/>
+  <include file="rescue.xml"/>
+  <include file="straight_obstacle_course.xml"/>
+  <include file="endurance_routes.xml"/>
+  <include file="building_negative.xml"/>
+  <include file="combined_clearance.xml"/>
+  <include file="indoor_perception.xml"/>
+</mujocoinclude>

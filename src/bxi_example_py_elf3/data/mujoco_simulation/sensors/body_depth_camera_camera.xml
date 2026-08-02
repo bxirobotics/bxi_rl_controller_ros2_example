@@ -1,0 +1,19 @@
+<mujocoinclude>
+  <!--
+    Shared physical pose for the simulated Color and Depth imagers.
+
+    Stream resolution and vertical FOV are configured independently by the
+    matching 11-value user sensor in body_depth_camera_sensor.xml. The camera fovy is
+    retained only as a sensible fallback if this model is used with a legacy
+    seven-value simulation package.
+
+    Do not put ROS CameraInfo cx/cy in principalpixel: MuJoCo interprets that
+    attribute as an offset from the image centre, not an absolute pixel.
+  -->
+  <!-- Original mounting attitude, followed by -90 deg about camera-local Z. -->
+  <camera name="body_depth_camera"
+          pos="0.1152 0.0175 -0.1358"
+          quat="0.6963642386 0.1227878136 -0.1227878136 -0.6963642386"
+          mode="fixed"
+          fovy="58.605976"/>
+</mujocoinclude>

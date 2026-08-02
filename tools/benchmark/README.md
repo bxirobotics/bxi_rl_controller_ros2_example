@@ -22,9 +22,12 @@ For every backend after the first successful reference backend, the terminal and
 JSON report include maximum and mean absolute error, RMSE, relative L2 error and
 cosine similarity. Models with multiple comparable outputs additionally report
 those metrics per output. `match` still uses `--rtol` and `--atol`; the numerical
-metrics remain visible when that strict boolean check fails. The default test
-input is deterministic random data, so use representative policy inputs when
-making a final deployment-accuracy decision.
+metrics remain visible when that strict boolean check fails. The default
+floating-point input is deterministic uniform data in `[-1, 1]`. Each model
+derives its seed from the base `--seed` and repository-relative model path, so
+selecting one model or changing discovery order does not change its input. This
+remains a numerical smoke test; use representative policy inputs when making a
+final deployment-accuracy decision.
 
 Useful variants:
 
@@ -42,9 +45,23 @@ python3 tools/benchmark/backend_benchmark.py --warmup 500 --iterations 10000
 # Override an unresolved dynamic input dimension
 python3 tools/benchmark/backend_benchmark.py --shape images=1,3,224,224
 
+# Override bounded generation ranges for named floating-point inputs
+python3 tools/benchmark/backend_benchmark.py path/to/model.onnx \
+  --input-range obs_history=-1,1 \
+  --input-range depth_data=-0.5,0.5
+
+# Compare one model with an exact, named set of representative inputs
+python3 tools/benchmark/backend_benchmark.py path/to/model.onnx \
+  --input-npz /path/to/model-inputs.npz
+
 # Explicit report filename
 python3 tools/benchmark/backend_benchmark.py --json results/my-platform.json
 ```
+
+`--input-npz` requires exactly one model. Its array names, shapes and dtypes
+must exactly match the ONNX inputs, and all numeric values must be finite. The
+JSON report records the effective per-model seed and observed input minima and
+maxima so precision reports can be reproduced.
 
 RKNN conversion remains opt-in. Converted models are stored in the ignored
 benchmark cache instead of beside source assets. An unquantized conversion can

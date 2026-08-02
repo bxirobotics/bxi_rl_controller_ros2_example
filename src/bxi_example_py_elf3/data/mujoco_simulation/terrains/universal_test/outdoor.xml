@@ -1,0 +1,88 @@
+<mujocoinclude>
+  <worldbody>
+    <!-- OUTDOOR, west side: features occupy a 16 x 16 m district. -->
+
+    <!-- Dry and wet sand; MuJoCo rigid contacts approximate, but do not deform, granular soil. -->
+    <geom name="ut_outdoor_dry_sand" type="box" pos="-18.3 -6.2 -0.035" size="1.5 1.3 0.04" material="ut_sand" friction="0.72 0.025 0.004" solref="0.03 1"/>
+    <geom name="ut_outdoor_wet_sand" type="box" pos="-14.9 -6.2 -0.045" size="1.5 1.3 0.05" material="ut_wet_sand" friction="0.52 0.035 0.006" solref="0.045 1"/>
+
+    <!-- Small and large gravel fields. -->
+    <geom name="ut_outdoor_small_gravel_base" type="box" pos="-11.5 -6.2 -0.035" size="1.6 1.3 0.04" material="ut_rock" friction="0.8 0.02 0.003"/>
+    <geom name="ut_outdoor_small_gravel_01" type="ellipsoid" pos="-12.3 -6.7 0.035" size="0.06 0.045 0.035" euler="0.2 0.3 0.1" material="ut_rock"/>
+    <geom name="ut_outdoor_small_gravel_02" type="ellipsoid" pos="-11.9 -6.1 0.045" size="0.08 0.05 0.045" euler="0.1 -0.2 0.5" material="ut_rock"/>
+    <geom name="ut_outdoor_small_gravel_03" type="ellipsoid" pos="-11.4 -6.8 0.04" size="0.07 0.06 0.04" material="ut_rock"/>
+    <geom name="ut_outdoor_small_gravel_04" type="ellipsoid" pos="-10.8 -5.8 0.05" size="0.09 0.055 0.05" material="ut_rock"/>
+    <geom name="ut_outdoor_small_gravel_05" type="ellipsoid" pos="-10.5 -6.6 0.035" size="0.06 0.05 0.035" material="ut_rock"/>
+    <geom name="ut_outdoor_large_gravel_01" type="ellipsoid" pos="-18.4 -3.8 0.11" size="0.22 0.15 0.11" euler="0.25 0.4 0.2" material="ut_rock"/>
+    <geom name="ut_outdoor_large_gravel_02" type="ellipsoid" pos="-17.8 -3.2 0.15" size="0.26 0.18 0.15" euler="-0.2 0.3 0.7" material="ut_rock"/>
+    <geom name="ut_outdoor_large_gravel_03" type="ellipsoid" pos="-18.8 -2.7 0.13" size="0.20 0.24 0.13" euler="0.4 -0.2 0.1" material="ut_rock"/>
+
+    <!-- Angular rough-rock field. -->
+    <geom name="ut_outdoor_rough_rock_01" type="box" pos="-15.9 -3.7 0.12" size="0.32 0.23 0.12" euler="0.15 0.25 0.4" material="ut_rock"/>
+    <geom name="ut_outdoor_rough_rock_02" type="box" pos="-15.2 -3.2 0.18" size="0.30 0.34 0.18" euler="-0.18 0.32 -0.3" material="ut_rock"/>
+    <geom name="ut_outdoor_rough_rock_03" type="box" pos="-14.6 -3.8 0.10" size="0.40 0.20 0.10" euler="0.3 -0.15 0.7" material="ut_rock"/>
+    <geom name="ut_outdoor_rough_rock_04" type="box" pos="-14.1 -2.9 0.20" size="0.25 0.30 0.20" euler="0.2 0.4 -0.4" material="ut_rock"/>
+
+    <!-- Short grass, long grass, and a wet slippery grass incline. -->
+    <geom name="ut_outdoor_short_grass" type="box" pos="-11.4 -3.5 -0.030" size="1.6 1.2 0.035" material="ut_grass" friction="0.75 0.02 0.003"/>
+    <geom name="ut_outdoor_short_grass_blade_1" type="capsule" fromto="-12.2 -3.7 0 -12.2 -3.7 0.08" size="0.012" material="ut_grass" contype="0" conaffinity="0"/>
+    <geom name="ut_outdoor_short_grass_blade_2" type="capsule" fromto="-11.5 -3.3 0 -11.5 -3.3 0.09" size="0.012" material="ut_grass" contype="0" conaffinity="0"/>
+    <geom name="ut_outdoor_long_grass" type="box" pos="-18.3 -0.7 -0.030" size="1.5 1.1 0.035" material="ut_grass" friction="0.68 0.025 0.004"/>
+    <geom name="ut_outdoor_long_grass_blade_1" type="capsule" fromto="-18.8 -1 0 -18.7 -1 0.35" size="0.018" material="ut_grass" contype="0" conaffinity="0"/>
+    <geom name="ut_outdoor_long_grass_blade_2" type="capsule" fromto="-18.1 -0.5 0 -18.2 -0.5 0.42" size="0.018" material="ut_grass" contype="0" conaffinity="0"/>
+    <geom name="ut_outdoor_long_grass_blade_3" type="capsule" fromto="-17.5 -1.1 0 -17.45 -1.1 0.30" size="0.018" material="ut_grass" contype="0" conaffinity="0"/>
+    <geom name="ut_outdoor_wet_grass_slope" type="box" pos="-15.0 -0.7 0.37" size="1.2 1.0 0.06" quat="0.984808 0 0.173648 0" material="ut_grass" friction="0.20 0.004 0.0003"/>
+
+    <!-- Continuous 20/30/45 degree rigid slope tests. -->
+    <geom name="ut_outdoor_slope_20deg" type="box" pos="-11.7 -1.3 0.49" size="1.2 0.55 0.07" quat="0.984808 0 0.173648 0" material="ut_concrete" friction="0.95 0.01 0.001"/>
+    <geom name="ut_outdoor_slope_30deg" type="box" pos="-11.7 0.2 0.68" size="1.2 0.55 0.07" quat="0.965926 0 0.258819 0" material="ut_concrete" friction="0.95 0.01 0.001"/>
+    <geom name="ut_outdoor_slope_45deg" type="box" pos="-11.7 1.7 0.93" size="1.2 0.55 0.07" quat="0.923880 0 0.382683 0" material="ut_concrete" friction="1.05 0.01 0.001"/>
+
+    <!-- Mud, snow and ice. Thicknesses are physical collision thickness. -->
+    <geom name="ut_outdoor_mud_after_rain" type="box" pos="-18.2 2.0 -0.055" size="1.5 1.1 0.06" material="ut_mud" friction="0.28 0.04 0.008" solref="0.06 1"/>
+    <geom name="ut_outdoor_thin_snow_03cm" type="box" pos="-15.1 1.7 0.015" size="1.3 0.8 0.015" material="ut_snow" friction="0.32 0.008 0.001"/>
+    <geom name="ut_outdoor_thick_snow_15cm" type="box" pos="-15.1 3.5 0.075" size="1.3 0.8 0.075" material="ut_snow" friction="0.36 0.015 0.003" solref="0.04 1"/>
+    <geom name="ut_outdoor_ice_sheet" type="box" pos="-11.5 3.8 -0.015" size="1.5 1.0 0.02" material="ut_ice" friction="0.025 0.001 0.00005" condim="3"/>
+
+    <!-- 5/10/20 cm leaf layers hiding small blocks below. -->
+    <geom name="ut_outdoor_hidden_under_leaves_1" type="box" pos="-18.8 5.3 0.05" size="0.28 0.22 0.05" material="ut_rock"/>
+    <geom name="ut_outdoor_hidden_under_leaves_2" type="box" pos="-17.7 6.0 0.08" size="0.35 0.25 0.08" euler="0.1 0.2 0.3" material="ut_rock"/>
+    <geom name="ut_outdoor_leaf_layer_05cm" type="box" pos="-18.6 5.3 0.025" size="0.45 0.45 0.025" material="ut_leaf" friction="0.48 0.02 0.004"/>
+    <geom name="ut_outdoor_leaf_layer_10cm" type="box" pos="-17.5 5.3 0.05" size="0.45 0.45 0.05" material="ut_leaf" friction="0.45 0.025 0.005"/>
+    <geom name="ut_outdoor_leaf_layer_20cm" type="box" pos="-16.4 5.3 0.10" size="0.45 0.45 0.10" material="ut_leaf" friction="0.42 0.03 0.006"/>
+
+    <!-- Tangled exposed roots. -->
+    <geom name="ut_outdoor_root_1" type="capsule" fromto="-15.3 6.2 0.05 -13.5 5.7 0.12" size="0.09" material="ut_wood"/>
+    <geom name="ut_outdoor_root_2" type="capsule" fromto="-15.0 5.5 0.06 -13.6 6.5 0.16" size="0.07" material="ut_wood"/>
+    <geom name="ut_outdoor_root_3" type="capsule" fromto="-14.6 6.7 0.05 -13.2 5.9 0.10" size="0.06" material="ut_wood"/>
+
+    <!-- Shallow stream: three depth markers (5/10/15 cm) over collidable pebbles. -->
+    <geom name="ut_outdoor_stream_bank_l" type="box" pos="-10.4 5.8 0.20" size="0.35 1.5 0.10" material="ut_rock"/>
+    <geom name="ut_outdoor_stream_bank_r" type="box" pos="-8.6 5.8 0.20" size="0.35 1.5 0.10" material="ut_rock"/>
+    <geom name="ut_outdoor_stream_bed" type="box" pos="-9.5 5.8 0.03" size="0.55 1.5 0.03" material="ut_wet_sand" friction="0.5 0.02 0.003"/>
+    <geom name="ut_outdoor_stream_water" type="box" pos="-9.5 5.8 0.125" size="0.55 1.5 0.075" material="ut_water" contype="0" conaffinity="0"/>
+    <geom name="ut_outdoor_stream_pebble_1" type="ellipsoid" pos="-9.7 5.2 0.09" size="0.12 0.08 0.06" material="ut_rock"/>
+    <geom name="ut_outdoor_stream_pebble_2" type="ellipsoid" pos="-9.3 5.8 0.10" size="0.15 0.10 0.07" material="ut_rock"/>
+    <geom name="ut_outdoor_stream_pebble_3" type="ellipsoid" pos="-9.6 6.5 0.08" size="0.10 0.08 0.05" material="ut_rock"/>
+    <site name="ut_outdoor_stream_depth_05cm" pos="-9.5 4.7 0.15" size="0.03" rgba="0 0.8 1 1"/>
+    <site name="ut_outdoor_stream_depth_10cm" pos="-9.5 5.8 0.10" size="0.03" rgba="0 0.6 1 1"/>
+    <site name="ut_outdoor_stream_depth_15cm" pos="-9.5 6.9 0.05" size="0.03" rgba="0 0.4 1 1"/>
+
+    <!-- Soft humus approximation; rigid MuJoCo does not model sinkage. -->
+    <geom name="ut_outdoor_soft_humus" type="box" pos="-18.2 7.1 -0.075" size="1.4 0.65 0.08" material="ut_mud" friction="0.5 0.05 0.012" solref="0.09 1"/>
+
+    <!-- Loose-rock slope; two rocks have free joints and may roll. -->
+    <geom name="ut_outdoor_gravel_slope" type="box" pos="-12.5 7.0 0.72" size="1.4 0.65 0.08" quat="0.953717 0 0.300706 0" material="ut_rock" friction="0.45 0.015 0.003"/>
+    <body name="ut_outdoor_rolling_rock_1" pos="-12.8 7.0 1.1"><freejoint/><geom type="ellipsoid" size="0.16 0.12 0.13" material="ut_rock" density="900"/></body>
+    <body name="ut_outdoor_rolling_rock_2" pos="-12.1 7.2 1.25"><freejoint/><geom type="ellipsoid" size="0.20 0.14 0.16" material="ut_rock" density="900"/></body>
+
+    <!-- Real 50 cm-wide, 30 cm-deep ditch: no collision surface spans the opening. -->
+    <geom name="ut_outdoor_ditch_side_l" type="box" pos="-16.1375 7.0 0.26" size="0.6625 0.55 0.04" material="ut_grass"/>
+    <geom name="ut_outdoor_ditch_side_r" type="box" pos="-14.4875 7.0 0.26" size="0.4875 0.55 0.04" material="ut_grass"/>
+    <geom name="ut_outdoor_ditch_bottom" type="box" pos="-15.225 7.0 -0.035" size="0.25 0.55 0.04" material="ut_mud"/>
+
+    <!-- Fallen logs, 20 and 40 cm diameter. -->
+    <geom name="ut_outdoor_fallen_log_20cm" type="cylinder" pos="-10.3 -3.4 0.10" size="0.10 0.9" quat="0.707107 0.707107 0 0" material="ut_wood"/>
+    <geom name="ut_outdoor_fallen_log_40cm" type="cylinder" pos="-9.2 -1.2 0.20" size="0.20 1.0" quat="0.707107 0.707107 0 0" material="ut_wood"/>
+  </worldbody>
+</mujocoinclude>
