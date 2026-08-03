@@ -335,7 +335,13 @@ outputs:
             - released: trigger.left_event
             - released: trigger.right_event
           - [keyboard.normal_event]
-
+    - output: btn_1=2
+      when:
+        - button.b_event
+        - released: shoulder.left_event
+        - released: shoulder.right_event
+        - released: trigger.left_event
+        - released: trigger.right_event
     - output: btn_2=1
       when:
         - shoulder.right_event

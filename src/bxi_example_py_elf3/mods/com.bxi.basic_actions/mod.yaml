@@ -11,13 +11,18 @@ conflicts: []
 python_exports: []
 runtime_requirements:
   python: []
-  ros: []
+  ros:
+    - package: rclpy
+    - package: geometry_msgs
   system: []
 
 events:
   normal:
     slot: btn_1
     value: 1
+  navigation_control:
+    slot: btn_1
+    value: 2
   zero_torque:
     slot: btn_2
     value: 1
@@ -266,6 +271,11 @@ routes:
     transition: soft_switch
 
 actions:
+  - from: normal
+    event: navigation_control
+    action: toggle_navigation_control
+    manifest:
+      label: 切换手动/导航控制
   - from: dance
     event: toggle_pause
     action: toggle_pause
