@@ -275,7 +275,7 @@ actions:
     event: navigation_control
     action: toggle_navigation_control
     manifest:
-      label: 切换手动/导航控制
+      label: 切换手动 / 话题/cmd_vel控制
   - from: dance
     event: toggle_pause
     action: toggle_pause
