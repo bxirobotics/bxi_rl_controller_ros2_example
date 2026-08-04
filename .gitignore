@@ -20,3 +20,4 @@ MUJOCO_LOG.TXT
 rosbag2_*/
 *.build.lock
 src/livox_ros_driver2/
+!.agents/

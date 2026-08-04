@@ -513,6 +513,407 @@ outputs:
             - released: trigger.left_event
             - released: trigger.right_event
 
+    # 预留组合：四个辅助键 LB/RB/LT/RT 的全部状态 × A/B/X/Y。
+    # 已有映射保持 btn_1..btn_9 和 btn_10=1..10 不变；缺失组合使用 btn_10=11..54。
+    # 约定：LB=shoulder.left，RB=shoulder.right，LT=trigger.left，RT=trigger.right。
+
+    # A
+    - output: btn_10=11
+      when:
+        - button.a_event
+        - released: shoulder.left_event
+        - released: shoulder.right_event
+        - released: trigger.left_event
+        - released: trigger.right_event
+
+    # Y
+    - output: btn_10=12
+      when:
+        - button.y_event
+        - released: shoulder.left_event
+        - released: shoulder.right_event
+        - released: trigger.left_event
+        - released: trigger.right_event
+
+    # LB+RB+A
+    - output: btn_10=13
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - button.a_event
+        - released: trigger.left_event
+        - released: trigger.right_event
+
+    # LB+RB+B
+    - output: btn_10=14
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - button.b_event
+        - released: trigger.left_event
+        - released: trigger.right_event
+
+    # LB+LT+A
+    - output: btn_10=15
+      when:
+        - shoulder.left_event
+        - trigger.left_event
+        - button.a_event
+        - released: shoulder.right_event
+        - released: trigger.right_event
+
+    # LB+LT+B
+    - output: btn_10=16
+      when:
+        - shoulder.left_event
+        - trigger.left_event
+        - button.b_event
+        - released: shoulder.right_event
+        - released: trigger.right_event
+
+    # LB+LT+X
+    - output: btn_10=17
+      when:
+        - shoulder.left_event
+        - trigger.left_event
+        - button.x_event
+        - released: shoulder.right_event
+        - released: trigger.right_event
+
+    # LB+LT+Y
+    - output: btn_10=18
+      when:
+        - shoulder.left_event
+        - trigger.left_event
+        - button.y_event
+        - released: shoulder.right_event
+        - released: trigger.right_event
+
+    # LB+RT+A
+    - output: btn_10=19
+      when:
+        - shoulder.left_event
+        - trigger.right_event
+        - button.a_event
+        - released: shoulder.right_event
+        - released: trigger.left_event
+
+    # LB+RT+B
+    - output: btn_10=20
+      when:
+        - shoulder.left_event
+        - trigger.right_event
+        - button.b_event
+        - released: shoulder.right_event
+        - released: trigger.left_event
+
+    # LB+RT+X
+    - output: btn_10=21
+      when:
+        - shoulder.left_event
+        - trigger.right_event
+        - button.x_event
+        - released: shoulder.right_event
+        - released: trigger.left_event
+
+    # LB+RT+Y
+    - output: btn_10=22
+      when:
+        - shoulder.left_event
+        - trigger.right_event
+        - button.y_event
+        - released: shoulder.right_event
+        - released: trigger.left_event
+
+    # RB+LT+A
+    - output: btn_10=23
+      when:
+        - shoulder.right_event
+        - trigger.left_event
+        - button.a_event
+        - released: shoulder.left_event
+        - released: trigger.right_event
+
+    # RB+LT+B
+    - output: btn_10=24
+      when:
+        - shoulder.right_event
+        - trigger.left_event
+        - button.b_event
+        - released: shoulder.left_event
+        - released: trigger.right_event
+
+    # RB+LT+X
+    - output: btn_10=25
+      when:
+        - shoulder.right_event
+        - trigger.left_event
+        - button.x_event
+        - released: shoulder.left_event
+        - released: trigger.right_event
+
+    # RB+LT+Y
+    - output: btn_10=26
+      when:
+        - shoulder.right_event
+        - trigger.left_event
+        - button.y_event
+        - released: shoulder.left_event
+        - released: trigger.right_event
+
+    # RB+RT+A
+    - output: btn_10=27
+      when:
+        - shoulder.right_event
+        - trigger.right_event
+        - button.a_event
+        - released: shoulder.left_event
+        - released: trigger.left_event
+
+    # RB+RT+B
+    - output: btn_10=28
+      when:
+        - shoulder.right_event
+        - trigger.right_event
+        - button.b_event
+        - released: shoulder.left_event
+        - released: trigger.left_event
+
+    # RB+RT+X
+    - output: btn_10=29
+      when:
+        - shoulder.right_event
+        - trigger.right_event
+        - button.x_event
+        - released: shoulder.left_event
+        - released: trigger.left_event
+
+    # RB+RT+Y
+    - output: btn_10=30
+      when:
+        - shoulder.right_event
+        - trigger.right_event
+        - button.y_event
+        - released: shoulder.left_event
+        - released: trigger.left_event
+
+    # LT+RT+A
+    - output: btn_10=31
+      when:
+        - trigger.left_event
+        - trigger.right_event
+        - button.a_event
+        - released: shoulder.left_event
+        - released: shoulder.right_event
+
+    # LT+RT+B
+    - output: btn_10=32
+      when:
+        - trigger.left_event
+        - trigger.right_event
+        - button.b_event
+        - released: shoulder.left_event
+        - released: shoulder.right_event
+
+    # LT+RT+X
+    - output: btn_10=33
+      when:
+        - trigger.left_event
+        - trigger.right_event
+        - button.x_event
+        - released: shoulder.left_event
+        - released: shoulder.right_event
+
+    # LT+RT+Y
+    - output: btn_10=34
+      when:
+        - trigger.left_event
+        - trigger.right_event
+        - button.y_event
+        - released: shoulder.left_event
+        - released: shoulder.right_event
+
+    # LB+RB+LT+A
+    - output: btn_10=35
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - trigger.left_event
+        - button.a_event
+        - released: trigger.right_event
+
+    # LB+RB+LT+B
+    - output: btn_10=36
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - trigger.left_event
+        - button.b_event
+        - released: trigger.right_event
+
+    # LB+RB+LT+X
+    - output: btn_10=37
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - trigger.left_event
+        - button.x_event
+        - released: trigger.right_event
+
+    # LB+RB+LT+Y
+    - output: btn_10=38
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - trigger.left_event
+        - button.y_event
+        - released: trigger.right_event
+
+    # LB+RB+RT+A
+    - output: btn_10=39
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - trigger.right_event
+        - button.a_event
+        - released: trigger.left_event
+
+    # LB+RB+RT+B
+    - output: btn_10=40
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - trigger.right_event
+        - button.b_event
+        - released: trigger.left_event
+
+    # LB+RB+RT+X
+    - output: btn_10=41
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - trigger.right_event
+        - button.x_event
+        - released: trigger.left_event
+
+    # LB+RB+RT+Y
+    - output: btn_10=42
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - trigger.right_event
+        - button.y_event
+        - released: trigger.left_event
+
+    # LB+LT+RT+A
+    - output: btn_10=43
+      when:
+        - shoulder.left_event
+        - trigger.left_event
+        - trigger.right_event
+        - button.a_event
+        - released: shoulder.right_event
+
+    # LB+LT+RT+B
+    - output: btn_10=44
+      when:
+        - shoulder.left_event
+        - trigger.left_event
+        - trigger.right_event
+        - button.b_event
+        - released: shoulder.right_event
+
+    # LB+LT+RT+X
+    - output: btn_10=45
+      when:
+        - shoulder.left_event
+        - trigger.left_event
+        - trigger.right_event
+        - button.x_event
+        - released: shoulder.right_event
+
+    # LB+LT+RT+Y
+    - output: btn_10=46
+      when:
+        - shoulder.left_event
+        - trigger.left_event
+        - trigger.right_event
+        - button.y_event
+        - released: shoulder.right_event
+
+    # RB+LT+RT+A
+    - output: btn_10=47
+      when:
+        - shoulder.right_event
+        - trigger.left_event
+        - trigger.right_event
+        - button.a_event
+        - released: shoulder.left_event
+
+    # RB+LT+RT+B
+    - output: btn_10=48
+      when:
+        - shoulder.right_event
+        - trigger.left_event
+        - trigger.right_event
+        - button.b_event
+        - released: shoulder.left_event
+
+    # RB+LT+RT+X
+    - output: btn_10=49
+      when:
+        - shoulder.right_event
+        - trigger.left_event
+        - trigger.right_event
+        - button.x_event
+        - released: shoulder.left_event
+
+    # RB+LT+RT+Y
+    - output: btn_10=50
+      when:
+        - shoulder.right_event
+        - trigger.left_event
+        - trigger.right_event
+        - button.y_event
+        - released: shoulder.left_event
+
+    # LB+RB+LT+RT+A
+    - output: btn_10=51
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - trigger.left_event
+        - trigger.right_event
+        - button.a_event
+
+    # LB+RB+LT+RT+B
+    - output: btn_10=52
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - trigger.left_event
+        - trigger.right_event
+        - button.b_event
+
+    # LB+RB+LT+RT+X
+    - output: btn_10=53
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - trigger.left_event
+        - trigger.right_event
+        - button.x_event
+
+    # LB+RB+LT+RT+Y
+    - output: btn_10=54
+      when:
+        - shoulder.left_event
+        - shoulder.right_event
+        - trigger.left_event
+        - trigger.right_event
+        - button.y_event
+
+
 #自定义命令
 system:
   start:

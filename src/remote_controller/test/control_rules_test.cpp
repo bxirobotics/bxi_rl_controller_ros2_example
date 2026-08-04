@@ -260,6 +260,78 @@ void test_three_button_chord_excludes_two_button_x_chords()
     }
 }
 
+void test_all_auxiliary_and_face_button_combinations_are_reserved()
+{
+    struct ExpectedOutput
+    {
+        int slot;
+        int value;
+    };
+
+    // Rows use the LB/RB/LT/RT bit mask; columns use A/B/X/Y.
+    const ExpectedOutput expected[16][4] = {
+        {{10, 11}, {1, 2}, {9, 1}, {10, 12}},
+        {{6, 1}, {7, 1}, {5, 1}, {8, 1}},
+        {{2, 1}, {3, 1}, {1, 1}, {4, 1}},
+        {{10, 13}, {10, 14}, {10, 9}, {10, 10}},
+        {{10, 3}, {10, 4}, {10, 1}, {10, 2}},
+        {{10, 15}, {10, 16}, {10, 17}, {10, 18}},
+        {{10, 23}, {10, 24}, {10, 25}, {10, 26}},
+        {{10, 35}, {10, 36}, {10, 37}, {10, 38}},
+        {{10, 6}, {10, 5}, {10, 7}, {10, 8}},
+        {{10, 19}, {10, 20}, {10, 21}, {10, 22}},
+        {{10, 27}, {10, 28}, {10, 29}, {10, 30}},
+        {{10, 39}, {10, 40}, {10, 41}, {10, 42}},
+        {{10, 31}, {10, 32}, {10, 33}, {10, 34}},
+        {{10, 43}, {10, 44}, {10, 45}, {10, 46}},
+        {{10, 47}, {10, 48}, {10, 49}, {10, 50}},
+        {{10, 51}, {10, 52}, {10, 53}, {10, 54}},
+    };
+    const char *face_sources[4] = {
+        "js.button.0",
+        "js.button.1",
+        "js.button.3",
+        "js.button.4",
+    };
+
+    const RemoteConfig config = remote_controller::load_remote_config(
+        REMOTE_CONTROLLER_TEST_CONFIG_PATH);
+    for (int auxiliary_mask = 0; auxiliary_mask < 16; ++auxiliary_mask) {
+        for (int face = 0; face < 4; ++face) {
+            InputMapper mapper(config);
+            mapper.set_signals({
+                {"js.button.6", (auxiliary_mask & 1) != 0 ? 1.0 : 0.0},
+                {"js.button.7", (auxiliary_mask & 2) != 0 ? 1.0 : 0.0},
+                {"js.axis.5", (auxiliary_mask & 4) != 0 ? 1.0 : 0.0},
+                {"js.axis.4", (auxiliary_mask & 8) != 0 ? 1.0 : 0.0},
+                {face_sources[face], 1.0},
+            });
+
+            communication::msg::MotionCommands message;
+            mapper.fill_message(message);
+            const int actual[10] = {
+                message.btn_1,
+                message.btn_2,
+                message.btn_3,
+                message.btn_4,
+                message.btn_5,
+                message.btn_6,
+                message.btn_7,
+                message.btn_8,
+                message.btn_9,
+                message.btn_10,
+            };
+            for (int slot = 1; slot <= 10; ++slot) {
+                const int expected_value =
+                    slot == expected[auxiliary_mask][face].slot
+                    ? expected[auxiliary_mask][face].value
+                    : 0;
+                expect(actual[slot - 1] == expected_value);
+            }
+        }
+    }
+}
+
 }  // namespace
 
 int main()
@@ -269,5 +341,6 @@ int main()
     test_bool_all_keeps_inactive_raw_inputs_in_the_selected_group();
     test_debug_reports_changed_rule_selection();
     test_three_button_chord_excludes_two_button_x_chords();
+    test_all_auxiliary_and_face_button_combinations_are_reserved();
     return 0;
 }
