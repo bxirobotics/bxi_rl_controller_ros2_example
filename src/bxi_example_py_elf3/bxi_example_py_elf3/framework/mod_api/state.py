@@ -195,15 +195,18 @@ class RobotControlState(StateBehavior[RobotControlContext], ABC):
         kd: object,
         *,
         layout: JointLayout | None = None,
+        vel: object | None = None,
+        torque: object | None = None,
     ) -> MotorFrame:
         layout = ctx.robot_layout if layout is None else layout
         frame = self._motor_frame_buffer
-        if frame is None or (
-            frame.layout is not layout and frame.layout != layout
+        if (
+            frame is None
+            or (frame.layout is not layout and frame.layout != layout)
         ):
             frame = MotorFrame.empty(layout)
-            self._motor_frame_buffer = frame 
-        return frame.update(qpos, kp, kd)
+            self._motor_frame_buffer = frame
+        return frame.update(qpos, kp, kd, vel=vel, torque=torque)
 
     def _motor_frame_from_target(
         self,
@@ -211,8 +214,9 @@ class RobotControlState(StateBehavior[RobotControlContext], ABC):
         target: JointTargetView,
     ) -> MotorFrame:
         frame = self._motor_frame_buffer
-        if frame is None or (
-            frame.layout is not target.layout and frame.layout != target.layout
+        if (
+            frame is None
+            or (frame.layout is not target.layout and frame.layout != target.layout)
         ):
             frame = MotorFrame.empty(target.layout)
             self._motor_frame_buffer = frame

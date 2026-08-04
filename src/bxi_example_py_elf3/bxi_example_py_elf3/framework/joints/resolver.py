@@ -21,6 +21,8 @@ class CommandFrame(Protocol):
     qpos: Float32Array
     kp: Float32Array
     kd: Float32Array
+    vel: Float32Array
+    torque: Float32Array
 
 
 class CompiledCommandBinding:
@@ -107,6 +109,8 @@ class CompiledCommandBinding:
                 (source.kd, output.kd),
             ):
                 np.copyto(output_values, source_values)
+            np.copyto(output.vel, source.vel)
+            np.copyto(output.torque, source.torque)
             return
 
         for source_values, output_values, missing_values in (
@@ -125,6 +129,25 @@ class CompiledCommandBinding:
                 )
                 selected_values = self._selection_buffer
             output_values[self._selected_robot_indices] = selected_values
+        self._resolve_mit_field(source.vel, output.vel)
+        self._resolve_mit_field(source.torque, output.torque)
+
+    def _resolve_mit_field(
+        self,
+        source_values: Float32Array,
+        output_values: Float32Array,
+    ) -> None:
+        output_values.fill(0.0)
+        if self._selection_buffer is None:
+            selected_values = source_values
+        else:
+            np.take(
+                source_values,
+                self._selected_source_indices,
+                out=self._selection_buffer,
+            )
+            selected_values = self._selection_buffer
+        output_values[self._selected_robot_indices] = selected_values
 
     @staticmethod
     def _readonly_indices(values: tuple[int, ...]) -> NDArray[np.intp]:

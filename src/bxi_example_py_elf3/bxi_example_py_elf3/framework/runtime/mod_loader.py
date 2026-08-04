@@ -35,6 +35,9 @@ from bxi_example_py_elf3.framework.platform.cpu_affinity import (
     read_cpu_affinity,
 )
 from bxi_example_py_elf3.framework.runtime.mod_nodes import EnvironmentEdit, ModNodeSpec
+from bxi_example_py_elf3.framework.runtime.mod_placeholders import (
+    expand_mod_placeholders,
+)
 from bxi_example_py_elf3.framework.runtime.resource_manager import ResourceManager
 from bxi_example_py_elf3.framework.runtime.runtime_requirements import (
     RuntimeRequirementReport,
@@ -1985,6 +1988,7 @@ def _read_mod_id_list(
 def _yaml_mapping(path: Path) -> Mapping[str, object]:
     with path.open("r", encoding="utf-8") as input_file:
         value: object = yaml.safe_load(input_file) or {}
+    value = expand_mod_placeholders(value, context=str(path))
     return _mapping(value, str(path))
 
 

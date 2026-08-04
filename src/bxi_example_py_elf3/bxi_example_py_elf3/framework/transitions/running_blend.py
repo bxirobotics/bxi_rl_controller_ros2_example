@@ -103,11 +103,13 @@ class RunningBlendTransition(SingleClassTransition):
         natural_entry = require_entry_frame_provider(to_state).get_entry_frame(ctx)
         self._to_entry = MotorFrame.empty(ctx.robot_layout)
         ctx.resolve_motor_frame(natural_entry, self._to_entry)
-        self._last_frame = MotorFrame.create(
-            ctx.robot_layout,
+        self._last_frame = MotorFrame.empty(ctx.robot_layout)
+        self._last_frame.update(
             ctx.last_motor_frame.qpos,
             ctx.last_motor_frame.kp,
             ctx.last_motor_frame.kd,
+            vel=ctx.last_motor_frame.vel,
+            torque=ctx.last_motor_frame.torque,
         )
         self._from_frame = MotorFrame.empty(ctx.robot_layout)
         self._to_frame = MotorFrame.empty(ctx.robot_layout)
@@ -157,6 +159,8 @@ class RunningBlendTransition(SingleClassTransition):
             (from_frame.qpos, to_frame.qpos, output_frame.qpos),
             (from_frame.kp, to_frame.kp, output_frame.kp),
             (from_frame.kd, to_frame.kd, output_frame.kd),
+            (from_frame.vel, to_frame.vel, output_frame.vel),
+            (from_frame.torque, to_frame.torque, output_frame.torque),
         ):
             np.subtract(target, source, out=output)
             output *= alpha

@@ -92,6 +92,8 @@ class EntryGainRampTransition(SingleClassTransition):
         if frame is None:
             raise RuntimeError("entry gain ramp transition has no output frame")
         np.copyto(frame.qpos, target.qpos)
+        np.copyto(frame.vel, target.vel)
+        np.copyto(frame.torque, target.torque)
         for start, end, output in (
             (kp_start, target.kp, frame.kp),
             (kd_start, target.kd, frame.kd),
