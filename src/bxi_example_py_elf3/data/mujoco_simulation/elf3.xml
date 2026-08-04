@@ -261,6 +261,7 @@
           <geom rgba="0.752941 0.752941 0.752941 1" mesh="head_y_link"/>
           <geom name="head_collision" class="collision" size="0.065" fromto="-0.01 0 0.0005 0.02 0 0.0005" condim="1"/>
           <include file="sensors/head_depth_camera_camera.xml"/>
+          <include file="sensors/head_lidar_mount.xml"/>
         </body>
       </body>
     </body>
@@ -347,6 +348,8 @@
     <include file="sensors/body_depth_camera_sensor.xml"/>
     <include file="sensors/head_depth_camera_sensor.xml"/>
   </sensor>
+
+  <include file="sensors/head_lidar.xml"/>
 
   <include file="terrains/universal_test/universal_test_terrain.xml"/>
 </mujoco>
