@@ -18,7 +18,8 @@ using namespace std;
 #define JS_VELR_AXIS 6
 #define JS_VELR_AXIS_DIR -1
 
-#define JS_START_BT 11
+#define JS_STOP_BT 11
+#define JS_START_BT 14
 #define JS_SWITCH_A 0
 #define JS_SWITCH_B 1
 #define JS_SWITCH_X 3
@@ -47,11 +48,28 @@ static void run_shell_command(const char *command)
 
 static void stop_robot_processes()
 {
-    // Stopping the hardware driver makes the ROS launch file shut down the
-    // controller and this remote cleanly. Signalling all three processes here
-    // as well would deliver duplicate SIGINTs during launch teardown.
     run_shell_command(
-        "killall -SIGINT hardware_elf3 bxi_example_hw 2>/dev/null");
+        "killall -SIGINT hardware_elf3 bxi_example_hw "
+        "bxi_example_py_elf3 bxi_example_py_elf3_demo "
+        "bxi_example_py_elf3_vibration "
+        "bxi_example_py_elf3_suspended_tests "
+        "bxi_bms bxi_example_bms 2>/dev/null");
+    run_shell_command("sleep 1");
+}
+
+static void launch_suspended_tests_hw()
+{
+    run_shell_command("mkdir -p /var/log/bxi_log");
+    run_shell_command(
+        "ros2 launch bxi_example_py_elf3 "
+        "example_launch_suspended_tests_hw.launch.py "
+        "start_remote_controller:=false "
+        "> /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log "
+        "2>&1 &");
+    run_shell_command(
+        "ros2 launch bxi_example_bms bms.launch.py "
+        "> /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log "
+        "2>&1 &");
 }
 
 class COMPublisher : public rclcpp::Node{
@@ -115,6 +133,7 @@ private:
 
     bool LB_press = false;              // 长按改变状态，弹起恢复                   (pressed for change state, release for recover)
     bool RB_press = false;              // 长按改变状态，弹起恢复
+    bool launch_lock = false;           // 防止多次启动程序
     // 按下RB的变量
     bool normal_mode = false;           // 按下改变状态，切换为普通模式，站立走路跑步   (change to normal state,for stand run and walk)
     bool zero_torque_mode = false;      // 按下改变状态，切换为零力模式               (change to zero torque mode)
@@ -215,11 +234,25 @@ private:
 
     void handle_button_press(int button)
     {
-        if (button == JS_START_BT){
+        if (button == JS_STOP_BT){
             printf("EMERGENCY STOP: terminating robot programs\n");
             fflush(stdout);
             stop_robot_processes();
+            launch_lock = false;
             reset_value();
+        }
+        else if (button == JS_START_BT){
+            if (!launch_lock){
+                printf("START: launching suspended tests hardware program\n");
+                fflush(stdout);
+                stop_robot_processes();
+                launch_suspended_tests_hw();
+                reset_value();
+                launch_lock = true;
+            }
+            else{
+                printf("\nprograme already exist! stop launch!!\n\n");
+            }
         }
         else if (button == JS_SWITCH_X){
             const std::lock_guard<std::mutex> guard(lock_);

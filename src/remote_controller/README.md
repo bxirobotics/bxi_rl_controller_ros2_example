@@ -11,6 +11,8 @@
 - 单独按 X：翻转 `MotionCommands.btn_9`，用于跑步轨迹启动/停止；
 - 单独按 Y：翻转 `MotionCommands.btn_10`，用于振动预检、振动启动/停止；
 - 单独按 A：翻转 `MotionCommands.btn_7`，依次测试手臂、躯干和腿部关节；
-- 固定编号为 A=0、B=1、X=3、Y=4；旧 LB/RB 组合功能已禁用；
-- Start（`jstest` 按钮 11）是软件急停入口：先停止硬件驱动，再由 launch 统一
-  关闭控制器和手柄节点，避免重复 SIGINT；不会启动 demo、BMS 或其他控制程序。
+- 固定编号为 A=0、B=1、X=3、Y=4；
+- Stop（`jstest` 按钮 11）是软件急停入口：停止硬件和当前控制程序；
+- Start（`jstest` 按钮 14）先停止旧程序，然后后台启动
+  `example_launch_suspended_tests_hw.launch.py start_remote_controller:=false`
+  和 `bxi_example_bms bms.launch.py`，日志写入 `/var/log/bxi_log/`。

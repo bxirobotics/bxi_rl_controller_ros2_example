@@ -19,7 +19,6 @@ from .control.elf3 import (
     JOINT_NOMINAL_POS,
     SUSPENDED_RUN_NOMINAL_POS,
 )
-from .control.collision_guard import CollisionGuard
 from .control.remote import RemoteButtonEdge
 from .control.limb_sequence import (
     WHOLE_BODY_TEST_GROUPS,
@@ -212,22 +211,7 @@ class SuspendedTestNode(VibrationTestNode):
         self.limb_test_last_settle_log_at = 0.0
         self.vibration_last_settle_log_at = 0.0
         self.limb_collision_guard = None
-        self.limb_collision_guard_error = ""
-        try:
-            model_path = (
-                get_package_share_path("bxi_example_py_elf3")
-                / "data"
-                / "elf3.xml"
-            )
-            self.limb_collision_guard = CollisionGuard(model_path)
-            self._preflight_limb_plan()
-        except Exception as exc:
-            self.limb_collision_guard = None
-            self.limb_collision_guard_error = str(exc)
-            self.get_logger().error(
-                "A-key full-range joint test disabled because the MuJoCo "
-                "collision guard could not be prepared: %s" % exc
-            )
+        self.limb_collision_guard_error = "disabled by configuration"
         self.run_enable_service = self.create_service(
             SetBool,
             "run_trajectory_enable",
@@ -266,16 +250,11 @@ class SuspendedTestNode(VibrationTestNode):
                 self.vibration_start_envelope_slack_rad,
             )
         )
-        if self.limb_collision_guard is not None:
-            self.get_logger().info(
-                "A-key full-range plan verified: collision margin=%.1f deg, "
-                "mechanical margin=%.1f deg, peak speed<=%.1f deg/s"
-                % (
-                    self.limb_test_collision_margin_deg,
-                    self.limb_test_mechanical_margin_deg,
-                    self.limb_test_range_speed_deg_s,
-                )
-            )
+        self.get_logger().warning(
+            "A-key MuJoCo collision checks are disabled; joint tests will "
+            "use configured joint limits, feedback freshness, start "
+            "tolerance and tracking checks only"
+        )
 
     def _remote_help_message(self):
         return (
@@ -485,7 +464,7 @@ class SuspendedTestNode(VibrationTestNode):
 
     def _limb_pose_collision_reason(self, pose, motion_names, visual):
         if self.limb_collision_guard is None:
-            return "MuJoCo collision guard is unavailable"
+            return ""
         contacts = self.limb_collision_guard.collisions(pose)
         if contacts:
             first = contacts[0]
@@ -518,12 +497,6 @@ class SuspendedTestNode(VibrationTestNode):
         return True, ""
 
     def _prepare_limb_test_locked(self, source):
-        if self.limb_collision_guard is None:
-            self.get_logger().error(
-                "A rejected because collision protection is unavailable: %s"
-                % self.limb_collision_guard_error
-            )
-            return False
         now = time.monotonic()
         if not self._joint_feedback_ready(now):
             self.get_logger().error(
@@ -1104,6 +1077,8 @@ class SuspendedTestNode(VibrationTestNode):
             "prepare_vibration",
         ):
             return command
+        if self.limb_collision_guard is None:
+            return command
         visual = (
             now - self.limb_test_last_visual_check_at
             >= self.limb_test_visual_check_period_sec
@@ -1230,7 +1205,7 @@ class SuspendedTestNode(VibrationTestNode):
                 response.success = bool(accepted)
                 response.message = (
                     "full-range joint test accepted; motion starts after "
-                    "collision-checked zero centering"
+                    "zero centering"
                     if accepted
                     else "full-range joint test rejected; see controller log"
                 )

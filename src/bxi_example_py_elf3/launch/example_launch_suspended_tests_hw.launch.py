@@ -25,4 +25,5 @@ def generate_launch_description():
         controller_name_default="bxi_example_py_elf3_suspended_tests",
         joint_test_required_default="false",
         allow_hardware_without_joint_test_default="true",
+        start_remote_controller_default="false",
     )

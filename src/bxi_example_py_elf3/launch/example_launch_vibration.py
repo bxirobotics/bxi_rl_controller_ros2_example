@@ -22,6 +22,7 @@ def generate_launch_description(
     controller_name_default="bxi_example_py_elf3_vibration",
     joint_test_required_default="true",
     allow_hardware_without_joint_test_default="false",
+    start_remote_controller_default="true",
 ):
     workspace_config = Path(
         "src/bxi_example_py_elf3/config/suspended_tests.yaml"
@@ -249,7 +250,7 @@ def generate_launch_description(
             ),
             DeclareLaunchArgument(
                 "start_remote_controller",
-                default_value="true",
+                default_value=start_remote_controller_default,
                 description=(
                     "Start the C++ gamepad publisher. Set false when an "
                     "external remote_controller is already running"

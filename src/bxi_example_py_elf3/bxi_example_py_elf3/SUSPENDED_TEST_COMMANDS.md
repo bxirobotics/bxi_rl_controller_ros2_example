@@ -40,10 +40,11 @@ ros2 launch bxi_example_py_elf3 \
 程序启动后只完成初始化并保持姿态，不会自动开始测试。等待初始化完成后，通过
 手柄 X/Y/A 选择测试；模型碰撞检查无法看到吊具、线缆和机器人周边物体。
 
-两个 launch 默认启动手柄节点。如果系统已经有独立的 `remote_controller`，添加：
+组合测试 launch 默认不启动手柄节点，由独立运行的 `remote_controller` 发布
+`/motion_commands`。如果调试时需要让 launch 顺带启动手柄节点，添加：
 
 ```text
-start_remote_controller:=false
+start_remote_controller:=true
 ```
 
 ## A 键参数配置
