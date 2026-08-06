@@ -107,7 +107,9 @@ states:
       group: Advanced
       icon: sports_esports
       confirm: true
-      confirm_message: 使用前务必查看官方WIKI，进入后先保持idle站立；若启用夹爪，请先松开左右trigger并确认周围安全
+      confirm_message: >-
+        使用前务必查看官方WIKI，进入后先保持idle站立；若启用夹爪，请先松开左右trigger并确认周围安全；
+        当前IP：${bxi.system.ip}
     params:
       require_live_reference: false
       yaw_bias_rad: 1.57079632679
@@ -115,13 +117,12 @@ states:
       idle_frame_start: 3509
       source_blend_seconds: 0.4
       hardware_gripper: true
-      gripper_input_timeout_s: 0.2
-      gripper_release_threshold: 0.05
+      gripper_enable_interval_s: 1.0
       gripper_left_bus: 5
       gripper_right_bus: 6
       gripper_can_id: 1
-      gripper_kp: 20.0
-      gripper_kd: 1.0
+      gripper_kp: 10.0
+      gripper_kd: 0.5
 
 routes:
   - from: com.bxi.basic_actions/normal

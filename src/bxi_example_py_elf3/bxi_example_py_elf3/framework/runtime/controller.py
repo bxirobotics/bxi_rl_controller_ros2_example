@@ -234,7 +234,13 @@ class RobotControlFramework:
 
         frame = self._motor_target
         if frame is not None:
-            self.last_motor_frame.update(frame.qpos, frame.kp, frame.kd)
+            self.last_motor_frame.update(
+                frame.qpos,
+                frame.kp,
+                frame.kd,
+                vel=frame.vel,
+                torque=frame.torque,
+            )
         self.loop_count += 1
         return frame
 
@@ -481,6 +487,8 @@ class RobotControlFramework:
         self._last_motor_frame.qpos[:] = joints.position
         self._last_motor_frame.kp.fill(0.0)
         self._last_motor_frame.kd.fill(0.0)
+        self._last_motor_frame.vel.fill(0.0)
+        self._last_motor_frame.torque.fill(0.0)
         self._inference_frame = InferenceFrame(
             joints=joints,
             quat_wxyz=self.current_quat_wxyz,

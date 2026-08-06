@@ -1,0 +1,57 @@
+<mujocoinclude>
+  <!--
+    Explicit MID-360 profile based on Livox's published specifications.
+    CUSTOM prevents built-in model defaults from overriding these values;
+    MID360 selects only the non-repeating scan trajectory.
+
+    The sensor name produces:
+      /simulation/head_lidar/points
+      /simulation/head_lidar/imu
+  -->
+  <sensor>
+    <user name="head_lidar"
+          objtype="site"
+          objname="head_lidar_mount"
+          dim="1"
+          datatype="real"
+          needstage="pos"/>
+  </sensor>
+
+  <custom>
+    <text name="simulation.lidar.head_lidar.model" data="MID360"/>
+    <text name="simulation.lidar.head_lidar.pattern" data="MID360"/>
+    <text name="simulation.lidar.head_lidar.frame_id"
+          data="head_lidar_frame"/>
+    <!-- Official blind-zone boundary is 0.1 m. Detection range under
+         100 klx is 40 m at 10% reflectivity and 70 m at 80% reflectivity. -->
+    <numeric name="simulation.lidar.head_lidar.range" data="0.1 70"/>
+
+    <!-- Official first-return point rate and typical frame rate. -->
+    <numeric name="simulation.lidar.head_lidar.rate" data="20000 10"/>
+
+    <!-- Official FOV: 360 degrees horizontal, -7 to 52 degrees vertical. -->
+    <numeric name="simulation.lidar.head_lidar.fov"
+             data="-180 180 -7 52"/>
+
+    <!-- Four emitters are used by the MID360 trajectory approximation. -->
+    <numeric name="simulation.lidar.head_lidar.channels" data="4"/>
+
+    <!-- Official precision limits at 10 m (1 sigma): range <= 0.02 m and
+         angle < 0.15 degrees. No unsupported dropout or latency is added. -->
+    <numeric name="simulation.lidar.head_lidar.noise"
+             data="0.02 0.15 0 0 0 1"/>
+
+    <!-- Use body exclusion only; no geom-group filter. -->
+     <numeric name="simulation.lidar.front.geomgroup" data="1 1 1 1 1 1"/>
+    <text name="simulation.lidar.head_lidar.exclude_body" data="head_y_link"/>
+
+    <!-- Official ICM40609 output rate is 200 Hz. Livox does not publish a
+         directly equivalent per-sample sigma for this simulation field. -->
+    <numeric name="simulation.lidar.head_lidar.imu"
+             data="1 200 0 0 0 0 1"/>
+
+    <!-- Preview enabled, maximum points and point radius in metres. -->
+    <numeric name="simulation.lidar.head_lidar.preview"
+             data="1 2000 0.012"/>
+  </custom>
+</mujocoinclude>

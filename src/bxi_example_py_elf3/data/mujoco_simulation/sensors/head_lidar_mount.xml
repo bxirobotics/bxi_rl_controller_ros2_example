@@ -1,0 +1,26 @@
+<mujocoinclude>
+  <!--
+    Livox MID360 pose from resources/elf3_dof31/urdf/elf3.urdf:
+      parent=head_y_link
+      xyz=0 0 -0.081
+      rpy=pi 0 0
+
+    MuJoCo quaternions use WXYZ order. The site frame is the physical LiDAR
+    frame and therefore follows the head yaw and pitch joints.
+  -->
+  <site name="head_lidar_mount"
+        pos="0 0 -0.081"
+        quat="0 1 0 0"
+        size="0.025"
+        rgba="0.1 0.8 1 0.8"/>
+
+  <!-- High-visibility marker centred at the LiDAR origin. -->
+  <!-- <geom name="head_lidar_marker"
+        type="sphere"
+        pos="0 0 -0.081"
+        size="0.025"
+        rgba="1 0 1 1"
+        mass="0"
+        contype="0"
+        conaffinity="0"/> -->
+</mujocoinclude>

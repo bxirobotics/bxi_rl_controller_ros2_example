@@ -37,13 +37,9 @@ def _build_state(
         idle_frame_start=state.int_param("idle_frame_start", 3509),
         source_blend_seconds=state.float_param("source_blend_seconds", 0.4),
         hardware_gripper=state.bool_param("hardware_gripper", False),
-        gripper_input_timeout_s=state.float_param(
-            "gripper_input_timeout_s",
-            0.2,
-        ),
-        gripper_release_threshold=state.float_param(
-            "gripper_release_threshold",
-            0.05,
+        gripper_enable_interval_s=state.float_param(
+            "gripper_enable_interval_s",
+            1.0,
         ),
         gripper_left_bus=state.int_param("gripper_left_bus", 5),
         gripper_right_bus=state.int_param("gripper_right_bus", 6),

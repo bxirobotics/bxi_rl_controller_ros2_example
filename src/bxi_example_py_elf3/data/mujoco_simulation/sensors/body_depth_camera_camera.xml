@@ -11,9 +11,17 @@
     attribute as an offset from the image centre, not an absolute pixel.
   -->
   <!-- Original mounting attitude, followed by -90 deg about camera-local Z. -->
+  <!-- 旧位置 -->
   <camera name="body_depth_camera"
           pos="0.1152 0.0175 -0.1358"
           quat="0.6963642386 0.1227878136 -0.1227878136 -0.6963642386"
           mode="fixed"
           fovy="58.605976"/>
+
+  <!-- 新位置 -->
+  <!-- <camera name="body_depth_camera"
+          pos="0.08599 0.0175 -0.20651"
+          quat="0.6903455271 0.1530459187 -0.1530459187 -0.6903455271"
+          mode="fixed"
+          fovy="58.605976"/> -->
 </mujocoinclude>
