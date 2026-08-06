@@ -14,6 +14,7 @@ tools/**/cache/
 bxi_hw_release/
 src/bxi_example_py_elf3/test/*
 !src/bxi_example_py_elf3/test/test_pico_gmr_motion.py
+!src/bxi_example_py_elf3/test/test_sonic_gripper.py
 __pycache__/
 MUJOCO_LOG.TXT
 .*/
