@@ -60,7 +60,7 @@ CONFIG_PARAMETER_DEFAULTS = {
 
 MANAGER_PARAMETER_DEFAULTS = {
     "serial_no": "",
-    "single_camera_name": "body_depth_camera",
+    "single_camera_name": "head_depth_camera",
     "discovery_interval_sec": 1.0,
     "retry_interval_sec": 2.0,
 }

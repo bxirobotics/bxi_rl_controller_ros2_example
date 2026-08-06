@@ -34,10 +34,10 @@ def test_topic_token_does_not_rewrite_serials():
 
 
 def test_logical_camera_name_matches_simulation_name():
-    assert camera_name_token("body_depth_camera") == "body_depth_camera"
-    assert camera_base_topic("hardware", "body_depth_camera") == "/hardware/body_depth_camera"
+    assert camera_name_token("head_depth_camera") == "head_depth_camera"
+    assert camera_base_topic("hardware", "head_depth_camera") == "/hardware/head_depth_camera"
     with pytest.raises(ValueError, match="logical camera name"):
-        camera_name_token("1_body_depth_camera")
+        camera_name_token("1_head_depth_camera")
 
 
 def test_orbbec_depth_is_converted_to_millimeters():
