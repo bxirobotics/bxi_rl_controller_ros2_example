@@ -14,7 +14,14 @@ import pytest
 import yaml
 
 from bxi_example_py_elf3.framework.inference import InferenceFrame, PolicyOutput
-from bxi_example_py_elf3.framework.joints import JointStateBuffer, JointTargetBuffer
+from bxi_example_py_elf3.framework.joints import (
+    JointCommandDefaults,
+    JointCommandResolver,
+    JointLayout,
+    JointStateBuffer,
+    JointTargetBuffer,
+)
+from bxi_example_py_elf3.framework.mod_api import MotorFrame
 from bxi_example_py_elf3.policies.joints import ELF3_ISAAC_JOINTS
 
 
@@ -28,6 +35,7 @@ if _PACKAGE_NAME not in sys.modules:
 
 protocol = importlib.import_module(f"{_PACKAGE_NAME}.protocol")
 reference = importlib.import_module(f"{_PACKAGE_NAME}.reference")
+head_tracking = importlib.import_module(f"{_PACKAGE_NAME}.head_tracking")
 rgmt_policy = importlib.import_module(f"{_PACKAGE_NAME}.rgmt_policy")
 state_module = importlib.import_module(f"{_PACKAGE_NAME}.state")
 tracking_gate = importlib.import_module(f"{_PACKAGE_NAME}.tracking_gate")
@@ -46,6 +54,7 @@ def _frame(session: int, sequence: int):
         sequence=sequence,
         source_timestamp_ns=sequence * 20_000_000,
         joint_pos=np.arange(29, dtype=np.float32) + sequence,
+        head_joint_pos=np.asarray((0.1, -0.2), dtype=np.float32),
         anchor_quat_wxyz=np.asarray((1.0, 0.0, 0.0, 0.0), dtype=np.float32),
         anchor_lin_vel_w=np.asarray((1.0, 2.0, 3.0), dtype=np.float32),
         anchor_ang_vel_w=np.asarray((4.0, 5.0, 6.0), dtype=np.float32),
@@ -58,12 +67,14 @@ def _bounded_frame(
     joint_pos: np.ndarray,
     *,
     source_period_s: float = 0.01,
+    head_joint_pos: object = (0.0, 0.0),
 ):
     return protocol.LiveReferenceFrame(
         session_id=session,
         sequence=sequence,
         source_timestamp_ns=int(sequence * source_period_s * 1.0e9),
         joint_pos=np.asarray(joint_pos, dtype=np.float32),
+        head_joint_pos=np.asarray(head_joint_pos, dtype=np.float32),
         anchor_quat_wxyz=np.asarray((1.0, 0.0, 0.0, 0.0), dtype=np.float32),
         anchor_lin_vel_w=np.asarray((0.5, 0.0, 0.0), dtype=np.float32),
         anchor_ang_vel_w=np.asarray((0.0, 0.0, 0.5), dtype=np.float32),
@@ -95,6 +106,8 @@ def test_mod_is_standalone_and_owns_both_rgmt_models():
     assert streamer["scheduling"]["cpu_affinity"] == "background"
     state_params = manifest["states"]["pico_gmr_motion"]["params"]
     assert "startup_timeout_s" not in state_params
+    assert state_params["head_pitch_limit_rad"] == pytest.approx(0.5)
+    assert state_params["head_yaw_limit_rad"] == pytest.approx(1.0)
     assert "actions" not in manifest
     assert (MOD_ROOT / "assets" / "rgmt.onnx").stat().st_size > 1_000_000
     assert (MOD_ROOT / "assets" / "rgmt.rknn").stat().st_size > 1_000_000
@@ -265,11 +278,12 @@ def test_state_uses_rgmt_standing_fallback_until_live_window_exists():
     )
     state.on_prepare(context, object())
     preview = state.sample_running_frame(context, 0.02, advance=False)
-    assert preview.qpos.shape == (29,)
+    assert preview.qpos.shape == (31,)
     assert state._reference_source is None
     assert policy.yaw_resets == 0
     state.on_update(context, 0.02)
-    assert motor_targets[-1].qpos.shape == (29,)
+    assert motor_targets[-1].qpos.shape == (31,)
+    np.testing.assert_allclose(motor_targets[-1].qpos[-2:], 0.0)
     assert len(policy.calls) == 2
     assert policy.calls[-1]["reference_joint_pos_window"].shape == (21, 29)
     assert receiver.max_age_s == pytest.approx(0.4)
@@ -279,7 +293,12 @@ def test_state_uses_rgmt_standing_fallback_until_live_window_exists():
     live_buffer = reference.ReferenceWindowBuffer()
     for sequence in range(21):
         assert live_buffer.accept(
-            _bounded_frame(9, sequence, np.zeros(29)),
+            _bounded_frame(
+                9,
+                sequence,
+                np.zeros(29),
+                head_joint_pos=(0.4, -0.6),
+            ),
             1.0 + sequence * 0.02,
         )
     receiver.value = live_buffer.snapshot_window()
@@ -291,6 +310,16 @@ def test_state_uses_rgmt_standing_fallback_until_live_window_exists():
         0.0,
     )
     assert policy.yaw_resets == 2
+    np.testing.assert_allclose(motor_targets[-1].qpos[-2:], (0.03, -0.04))
+
+    before_preview = state._head_command.position.copy()
+    preview = state.sample_running_frame(context, 0.02, advance=False)
+    np.testing.assert_array_equal(state._head_command.position, before_preview)
+    np.testing.assert_allclose(preview.qpos[-2:], before_preview)
+
+    receiver.value = None
+    state.on_update(context, 0.02)
+    np.testing.assert_allclose(motor_targets[-1].qpos[-2:], 0.0, atol=1.0e-7)
 
 
 def test_private_rgmt_policy_runs_live_window_without_advancing_preview():
@@ -347,12 +376,46 @@ def test_reference_protocol_round_trip_and_layout_guard():
     assert decoded.session_id == 11
     assert decoded.sequence == 7
     np.testing.assert_allclose(decoded.joint_pos, np.arange(29) + 7)
+    np.testing.assert_allclose(decoded.head_joint_pos, (0.1, -0.2))
     assert len(protocol.REFERENCE_JOINT_NAMES) == 29
+    assert protocol.HEAD_JOINT_NAMES == ("head_y_joint", "head_z_joint")
+    assert protocol.VERSION == 2
 
     damaged = bytearray(packet)
     damaged[8] ^= 0x01
     with pytest.raises(ValueError, match="layout"):
         protocol.decode_reference_frame(bytes(damaged))
+
+    invalid = _frame(11, 8)
+    object.__setattr__(invalid, "head_joint_pos", np.zeros(3, dtype=np.float32))
+    with pytest.raises(ValueError, match="head_joint_pos"):
+        protocol.encode_reference_frame(invalid)
+    object.__setattr__(invalid, "head_joint_pos", np.asarray((np.nan, 0.0)))
+    with pytest.raises(ValueError, match="NaN"):
+        protocol.encode_reference_frame(invalid)
+
+
+def test_31_joint_head_output_resolves_by_name_on_29_and_reordered_31_robots():
+    source_layout = state_module.PICO_GMR_OUTPUT_JOINTS
+    source = MotorFrame.create(
+        source_layout,
+        np.arange(source_layout.dof_num, dtype=np.float32),
+        np.ones(source_layout.dof_num, dtype=np.float32),
+        np.full(source_layout.dof_num, 2.0, dtype=np.float32),
+    )
+
+    resolver_29 = JointCommandResolver(ELF3_ISAAC_JOINTS, JointCommandDefaults())
+    output_29 = MotorFrame.empty(ELF3_ISAAC_JOINTS)
+    with pytest.warns(RuntimeWarning, match="head_y_joint"):
+        resolver_29.resolve_into(source, output_29)
+    np.testing.assert_array_equal(output_29.qpos, np.arange(29, dtype=np.float32))
+
+    reordered = JointLayout(tuple(reversed(source_layout.names)), label="reordered ELF3")
+    resolver_31 = JointCommandResolver(reordered, JointCommandDefaults())
+    output_31 = MotorFrame.empty(reordered)
+    resolver_31.resolve_into(source, output_31)
+    for robot_index, name in enumerate(reordered.names):
+        assert output_31.qpos[robot_index] == pytest.approx(source_layout.index(name))
 
 
 def test_reference_window_uses_unique_sequences_and_resets_sessions():
@@ -369,6 +432,7 @@ def test_reference_window_uses_unique_sequences_and_resets_sessions():
     assert window is not None
     assert window.latest_sequence == 20
     assert window.joint_pos.shape == (21, 29)
+    assert window.head_joint_pos.shape == (21, 2)
     assert window.joint_pos[10, first_joint] == pytest.approx(0.10)
     assert window.joint_pos[9, first_joint] == pytest.approx(0.09)
     assert window.joint_pos[0, first_joint] == pytest.approx(0.0)
@@ -396,6 +460,55 @@ def test_reference_window_uses_unique_sequences_and_resets_sessions():
         new_window.joint_pos,
         np.repeat(new_session_joints[None, :], 21, axis=0),
     )
+
+
+def _axis_quaternion(axis: int, angle: float) -> np.ndarray:
+    result = np.zeros(4, dtype=np.float64)
+    result[0] = np.cos(angle * 0.5)
+    result[axis + 1] = np.sin(angle * 0.5)
+    return result
+
+
+def test_pico_head_mapper_matches_mocaplab_axes_and_recenters_each_session():
+    mapper = head_tracking.PicoHeadMapper(pitch_limit_rad=0.5, yaw_limit_rad=1.0)
+    identity = np.asarray((1.0, 0.0, 0.0, 0.0))
+
+    np.testing.assert_allclose(mapper.update(identity, identity), 0.0)
+    np.testing.assert_allclose(
+        mapper.update(identity, _axis_quaternion(0, 0.25)),
+        (-0.25, 0.0),
+        atol=1.0e-6,
+    )
+    np.testing.assert_allclose(
+        mapper.update(identity, _axis_quaternion(1, 0.4)),
+        (0.0, 0.4),
+        atol=1.0e-6,
+    )
+
+    np.testing.assert_allclose(
+        mapper.update(identity, _axis_quaternion(0, 0.8)),
+        (-0.5, 0.0),
+        atol=1.0e-6,
+    )
+    mapper.reset()
+    np.testing.assert_allclose(
+        mapper.update(identity, _axis_quaternion(0, 0.3)),
+        0.0,
+        atol=1.0e-6,
+    )
+
+
+def test_recorded_pico_frame_centers_without_head_mount_offset():
+    payload = json.loads(
+        (MOD_ROOT / "tmp" / "pico_gmr_real.json").read_text(encoding="utf-8")
+    )
+    human = payload["human_data"]
+    mapper = head_tracking.PicoHeadMapper()
+    result = mapper.update(
+        human["Spine3"]["quaternion_wxyz"],
+        human["Head"]["quaternion_wxyz"],
+    )
+    np.testing.assert_allclose(result, 0.0, atol=1.0e-7)
 
 
 def test_reference_window_waits_for_all_21_unique_frames():
