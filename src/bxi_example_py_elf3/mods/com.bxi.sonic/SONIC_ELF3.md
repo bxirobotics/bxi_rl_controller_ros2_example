@@ -237,18 +237,16 @@ live 数据超过 `live_reference_timeout_s` 后会丢弃陈旧包，并平滑�
 | `idle_frame_start` | `3509` | 固定 idle window 起始帧 |
 | `source_blend_seconds` | `0.4` | idle/live 切换混合时间 |
 | `hardware_gripper` | `true` | 当前 SONIC 状态允许控制硬件夹爪 |
-| `gripper_input_timeout_s` | `0.2` | trigger 输入新鲜度阈值 |
-| `gripper_release_threshold` | `0.05` | 入场时 trigger 松开判定阈值 |
+| `gripper_enable_interval_s` | `1.0` | 解锁后重新发送 `enter_motor_mode` 的周期 |
 | `gripper_left_bus` | `5` | 左夹爪 CAN 总线 |
 | `gripper_right_bus` | `6` | 右夹爪 CAN 总线 |
 | `gripper_can_id` | `1` | 夹爪电机 CAN ID |
 | `gripper_kp` | `20.0` | 夹爪位置环 KP |
 | `gripper_kd` | `1.0` | 夹爪位置环 KD |
 
-硬件运行前必须在目标机器人上确认左右总线号、方向、行程和增益。进入状态时，左右 PICO
-trigger 都必须有新鲜数据且处于松开状态，之后才会对两侧各发送一次 `enter_motor_mode`。
-短暂输入中断会保留最后一个有效输入并停止发送新的夹爪 CAN 目标，同时只在断流边沿报告
-一次警告；恢复新鲜输入后继续控制，不会把缺失数据解释成零值或突然打开夹爪。
+硬件运行前必须在目标机器人上确认左右总线号、方向、行程和增益。进入状态时立即对两侧
+发送 `enter_motor_mode` 和默认打开位置，之后按 `gripper_enable_interval_s` 周期重新发送
+使能。trigger 未发布或断流时继续使用最近值；初始值为完全松开，即夹爪打开。
 
 ## 内部端口和诊断
 

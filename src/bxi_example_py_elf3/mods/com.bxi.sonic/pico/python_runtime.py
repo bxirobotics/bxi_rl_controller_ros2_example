@@ -84,6 +84,11 @@ def _clean_python_environment() -> dict[str, str]:
     for name in tuple(environment):
         if name.startswith("PYTHON") or name == "__PYVENV_LAUNCHER__":
             environment.pop(name, None)
+    # This is an environment assembled by SONIC, not inherited Python state.
+    # Keep descendants from trying to create __pycache__ in a read-only Mod
+    # installation.  The selected interpreter also receives ``-B`` because
+    # its isolation flag (``-E``) intentionally ignores PYTHON* variables.
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
     return environment
 
 
@@ -188,7 +193,7 @@ def _probe(
     )
     try:
         completed = subprocess.run(
-            (str(interpreter), "-E", "-s", "-c", code),
+            (str(interpreter), "-B", "-E", "-s", "-c", code),
             check=False,
             capture_output=True,
             text=True,
@@ -315,6 +320,7 @@ def reexec_if_needed(component: str, imports: Sequence[str]) -> None:
         str(selected.executable),
         (
             str(selected.executable),
+            "-B",
             "-E",
             "-s",
             "-c",

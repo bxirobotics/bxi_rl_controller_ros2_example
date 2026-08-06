@@ -43,6 +43,8 @@ class HoldTransition(SingleClassTransition):
             ctx.last_motor_frame.qpos,
             ctx.last_motor_frame.kp,
             ctx.last_motor_frame.kd,
+            vel=ctx.last_motor_frame.vel,
+            torque=ctx.last_motor_frame.torque,
         )
 
     def apply(self, ctx: "RobotControlContext", dt: float, progress: float) -> None:

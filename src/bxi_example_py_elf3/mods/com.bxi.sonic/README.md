@@ -356,8 +356,7 @@ SONIC 对外只保留部署环境相关变量：
 | 参数 | 默认值 | 用途 |
 | --- | ---: | --- |
 | `hardware_gripper` | `false` | 是否允许该状态订阅 trigger 并发送夹爪 CAN 命令 |
-| `gripper_input_timeout_s` | `0.2` | trigger 输入新鲜度阈值 |
-| `gripper_release_threshold` | `0.05` | 进入状态时确认 trigger 已松开的阈值 |
+| `gripper_enable_interval_s` | `1.0` | 周期重发 `enter_motor_mode` 的间隔 |
 | `gripper_left_bus` | `5` | 左夹爪 CAN 总线号 |
 | `gripper_right_bus` | `6` | 右夹爪 CAN 总线号 |
 | `gripper_can_id` | `1` | 两侧夹爪电机 CAN ID |

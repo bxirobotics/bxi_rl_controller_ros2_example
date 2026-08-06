@@ -33,6 +33,7 @@ from bxi_example_py_elf3.framework.joints import (
     JointDefault,
     JointLayout,
     JointStateBuffer,
+    NamedJointCommandOverride,
 )
 from bxi_example_py_elf3.framework.mod_api import MotorFrame
 from bxi_example_py_elf3.framework.platform import (
@@ -104,6 +105,14 @@ class BxiExample(Node):
         # 加载运行参数
         self.load_files()
 
+        self._motor_override = NamedJointCommandOverride(
+            timeout_sec=self.motor_override_timeout_sec,
+            release_blend_sec=self.motor_override_release_blend_sec,
+        )
+        self._motor_override_last_names: tuple[str, ...] = ()
+        self._motor_override_last_error = ""
+        self._motor_override_waiting_for_joints_warned = False
+
         # 订阅发布ros主题
         self.init_pub_sub()
 
@@ -126,8 +135,6 @@ class BxiExample(Node):
         # 控制循环初始化
         self.step = 0
         self._second_reset_at = 0.0
-        self._zero_actuator_values: list[float] = []
-
         self.runtime = RobotControlRuntime(
             self.state_machine_config,
             built_in_mod_root=self.package_share / "mods",
@@ -174,6 +181,11 @@ class BxiExample(Node):
         self.state_machine_info_hz = float(
             self.get_parameter("/state_machine_info_hz").value
         )
+
+        self.motor_override_topic = self.topic_prefix + "actuators_cmds_override"
+        self.motor_override_timeout_sec = 0.2
+        self.motor_override_release_blend_sec = 0.2
+        self.motor_override_allow_in_zero_torque = False
 
     def _on_control_fatal(self, _message: str):
         self._shutting_down.set()
@@ -247,6 +259,13 @@ class BxiExample(Node):
             qos,
             callback_group=self.io_callback_group,
         )
+        self.motor_override_sub = self.create_subscription(
+            bxiMsg.ActuatorCmds,
+            self.motor_override_topic,
+            self.motor_override_callback,
+            qos,
+            callback_group=self.io_callback_group,
+        )
 
         self.rest_srv = self.create_client(
             bxiSrv.RobotReset, self.topic_prefix + "robot_reset"
@@ -257,6 +276,15 @@ class BxiExample(Node):
 
         self.lock_in = Lock()
         self.lock_ou = self.lock_in  # Lock()
+
+        self.get_logger().info(
+            "motor override input: "
+            f"topic={self.motor_override_topic}, "
+            f"timeout={self.motor_override_timeout_sec:.3f}s, "
+            f"release_blend={self.motor_override_release_blend_sec:.3f}s, "
+            "allow_in_zero_torque="
+            f"{self.motor_override_allow_in_zero_torque}"
+        )
 
     # --------------------------- Runtime 平台适配接口 --------------------------- #
 
@@ -318,15 +346,23 @@ class BxiExample(Node):
 
     def publish_motor_frame(self, frame: MotorFrame):
         """Convert a framework motor frame into the ELF3 ROS command message."""
+        state_name = self.runtime.framework.current_state_name
+        override_permitted = self.motor_override_allow_in_zero_torque or (
+            state_name != "com.bxi.basic_actions/zero_torque"
+        )
+        frame = self._motor_override.apply(
+            frame,
+            now=time.monotonic(),
+            permitted=override_permitted,
+        )
+
         msg = bxiMsg.ActuatorCmds()
         msg.header.frame_id = robot_name
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.actuators_name = frame.layout.names
-        if len(self._zero_actuator_values) != frame.layout.dof_num:
-            self._zero_actuator_values = [0.0] * frame.layout.dof_num
         msg.pos = frame.qpos.tolist()
-        msg.vel = self._zero_actuator_values
-        msg.torque = self._zero_actuator_values
+        msg.vel = frame.vel.tolist()
+        msg.torque = frame.torque.tolist()
         msg.kp = frame.kp.tolist()
         msg.kd = frame.kd.tolist()
         self.act_pub.publish(msg)
@@ -432,6 +468,64 @@ class BxiExample(Node):
 
         if self.step < 2:
             return
+
+    def motor_override_callback(self, msg):
+        """Validate and atomically replace the final named-joint override."""
+        names = tuple(msg.actuators_name)
+        if not names:
+            if msg.pos or msg.kp or msg.kd or msg.vel or msg.torque:
+                self._warn_motor_override(
+                    "empty actuators_name disables override only when all command "
+                    "arrays are also empty"
+                )
+                return
+            self._motor_override.clear()
+            if self._motor_override_last_names:
+                self.get_logger().info("motor override release requested")
+            self._motor_override_last_names = ()
+            self._motor_override_last_error = ""
+            return
+
+        with self.lock_in:
+            if not self._joint_received:
+                if not self._motor_override_waiting_for_joints_warned:
+                    self.get_logger().warning(
+                        "motor override ignored before the robot joint layout "
+                        "is initialized"
+                    )
+                    self._motor_override_waiting_for_joints_warned = True
+                return
+            robot_layout = self._joint_source.view.layout
+
+        try:
+            submitted_names = self._motor_override.submit(
+                robot_layout,
+                names,
+                msg.pos,
+                msg.kp,
+                msg.kd,
+                vel=msg.vel if msg.vel else None,
+                torque=msg.torque if msg.torque else None,
+                received_at=time.monotonic(),
+            )
+        except (TypeError, ValueError) as exc:
+            self._warn_motor_override(str(exc))
+            return
+
+        self._motor_override_last_error = ""
+        self._motor_override_waiting_for_joints_warned = False
+        if submitted_names != self._motor_override_last_names:
+            self.get_logger().info(
+                "motor override active for joints: "
+                f"{submitted_names}"
+            )
+            self._motor_override_last_names = submitted_names
+
+    def _warn_motor_override(self, message: str):
+        if message == self._motor_override_last_error:
+            return
+        self._motor_override_last_error = message
+        self.get_logger().warning(f"invalid motor override: {message}")
 
     def imu_callback(self, msg):
         quat = msg.orientation

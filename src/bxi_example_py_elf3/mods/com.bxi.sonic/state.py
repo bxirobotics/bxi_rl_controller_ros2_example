@@ -79,8 +79,7 @@ class SonicTeleopState(
         idle_frame_start: int = 3509,
         source_blend_seconds: float = 0.4,
         hardware_gripper: bool = False,
-        gripper_input_timeout_s: float = 0.2,
-        gripper_release_threshold: float = 0.05,
+        gripper_enable_interval_s: float = 1.0,
         gripper_left_bus: int = 5,
         gripper_right_bus: int = 6,
         gripper_can_id: int = 1,
@@ -88,8 +87,8 @@ class SonicTeleopState(
         gripper_kd: float = 1.0,
     ) -> None:
         super().__init__(name, state_id, resources=(policy,))
-        if gripper_input_timeout_s <= 0.0:
-            raise ValueError("gripper_input_timeout_s must be positive")
+        if gripper_enable_interval_s <= 0.0:
+            raise ValueError("gripper_enable_interval_s must be positive")
         self._policy = policy
         self.require_live_reference = bool(require_live_reference)
         self.yaw_bias_rad = float(yaw_bias_rad)
@@ -97,10 +96,7 @@ class SonicTeleopState(
         self.idle_frame_start = int(idle_frame_start)
         self.source_blend_seconds = float(source_blend_seconds)
         self.hardware_gripper = bool(hardware_gripper)
-        self.gripper_input_timeout_s = float(gripper_input_timeout_s)
-        self.gripper_release_threshold = float(
-            np.clip(gripper_release_threshold, 0.0, 1.0)
-        )
+        self.gripper_enable_interval_s = float(gripper_enable_interval_s)
         self._left_bus = int(gripper_left_bus)
         self._right_bus = int(gripper_right_bus)
         self._gripper_can_id = int(gripper_can_id)
@@ -112,12 +108,9 @@ class SonicTeleopState(
 
         self._gripper_session_active = False
         self._gripper_armed = False
+        self._last_gripper_enable_time: Optional[float] = None
         self._left_trigger = 0.0
         self._right_trigger = 0.0
-        self._left_trigger_at: Optional[float] = None
-        self._right_trigger_at: Optional[float] = None
-        self._gripper_wait_reason: Optional[str] = None
-        self._stale_sides: set[str] = set()
         self._gripper_subscriptions = []
         self._gripper_publisher = None
         self._gripper_available = not self.hardware_gripper
@@ -174,6 +167,7 @@ class SonicTeleopState(
             self.yaw_bias_rad,
             self.live_reference_timeout_s,
             self.source_blend_seconds,
+            self.gripper_enable_interval_s,
             self._gripper_kp,
             self._gripper_kd,
         )
@@ -235,11 +229,19 @@ class SonicTeleopState(
         self.logger.info(
             f"{mode}已启动；PICO同时按住A+B+X+Y请求校准，再按A+X切入实时POSE"
         )
+        if self.hardware_gripper:
+            self._left_trigger = self._right_trigger = 0.0
+            now = time.monotonic()
+            self._publish_gripper_enable(now)
+            self._gripper_armed = True
+            self._publish_gripper(self._left_bus, self._left_trigger)
+            self._publish_gripper(self._right_bus, self._right_trigger)
+            self.logger.info("SONIC夹爪已使能并默认打开")
 
     def on_exit(self, ctx: RobotControlContext) -> None:
         self._gripper_session_active = False
         self._gripper_armed = False
-        self._stale_sides.clear()
+        self._last_gripper_enable_time = None
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         # if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
@@ -271,64 +273,40 @@ class SonicTeleopState(
         value = self._valid_trigger(msg.data)
         if value is not None and self._gripper_session_active:
             self._left_trigger = value
-            self._left_trigger_at = time.monotonic()
 
     def _right_trigger_callback(self, msg: Float32) -> None:
         value = self._valid_trigger(msg.data)
         if value is not None and self._gripper_session_active:
             self._right_trigger = value
-            self._right_trigger_at = time.monotonic()
 
     def _start_gripper_session(self) -> None:
         if not self.hardware_gripper:
             return
         self._left_trigger = self._right_trigger = 0.0
-        self._left_trigger_at = self._right_trigger_at = None
         self._gripper_armed = False
+        self._last_gripper_enable_time = None
         self._gripper_session_active = True
-        self._gripper_wait_reason = None
-        self._stale_sides.clear()
 
-    def _trigger_fresh(self, timestamp: Optional[float], now: float) -> bool:
-        return (
-            timestamp is not None
-            and 0.0 <= now - timestamp <= self.gripper_input_timeout_s
-        )
-
-    def _try_arm_gripper(self, now: float) -> bool:
-        if self._gripper_armed:
-            return True
-        fresh = self._trigger_fresh(self._left_trigger_at, now) and self._trigger_fresh(
-            self._right_trigger_at, now
-        )
-        if not fresh:
-            self._log_gripper_wait("input", "SONIC夹爪等待PICO trigger新数据")
-            return False
-        if (
-            max(self._left_trigger, self._right_trigger)
-            > self.gripper_release_threshold
-        ):
-            self._log_gripper_wait("release", "SONIC夹爪等待左右trigger松开")
-            return False
+    def _publish_gripper_enable(self, now: float) -> None:
         for bus in (self._left_bus, self._right_bus):
             self._gripper_publisher.publish(
                 BxiMotor.build_motor_packet(
                     bus, self._gripper_can_id, BxiMotor.enter_motor_mode()
                 )
             )
-        self._gripper_armed = True
-        self._gripper_wait_reason = None
-        self.logger.info("SONIC夹爪已解锁")
-        return True
+        self._last_gripper_enable_time = now
 
-    def _log_gripper_wait(self, reason: str, message: str) -> None:
-        if self._gripper_wait_reason != reason:
-            self._gripper_wait_reason = reason
-            self.logger.warning(message)
+    def _refresh_gripper_enable(self, now: float) -> None:
+        last_enable_time = self._last_gripper_enable_time
+        if (
+            last_enable_time is None
+            or now - last_enable_time >= self.gripper_enable_interval_s
+        ):
+            self._publish_gripper_enable(now)
 
     def _publish_gripper(self, bus: int, trigger: float) -> None:
         command = JointControl(
-            p_des=float((1.0 - trigger) * 0.5 - 0.1),
+            p_des=float((1.0 - trigger) * 5.0 - 0.1),
             kp=self._gripper_kp,
             kd=self._gripper_kd,
         )
@@ -348,24 +326,10 @@ class SonicTeleopState(
         if not self.hardware_gripper or not self._gripper_session_active:
             return
         now = time.monotonic()
-        if not self._try_arm_gripper(now):
-            return
-        stale = {
-            side
-            for side, timestamp in (
-                ("left", self._left_trigger_at),
-                ("right", self._right_trigger_at),
-            )
-            if not self._trigger_fresh(timestamp, now)
-        }
-        newly_stale = stale - self._stale_sides
-        if newly_stale:
-            self.logger.warning(
-                "SONIC夹爪trigger断流：" + ",".join(sorted(newly_stale)) + "；保持最后位置"
-            )
-        self._stale_sides = stale
-        if stale:
-            return
+        if not self._gripper_armed:
+            self._publish_gripper_enable(now)
+            self._gripper_armed = True
+        self._refresh_gripper_enable(now)
         self._publish_gripper(self._left_bus, self._left_trigger)
         self._publish_gripper(self._right_bus, self._right_trigger)
 
