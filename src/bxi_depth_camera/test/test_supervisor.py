@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import pytest
 from rclpy.context import Context
 from rclpy.parameter import Parameter
 
@@ -266,6 +267,109 @@ def test_rectification_can_be_enabled_per_stream_and_camera():
         assert config.rectify_infra2
         assert config.rectify_color
         assert not config.rectify_infra1
+    finally:
+        manager.destroy_node()
+        context.shutdown()
+
+
+def test_depth_alignment_can_be_enabled_per_camera():
+    context = Context()
+    context.init(initialize_logging=False)
+    manager = CameraManager(context=context)
+    try:
+        result = manager.set_parameters_atomically(
+            [
+                Parameter(
+                    "cameras.head_depth_camera.serial_no",
+                    value="ABC",
+                ),
+                Parameter(
+                    "cameras.head_depth_camera.align_depth.enable",
+                    value=True,
+                ),
+            ]
+        )
+
+        assert result.successful, result.reason
+        assert manager.config_for("ABC").align_depth
+        assert not manager.config_for("unmapped_serial").align_depth
+        assert manager.take_pending_restarts() == {"*", "head_depth_camera"}
+    finally:
+        manager.destroy_node()
+        context.shutdown()
+
+
+def test_depth_alignment_requires_depth_and_color_streams():
+    context = Context()
+    context.init(initialize_logging=False)
+    manager = CameraManager(context=context)
+    try:
+        result = manager.set_parameters_atomically(
+            [
+                Parameter("align_depth.enable", value=True),
+                Parameter("enable_color", value=False),
+            ]
+        )
+
+        assert not result.successful
+        assert "requires both enable_depth and enable_color" in result.reason
+        assert not manager.config.align_depth
+        assert manager.config.enable_color
+    finally:
+        manager.destroy_node()
+        context.shutdown()
+
+
+def test_pointcloud_can_be_enabled_and_limited_per_camera():
+    context = Context()
+    context.init(initialize_logging=False)
+    manager = CameraManager(context=context)
+    try:
+        result = manager.set_parameters_atomically(
+            [
+                Parameter("cameras.head_depth_camera.serial_no", value="ABC"),
+                Parameter(
+                    "cameras.head_depth_camera.pointcloud.enable", value=True
+                ),
+                Parameter(
+                    "cameras.head_depth_camera.pointcloud.ordered_pc", value=True
+                ),
+                Parameter(
+                    "cameras.head_depth_camera.pointcloud.max_fps", value=5.0
+                ),
+            ]
+        )
+
+        assert result.successful, result.reason
+        config = manager.config_for("ABC")
+        assert config.pointcloud_enabled
+        assert config.pointcloud_ordered
+        assert config.pointcloud_max_fps == pytest.approx(5.0)
+        assert not manager.config_for("unmapped_serial").pointcloud_enabled
+    finally:
+        manager.destroy_node()
+        context.shutdown()
+
+
+def test_pointcloud_requires_depth_and_positive_rate():
+    context = Context()
+    context.init(initialize_logging=False)
+    manager = CameraManager(context=context)
+    try:
+        no_depth = manager.set_parameters_atomically(
+            [
+                Parameter("pointcloud.enable", value=True),
+                Parameter("enable_depth", value=False),
+            ]
+        )
+        assert not no_depth.successful
+        assert "requires enable_depth" in no_depth.reason
+
+        bad_rate = manager.set_parameters_atomically(
+            [Parameter("pointcloud.max_fps", value=0.0)]
+        )
+        assert not bad_rate.successful
+        assert "greater than zero" in bad_rate.reason
     finally:
         manager.destroy_node()
         context.shutdown()

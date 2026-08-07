@@ -33,6 +33,11 @@ CONFIG_PARAMETER_DEFAULTS = {
     "enable_infra2": False,
     "enable_gyro": False,
     "enable_accel": False,
+    "align_depth.enable": False,
+    "pointcloud.enable": False,
+    "pointcloud.ordered_pc": False,
+    "pointcloud.allow_no_texture_points": False,
+    "pointcloud.max_fps": 10.0,
     "depth_module.depth_profile": "0,0,0",
     "depth_module.rectification.enable": False,
     "rgb_camera.color_profile": "0,0,0",
@@ -203,6 +208,22 @@ class CameraManager(Node):
             enable_infra2=self._boolean("enable_infra2", value("enable_infra2")),
             enable_gyro=self._boolean("enable_gyro", value("enable_gyro")),
             enable_accel=self._boolean("enable_accel", value("enable_accel")),
+            align_depth=self._boolean(
+                "align_depth.enable", value("align_depth.enable")
+            ),
+            pointcloud_enabled=self._boolean(
+                "pointcloud.enable", value("pointcloud.enable")
+            ),
+            pointcloud_ordered=self._boolean(
+                "pointcloud.ordered_pc", value("pointcloud.ordered_pc")
+            ),
+            pointcloud_allow_no_texture_points=self._boolean(
+                "pointcloud.allow_no_texture_points",
+                value("pointcloud.allow_no_texture_points"),
+            ),
+            pointcloud_max_fps=self._positive_float(
+                "pointcloud.max_fps", value("pointcloud.max_fps")
+            ),
             rectify_depth=self._boolean(
                 "depth_module.rectification.enable",
                 value("depth_module.rectification.enable"),

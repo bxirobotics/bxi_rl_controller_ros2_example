@@ -37,6 +37,8 @@ class RealSenseCamera(CameraNode):
         self._rs = rs
         self._pipeline = rs.pipeline()
         self._pipeline_started = False
+        self._align_to_color = None
+        self._pointcloud = None
         self._frame_lock = Lock()
         self._latest_frameset = None
         self._motion_samples: deque[tuple[object, float, float, float]] = deque(
@@ -61,6 +63,7 @@ class RealSenseCamera(CameraNode):
         try:
             profile = self._start_pipeline()
             self._initialize_depth_processing(profile)
+            self.start_pointcloud_worker(self._publish_pointcloud)
         except BaseException:
             self._stop_pipeline()
             super().destroy_node()
@@ -165,6 +168,10 @@ class RealSenseCamera(CameraNode):
         self._second_hole_filter = rs.hole_filling_filter(
             self.config.second_hole_filling_mode
         )
+        if self.config.align_depth:
+            self._align_to_color = rs.align(rs.stream.color)
+        if self.config.pointcloud_enabled:
+            self._pointcloud = rs.pointcloud()
 
         enabled: list[str] = []
         if self.config.decimation_enabled:
@@ -206,24 +213,35 @@ class RealSenseCamera(CameraNode):
     def _on_frame(self, frame) -> None:
         try:
             if frame.is_frameset():
+                self.mark_frame()
+                if not self.video_consumers_requested():
+                    return
                 with self._frame_lock:
                     self._latest_frameset = frame.as_frameset()
-                self.mark_frame()
                 self._frame_guard.trigger()
                 return
             if frame.is_motion_frame():
                 motion_frame = frame.as_motion_frame()
+                stream_type = motion_frame.get_profile().stream_type()
+                self.mark_frame()
+                if stream_type == self._rs.stream.gyro:
+                    if not self.publishers_requested(self._pub_gyro):
+                        return
+                elif stream_type == self._rs.stream.accel:
+                    if not self.publishers_requested(self._pub_accel):
+                        return
+                else:
+                    return
                 motion = motion_frame.get_motion_data()
                 with self._frame_lock:
                     self._motion_samples.append(
                         (
-                            motion_frame.get_profile().stream_type(),
+                            stream_type,
                             float(motion.x),
                             float(motion.y),
                             float(motion.z),
                         )
                     )
-                self.mark_frame()
                 self._frame_guard.trigger()
         except Exception as exc:
             self.log_throttled(
@@ -249,12 +267,37 @@ class RealSenseCamera(CameraNode):
             self._publish_motion(motion)
 
     def _publish_frameset(self, frameset) -> None:
+        depth_requested = self.depth_requested()
+        color_requested = self.color_requested()
+        aligned_depth_requested = self.aligned_depth_requested()
+        infra1_requested = self.infra1_requested()
+        infra2_requested = self.infra2_requested()
+        pointcloud_requested = self.pointcloud_requested()
+        if not any(
+            (
+                depth_requested,
+                color_requested,
+                aligned_depth_requested,
+                infra1_requested,
+                infra2_requested,
+                pointcloud_requested,
+            )
+        ):
+            return
         stamp = self.get_clock().now().to_msg()
-        if self._pub_depth is not None:
-            frame = frameset.get_depth_frame()
+        processed_depth_requested = (
+            depth_requested or aligned_depth_requested or pointcloud_requested
+        )
+        processed_frameset = (
+            self._process_depth_frameset(frameset)
+            if self.config.enable_depth and processed_depth_requested
+            else frameset
+        )
+        if depth_requested:
+            frame = processed_frameset.get_depth_frame()
             if frame:
                 self._publish_depth(frame, stamp)
-        if self._pub_color is not None:
+        if color_requested:
             frame = frameset.get_color_frame()
             if frame:
                 self._publish_video_frame(
@@ -266,7 +309,11 @@ class RealSenseCamera(CameraNode):
                     "bgr8",
                     self.color_frame_id,
                 )
-        if self._pub_infra1 is not None:
+        if pointcloud_requested:
+            self.queue_pointcloud(processed_frameset, frameset, stamp)
+        if aligned_depth_requested:
+            self._publish_aligned_depth(processed_frameset, frameset, stamp)
+        if infra1_requested:
             frame = frameset.get_infrared_frame(1)
             if frame:
                 self._publish_video_frame(
@@ -278,7 +325,7 @@ class RealSenseCamera(CameraNode):
                     "mono8",
                     self.infra1_frame_id,
                 )
-        if self._pub_infra2 is not None:
+        if infra2_requested:
             frame = frameset.get_infrared_frame(2)
             if frame:
                 self._publish_video_frame(
@@ -291,8 +338,8 @@ class RealSenseCamera(CameraNode):
                     self.infra2_frame_id,
                 )
 
-    def _publish_depth(self, depth_frame, stamp) -> None:
-        frame = depth_frame
+    def _process_depth_frameset(self, frameset):
+        frame = frameset
         if self.config.decimation_enabled:
             frame = self._decimation_filter.process(frame)
         if self.config.spatial_enabled:
@@ -304,6 +351,13 @@ class RealSenseCamera(CameraNode):
         if self.config.second_hole_filling_enabled:
             frame = self._second_hole_filter.process(frame)
 
+        if hasattr(frame, "as_frameset"):
+            frame = frame.as_frameset()
+        if not hasattr(frame, "get_depth_frame"):
+            raise RuntimeError("RealSense depth filters did not return a frameset")
+        return frame
+
+    def _publish_depth(self, frame, stamp) -> None:
         depth = np.asanyarray(frame.get_data())
         intrinsics = frame.get_profile().as_video_stream_profile().get_intrinsics()
         assert self._pub_depth_info is not None
@@ -321,6 +375,103 @@ class RealSenseCamera(CameraNode):
             distortion=tuple(float(value) for value in intrinsics.coeffs),
             distortion_model=intrinsics.model,
             rectify=self.config.rectify_depth,
+            depth=True,
+        )
+
+    def _publish_pointcloud(self, filtered_frameset, original_frameset, stamp) -> None:
+        assert self._pointcloud is not None
+        depth_frame = filtered_frameset.get_depth_frame()
+        if not depth_frame:
+            return
+        color_frame = original_frameset.get_color_frame()
+        if color_frame:
+            self._pointcloud.map_to(color_frame)
+        points = self._pointcloud.calculate(depth_frame)
+        width = int(depth_frame.get_width())
+        height = int(depth_frame.get_height())
+        vertices = (
+            np.asanyarray(points.get_vertices())
+            .view(np.float32)
+            .reshape(-1, 3)
+        )
+
+        colors = None
+        texture_valid = None
+        if color_frame:
+            texture = (
+                np.asanyarray(points.get_texture_coordinates())
+                .view(np.float32)
+                .reshape(-1, 2)
+            )
+            color = np.asanyarray(color_frame.get_data())
+            color_height, color_width = color.shape[:2]
+            texture_valid = (
+                np.isfinite(texture).all(axis=1)
+                & (texture[:, 0] >= 0.0)
+                & (texture[:, 0] < 1.0)
+                & (texture[:, 1] >= 0.0)
+                & (texture[:, 1] < 1.0)
+            )
+            colors = np.zeros((vertices.shape[0], 3), dtype=np.uint8)
+            if texture_valid.any():
+                pixels_x = np.floor(
+                    texture[texture_valid, 0] * color_width
+                ).astype(np.intp)
+                pixels_y = np.floor(
+                    texture[texture_valid, 1] * color_height
+                ).astype(np.intp)
+                colors[texture_valid] = color[pixels_y, pixels_x, :3][:, ::-1]
+
+        self.publish_pointcloud(
+            vertices,
+            width=width,
+            height=height,
+            stamp=stamp,
+            colors=colors,
+            texture_valid=texture_valid,
+        )
+
+    def _publish_aligned_depth(
+        self, filtered_frameset, original_frameset, stamp
+    ) -> None:
+        assert self._align_to_color is not None
+        assert self._pub_aligned_depth is not None
+        assert self._pub_aligned_depth_info is not None
+        aligned = self._align_to_color.process(filtered_frameset)
+        if hasattr(aligned, "as_frameset"):
+            aligned = aligned.as_frameset()
+        if not hasattr(aligned, "get_depth_frame"):
+            raise RuntimeError("RealSense align filter did not return a frameset")
+        depth_frame = aligned.get_depth_frame()
+        color_frame = original_frameset.get_color_frame()
+        if not depth_frame or not color_frame:
+            return
+
+        depth = np.asanyarray(depth_frame.get_data())
+        color_profile = color_frame.get_profile().as_video_stream_profile()
+        intrinsics = color_profile.get_intrinsics()
+        color_width = int(color_frame.get_width())
+        color_height = int(color_frame.get_height())
+        if depth.shape != (color_height, color_width):
+            raise RuntimeError(
+                "RealSense aligned depth dimensions do not match color: "
+                f"depth={depth.shape[1]}x{depth.shape[0]}, "
+                f"color={color_width}x{color_height}"
+            )
+        self.publish_calibrated_image(
+            depth,
+            "16UC1",
+            self.color_frame_id,
+            stamp,
+            self._pub_aligned_depth,
+            self._pub_aligned_depth_info,
+            fx=float(intrinsics.fx),
+            fy=float(intrinsics.fy),
+            cx=float(intrinsics.ppx),
+            cy=float(intrinsics.ppy),
+            distortion=tuple(float(value) for value in intrinsics.coeffs),
+            distortion_model=intrinsics.model,
+            rectify=self.config.rectify_color,
             depth=True,
         )
 
@@ -353,16 +504,22 @@ class RealSenseCamera(CameraNode):
 
     def _publish_motion(self, samples) -> None:
         rs = self._rs
+        gyro_requested = self.publishers_requested(self._pub_gyro)
+        accel_requested = self.publishers_requested(self._pub_accel)
+        if not gyro_requested and not accel_requested:
+            return
         for stream_type, x, y, z in samples:
-            message = Imu()
-            message.header.stamp = self.get_clock().now().to_msg()
-            if stream_type == rs.stream.gyro and self._pub_gyro is not None:
+            if stream_type == rs.stream.gyro and gyro_requested:
+                message = Imu()
+                message.header.stamp = self.get_clock().now().to_msg()
                 message.header.frame_id = self.gyro_frame_id
                 message.angular_velocity.x = x
                 message.angular_velocity.y = y
                 message.angular_velocity.z = z
                 self._pub_gyro.publish(message)
-            elif stream_type == rs.stream.accel and self._pub_accel is not None:
+            elif stream_type == rs.stream.accel and accel_requested:
+                message = Imu()
+                message.header.stamp = self.get_clock().now().to_msg()
                 message.header.frame_id = self.accel_frame_id
                 message.linear_acceleration.x = x
                 message.linear_acceleration.y = y
@@ -385,6 +542,7 @@ class RealSenseCamera(CameraNode):
             )
 
     def destroy_node(self):
+        self.stop_pointcloud_worker()
         self._stop_pipeline()
         return super().destroy_node()
 

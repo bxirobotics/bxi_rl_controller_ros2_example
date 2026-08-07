@@ -1,6 +1,6 @@
 ---
 name: elf3-feature-development
-description: 为 bxi_example_py_elf3 规划、实现、迁移、调试或审查功能、状态、动作和控制模式。用户要求新增机器人行为、感知/遥操能力或状态交互时使用；默认先评估用一个额外的可移植 Mod 封装状态、btn 事件、物理按键绑定、action/route、App manifest、Resource、子节点和资产，并检查 Mod API 4.0、29/31/N 关节兼容性与发布安全。
+description: 为 bxi_example_py_elf3 规划、实现、迁移、状态、动作和控制模式。用户要求新增机器人行为、感知/遥操能力或状态交互时使用；默认先评估用一个额外的可移植 Mod 封装状态、btn 事件、物理按键绑定、action/route、App manifest、Resource、子节点和资产，并检查 Mod API 4.0、29/31/N 关节兼容性与发布安全。
 ---
 
 # ELF3 功能、状态与动作开发

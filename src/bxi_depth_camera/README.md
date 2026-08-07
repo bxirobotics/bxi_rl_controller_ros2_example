@@ -41,6 +41,9 @@ ros2 run bxi_depth_camera cameras-inspect --watch \
 /hardware/<camera_name>/color/camera_info
 /hardware/<camera_name>/depth/image_rect_raw
 /hardware/<camera_name>/depth/camera_info
+/hardware/<camera_name>/aligned_depth_to_color/image_raw
+/hardware/<camera_name>/aligned_depth_to_color/camera_info
+/hardware/<camera_name>/depth/color/points
 /hardware/<camera_name>/infra1/image_rect_raw
 /hardware/<camera_name>/infra1/camera_info
 /hardware/<camera_name>/infra2/image_rect_raw
@@ -70,6 +73,122 @@ ros2 run bxi_depth_camera cameras-inspect --watch \
 `image_rect_raw`，每个流同时发布 `camera_info`。每个流只发布一个主图像话题，
 对应去畸参数控制发布前是否执行软件去畸，不会额外发布一套重复图像。IMU 使用
 RealSense ROS 驱动也采用的 `gyro/sample` 和 `accel/sample` 结构。
+
+## 深度对齐到彩色图
+
+设置与 `realsense-ros` 同名的 `align_depth.enable` 后，会额外发布一张投影到彩色
+相机成像平面的 `16UC1` 毫米深度图：
+
+```bash
+ros2 launch bxi_depth_camera cameras.launch.py \
+  align_depth.enable:=true
+```
+
+```text
+/hardware/<camera_name>/aligned_depth_to_color/image_raw
+/hardware/<camera_name>/aligned_depth_to_color/camera_info
+```
+
+对齐图的宽高、`frame_id` 和 `CameraInfo` 都使用彩色相机坐标系。原始的
+`depth/image_rect_raw` 会继续发布，不会改变依赖原深度尺寸的策略输入。对齐要求
+同时开启深度和彩色流；缺少任一流时参数更新会被拒绝。
+
+参数也支持按逻辑相机覆盖：
+
+```yaml
+/depth_camera_manager:
+  ros__parameters:
+    cameras:
+      head_depth_camera:
+        serial_no: "349422070502"
+        align_depth:
+          enable: true
+```
+
+RealSense 使用 librealsense 的 Depth-to-Color 标定与 `align` 处理块；Orbbec 使用
+SDK 的 `AlignFilter`，并在开启时启用帧同步。若彩色流开启软件去畸，对齐深度会
+应用同一套彩色去畸映射，并使用最近邻插值，保证它仍与发布的彩色图逐像素对应。
+
+对齐输出分辨率等于彩色流分辨率。例如彩色配置为 `1920x1080x30` 时，一路
+`16UC1` 对齐深度自身约产生 119 MiB/s 的未压缩像素数据，并增加 SDK 对齐和 ROS
+发布开销；不需要高清彩色图时，建议选择较低且设备支持的彩色 profile。
+
+## 点云
+
+点云默认关闭，开启方式与 `realsense-ros` 一致：
+
+```bash
+ros2 launch bxi_depth_camera cameras.launch.py \
+  pointcloud.enable:=true \
+  pointcloud.max_fps:=10.0
+```
+
+发布话题为：
+
+```text
+/hardware/<camera_name>/depth/color/points
+```
+
+消息类型是 `sensor_msgs/msg/PointCloud2`。点坐标 `x/y/z` 使用 `float32` 米；彩色
+流可用时还包含 PCL/ROS 惯例的 packed `rgb` 字段。RGB 只是从彩色图映射到深度
+点上的纹理，XYZ 仍在深度相机坐标系中，因此消息的 `frame_id` 是
+`<camera_name>_depth_optical_frame`。
+
+可用参数：
+
+```yaml
+pointcloud.enable: false
+pointcloud.ordered_pc: false
+pointcloud.allow_no_texture_points: false
+pointcloud.max_fps: 10.0
+```
+
+- `ordered_pc=false`：删除无效点，输出 `height=1` 的紧凑点云；
+- `ordered_pc=true`：保持深度图宽高，无效点写为 NaN；
+- `allow_no_texture_points=true`：RealSense 彩色视场之外的有效深度点也会保留，
+  颜色填零；
+- `max_fps`：独立限制点云频率，不改变图像流帧率。
+
+点云使用深度流分辨率生成，再通过相机外参采样彩色纹理，不会因为开启
+`align_depth` 而扩展到 1920x1080。节点仅在点云话题存在订阅者且达到限频周期时
+调用 SDK；无人订阅时不会计算和序列化点云。点云在独立 latest-only 后台线程中
+生成，处理落后时覆盖尚未开始的旧帧，不阻塞图像发布。当前默认深度 `848x480`
+最多约 40.7 万点，满 XYZRGB 负载约 6.2 MiB/帧，因此高帧率或跨机 DDS 传输时
+仍建议配合 decimation 或降低 `pointcloud.max_fps`。
+
+按相机单独配置示例：
+
+```yaml
+/depth_camera_manager:
+  ros__parameters:
+    cameras:
+      head_depth_camera:
+        serial_no: "CP0F4630000L"
+        pointcloud:
+          enable: true
+          ordered_pc: false
+          max_fps: 5.0
+```
+
+## 按订阅者惰性处理
+
+相机 SDK pipeline 和设备 watchdog 始终运行，但发布侧的高成本处理会根据 ROS
+订阅数按需执行：
+
+- 深度图或其 `camera_info` 无订阅者时，跳过深度滤波、去畸和消息拷贝；
+- 彩色图无订阅者时，跳过 BGR 转换、MJPEG 解码、去畸和消息拷贝；
+- 对齐深度图和其 `camera_info` 均无订阅者时，跳过 Depth-to-Color 对齐；
+- 红外图无订阅者时，跳过数组转换、去畸和消息拷贝；
+- IMU 话题无订阅者时，不构造对应的 `Imu` 消息；
+- 点云额外使用订阅门控、频率限制和 latest-only 后台队列。
+
+因此可以一直开启相机能力，RViz、录包或策略节点开始订阅后的下一帧会自动恢复
+相应处理，不需要重启 pipeline。Orbbec 在配置了深度对齐时仍保持帧同步和完整帧
+聚合，但无人订阅时不会调用每帧 `AlignFilter` 或构造对齐图消息。
+
+SDK 回调也采用同一门控：无人订阅时只刷新设备存活时间，不搬运帧、不唤醒 ROS
+executor。已排队的点云若遇到订阅者退出会直接丢弃，避免完成一次已经无人消费的
+后台计算。
 
 ## 按流去畸
 

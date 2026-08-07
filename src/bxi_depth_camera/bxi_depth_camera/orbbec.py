@@ -74,6 +74,8 @@ class OrbbecCamera(CameraNode):
         self._device = None
         self._pipeline = None
         self._pipeline_started = False
+        self._align_to_color = None
+        self._pointcloud_filter = None
         self._imu_pipeline = None
         self._imu_pipeline_started = False
         self._frame_lock = Lock()
@@ -139,6 +141,15 @@ class OrbbecCamera(CameraNode):
         self._configure_color_stream(config)
         self._configure_ir_streams(config)
         self._initialize_filters()
+        if self.config.align_depth:
+            self._align_to_color = ob.AlignFilter(ob.OBStreamType.COLOR_STREAM)
+        if self.config.align_depth or (
+            self.config.pointcloud_enabled and self.config.enable_color
+        ):
+            config.set_frame_aggregate_output_mode(
+                ob.OBFrameAggregateOutputMode.FULL_FRAME_REQUIRE
+            )
+            self._pipeline.enable_frame_sync()
         try:
             self._pipeline.start(config, self._on_video_frames)
         except Exception as exc:
@@ -146,6 +157,13 @@ class OrbbecCamera(CameraNode):
                 f"Orbbec {self.descriptor.serial} pipeline start failed: {exc}"
             ) from exc
         self._pipeline_started = True
+        if self.config.pointcloud_enabled:
+            self._pointcloud_filter = ob.PointCloudFilter()
+            self._pointcloud_filter.set_camera_param(
+                self._pipeline.get_camera_param()
+            )
+            self._pointcloud_filter.set_frame_align_state(False)
+            self.start_pointcloud_worker(self._publish_pointcloud)
         if self.config.enable_gyro or self.config.enable_accel:
             self._start_imu_pipeline()
 
@@ -156,9 +174,10 @@ class OrbbecCamera(CameraNode):
             else "disabled"
         )
         names = [item.get_name() for item in self._depth_filters]
+        alignment = ", align_depth=color" if self.config.align_depth else ""
         self.get_logger().info(
             f"started Orbbec {self.descriptor.name} serial={self.descriptor.serial}; "
-            f"depth={profile_text}; filters={','.join(names) or 'none'}"
+            f"depth={profile_text}; filters={','.join(names) or 'none'}{alignment}"
         )
 
     def _configure_color_stream(self, config) -> None:
@@ -260,18 +279,25 @@ class OrbbecCamera(CameraNode):
     def _on_video_frames(self, frameset) -> None:
         if frameset is None:
             return
+        self.mark_frame()
+        if not self.video_consumers_requested():
+            return
         with self._frame_lock:
             self._latest_frameset = frameset
-        self.mark_frame()
         self._frame_guard.trigger()
 
     def _on_imu_frames(self, frameset) -> None:
         if frameset is None:
             return
         try:
+            self.mark_frame()
+            accel_requested = self.publishers_requested(self._pub_accel)
+            gyro_requested = self.publishers_requested(self._pub_gyro)
+            if not accel_requested and not gyro_requested:
+                return
             samples: list[tuple[str, float, float, float]] = []
-            accel = frameset.get_accel_frame()
-            if accel and self.config.enable_accel:
+            accel = frameset.get_accel_frame() if accel_requested else None
+            if accel:
                 samples.append(
                     (
                         "accel",
@@ -280,8 +306,8 @@ class OrbbecCamera(CameraNode):
                         float(accel.get_z()),
                     )
                 )
-            gyro = frameset.get_gyro_frame()
-            if gyro and self.config.enable_gyro:
+            gyro = frameset.get_gyro_frame() if gyro_requested else None
+            if gyro:
                 samples.append(
                     (
                         "gyro",
@@ -293,7 +319,6 @@ class OrbbecCamera(CameraNode):
             if samples:
                 with self._frame_lock:
                     self._motion_samples.extend(samples)
-                self.mark_frame()
                 self._frame_guard.trigger()
         except Exception as exc:
             self.log_throttled(
@@ -319,12 +344,33 @@ class OrbbecCamera(CameraNode):
             self._publish_motion(motion)
 
     def _publish_frameset(self, frameset) -> None:
+        depth_requested = self.depth_requested()
+        color_requested = self.color_requested()
+        aligned_depth_requested = self.aligned_depth_requested()
+        infra1_requested = self.infra1_requested()
+        infra2_requested = self.infra2_requested()
+        pointcloud_requested = self.pointcloud_requested()
+        if not any(
+            (
+                depth_requested,
+                color_requested,
+                aligned_depth_requested,
+                infra1_requested,
+                infra2_requested,
+                pointcloud_requested,
+            )
+        ):
+            return
         stamp = self.get_clock().now().to_msg()
-        if self._pub_depth is not None:
+        if pointcloud_requested:
+            self.queue_pointcloud(frameset, stamp)
+        if aligned_depth_requested:
+            self._publish_aligned_depth(frameset, stamp)
+        if depth_requested:
             frame = frameset.get_depth_frame()
             if frame:
                 self._publish_depth(frame, stamp)
-        if self._pub_color is not None:
+        if color_requested:
             frame = frameset.get_color_frame()
             if frame:
                 image, encoding = self._color_array(frame)
@@ -338,11 +384,11 @@ class OrbbecCamera(CameraNode):
                     self._pub_color_info,
                     self.config.rectify_color,
                 )
-        left = frameset.get_left_ir_frame() if self._pub_infra1 is not None else None
-        right = frameset.get_right_ir_frame() if self._pub_infra2 is not None else None
-        if self._pub_infra1 is not None and not left:
+        left = frameset.get_left_ir_frame() if infra1_requested else None
+        right = frameset.get_right_ir_frame() if infra2_requested else None
+        if infra1_requested and not left:
             left = frameset.get_ir_frame()
-        if left and self._pub_infra1 is not None:
+        if left and infra1_requested:
             image, encoding = self._ir_array(left)
             self._publish_video(
                 left,
@@ -354,7 +400,7 @@ class OrbbecCamera(CameraNode):
                 self._pub_infra1_info,
                 self.config.rectify_infra1,
             )
-        if right and self._pub_infra2 is not None:
+        if right and infra2_requested:
             image, encoding = self._ir_array(right)
             self._publish_video(
                 right,
@@ -398,6 +444,121 @@ class OrbbecCamera(CameraNode):
             distortion=distortion,
             distortion_model="brown_conrady",
             rectify=self.config.rectify_depth,
+            depth=True,
+        )
+
+    def _publish_pointcloud(self, frameset, stamp) -> None:
+        assert self._pointcloud_filter is not None
+        depth_frame = frameset.get_depth_frame()
+        if not depth_frame:
+            return
+        color_frame = frameset.get_color_frame()
+        with_color = bool(color_frame)
+        point_format = (
+            self._ob.OBFormat.RGB_POINT
+            if with_color
+            else self._ob.OBFormat.POINT
+        )
+        self._pointcloud_filter.set_create_point_format(point_format)
+        self._pointcloud_filter.set_position_data_scaled(
+            float(depth_frame.get_depth_scale()) * 0.001
+        )
+        source = frameset if with_color else depth_frame
+        calculated = self._pointcloud_filter.calculate(source)
+        if calculated is None:
+            self.log_throttled(
+                "pointcloud-no-output",
+                f"Orbbec {self.descriptor.serial} point cloud filter returned no data",
+            )
+            return
+
+        columns = 6 if with_color else 3
+        values = np.asarray(calculated, dtype=np.float32)
+        if values.size % columns != 0:
+            raise RuntimeError(
+                "Orbbec point cloud has an unexpected layout: "
+                f"values={values.size}, columns={columns}"
+            )
+        values = values.reshape(-1, columns)
+        colors = None
+        if with_color:
+            colors = np.ascontiguousarray(
+                np.clip(values[:, 3:6], 0.0, 255.0), dtype=np.uint8
+            )
+        self.publish_pointcloud(
+            values[:, :3],
+            width=int(depth_frame.get_width()),
+            height=int(depth_frame.get_height()),
+            stamp=stamp,
+            colors=colors,
+        )
+
+    def _publish_aligned_depth(self, frameset, stamp) -> None:
+        assert self._align_to_color is not None
+        assert self._pub_aligned_depth is not None
+        assert self._pub_aligned_depth_info is not None
+        source_depth = frameset.get_depth_frame()
+        color_frame = frameset.get_color_frame()
+        if not source_depth or not color_frame:
+            self.log_throttled(
+                "align-incomplete-frameset",
+                f"Orbbec {self.descriptor.serial} is waiting for a synchronized "
+                "depth and color frameset",
+                error=False,
+            )
+            return
+        aligned = self._align_to_color.process(frameset)
+        if aligned is None:
+            self.log_throttled(
+                "align-no-output",
+                f"Orbbec {self.descriptor.serial} cannot align "
+                f"depth={source_depth.get_width()}x{source_depth.get_height()} "
+                f"to color={color_frame.get_width()}x{color_frame.get_height()}; "
+                "the SDK returned no compatible aligned frame",
+            )
+            return
+        if hasattr(aligned, "as_frame_set"):
+            aligned = aligned.as_frame_set()
+        if not hasattr(aligned, "get_depth_frame"):
+            raise RuntimeError("Orbbec align filter did not return a frameset")
+        depth_frame = aligned.get_depth_frame()
+        if not depth_frame:
+            return
+        if hasattr(depth_frame, "as_depth_frame"):
+            depth_frame = depth_frame.as_depth_frame()
+
+        width = int(depth_frame.get_width())
+        height = int(depth_frame.get_height())
+        color_width = int(color_frame.get_width())
+        color_height = int(color_frame.get_height())
+        if (width, height) != (color_width, color_height):
+            raise RuntimeError(
+                "Orbbec aligned depth dimensions do not match color: "
+                f"depth={width}x{height}, color={color_width}x{color_height}"
+            )
+        depth = _depth_mm_from_sdk_data(
+            depth_frame.get_data(),
+            width,
+            height,
+            float(depth_frame.get_depth_scale()),
+        )
+        fx, fy, cx, cy, distortion = self._video_calibration(
+            color_frame, color_width, color_height
+        )
+        self.publish_calibrated_image(
+            depth,
+            "16UC1",
+            self.color_frame_id,
+            stamp,
+            self._pub_aligned_depth,
+            self._pub_aligned_depth_info,
+            fx=fx,
+            fy=fy,
+            cx=cx,
+            cy=cy,
+            distortion=distortion,
+            distortion_model="brown_conrady",
+            rectify=self.config.rectify_color,
             depth=True,
         )
 
@@ -515,16 +676,22 @@ class OrbbecCamera(CameraNode):
         )
 
     def _publish_motion(self, samples) -> None:
+        gyro_requested = self.publishers_requested(self._pub_gyro)
+        accel_requested = self.publishers_requested(self._pub_accel)
+        if not gyro_requested and not accel_requested:
+            return
         for kind, x, y, z in samples:
-            message = Imu()
-            message.header.stamp = self.get_clock().now().to_msg()
-            if kind == "gyro" and self._pub_gyro is not None:
+            if kind == "gyro" and gyro_requested:
+                message = Imu()
+                message.header.stamp = self.get_clock().now().to_msg()
                 message.header.frame_id = self.gyro_frame_id
                 message.angular_velocity.x = x
                 message.angular_velocity.y = y
                 message.angular_velocity.z = z
                 self._pub_gyro.publish(message)
-            elif kind == "accel" and self._pub_accel is not None:
+            elif kind == "accel" and accel_requested:
+                message = Imu()
+                message.header.stamp = self.get_clock().now().to_msg()
                 message.header.frame_id = self.accel_frame_id
                 message.linear_acceleration.x = x
                 message.linear_acceleration.y = y
@@ -555,6 +722,7 @@ class OrbbecCamera(CameraNode):
         self._sdk_context = None
 
     def destroy_node(self):
+        self.stop_pointcloud_worker()
         self._stop_sdk()
         return super().destroy_node()
 
