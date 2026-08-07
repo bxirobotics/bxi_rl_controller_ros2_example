@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
 import warnings
 
 from .backends import (
@@ -18,6 +20,14 @@ from .model import ModelSpec
 
 class BackendUnavailableError(RuntimeError):
     pass
+
+
+class _LoggerLike(Protocol):
+    def info(self, message: str) -> None:
+        ...
+
+    def warning(self, message: str) -> None:
+        ...
 
 
 class BackendRegistry:
@@ -51,12 +61,67 @@ class InferenceRuntime:
         *,
         registry: BackendRegistry | None = None,
         options: RuntimeOptions | None = None,
+        logger: _LoggerLike | None = None,
     ) -> None:
         self.registry = registry or BackendRegistry(
             (RknnBackendFactory(), OpenVinoBackendFactory(), OnnxBackendFactory())
         )
         self.options = options or RuntimeOptions()
-        self._warned_fallbacks: set[tuple[tuple[str, ...], str]] = set()
+        self._logger = logger
+        self._warned_fallbacks: set[tuple[str, tuple[str, ...], str]] = set()
+
+    def set_logger(self, logger: _LoggerLike | None) -> None:
+        """Attach the host logger before model resources begin loading."""
+
+        self._logger = logger
+
+    @staticmethod
+    def _model_path(spec: ModelSpec) -> Path:
+        for artifact in spec.artifacts:
+            source = getattr(artifact, "source_onnx", None)
+            if source is not None:
+                return Path(source).expanduser().resolve()
+        for artifact in spec.artifacts:
+            path = artifact.resolved_path
+            if path.suffix.lower() == ".onnx":
+                return path
+        return spec.artifacts[0].resolved_path
+
+    def _log_selection(
+        self,
+        *,
+        spec: ModelSpec,
+        requested: str,
+        selected: InferenceBackend,
+        artifact_path: Path,
+        skipped: list[str],
+    ) -> None:
+        model_path = self._model_path(spec)
+        prefix = (
+            "inference backend selected: "
+            f"model={model_path.name}, model_path={model_path}, "
+            f"requested={requested}, selected_backend={selected.backend_name}, "
+            f"artifact={artifact_path}"
+        )
+        logger = self._logger
+        if requested == "auto" and skipped and self.options.warn_on_fallback:
+            message = (
+                prefix
+                + "; fallback_reasons="
+                + " | ".join(skipped)
+                + f"; selected {selected.backend_name}"
+            )
+            warning_key = (str(model_path), tuple(skipped), selected.backend_name)
+            if warning_key in self._warned_fallbacks:
+                return
+            self._warned_fallbacks.add(warning_key)
+            if logger is not None:
+                logger.warning(message)
+            else:
+                warnings.warn(message, RuntimeWarning, stacklevel=3)
+            return
+        if logger is not None:
+            logger.info(prefix)
 
     def open_backend(
         self,
@@ -95,17 +160,13 @@ class InferenceRuntime:
                 skipped.append(detail)
                 continue
 
-            if requested == "auto" and skipped and self.options.warn_on_fallback:
-                warning_key = (tuple(skipped), selected.backend_name)
-                if warning_key not in self._warned_fallbacks:
-                    self._warned_fallbacks.add(warning_key)
-                    warnings.warn(
-                        "inference backend fallback: "
-                        + "; ".join(skipped)
-                        + f"; selected {selected.backend_name}",
-                        RuntimeWarning,
-                        stacklevel=2,
-                    )
+            self._log_selection(
+                spec=spec,
+                requested=requested,
+                selected=selected,
+                artifact_path=artifact.resolved_path,
+                skipped=skipped,
+            )
             return selected
 
         if not matched:

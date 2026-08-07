@@ -53,22 +53,29 @@ class RknnBackend(InferenceBackend):
         runtime_input_names = artifact.runtime_input_names or spec.input_names
         self.input_names = spec.input_names
         self.output_names = spec.output_names
+        self._runtime_input_names = tuple(runtime_input_names)
         self._input_shapes = dict(artifact.input_shapes)
         self._output_shapes = dict(artifact.output_shapes)
         self._metadata = dict(artifact.metadata)
         if (
-            not self._metadata or not self._input_shapes or not self._output_shapes
+            not self._metadata
+            or any(name not in self._input_shapes for name in self.input_names)
+            or any(name not in self._input_shapes for name in self._runtime_input_names)
+            or any(name not in self._output_shapes for name in self.output_names)
         ) and (artifact.source_onnx is not None):
             metadata, input_shapes, output_shapes = _read_onnx_description(
                 Path(artifact.source_onnx)
             )
-            if not self._metadata:
-                self._metadata = dict(metadata)
-            if not self._input_shapes:
-                self._input_shapes = dict(input_shapes)
-            if not self._output_shapes:
-                self._output_shapes = dict(output_shapes)
-        missing_inputs = set(self.input_names) - self._input_shapes.keys()
+            for name, value in metadata:
+                self._metadata.setdefault(name, value)
+            for name, shape in input_shapes:
+                self._input_shapes.setdefault(name, shape)
+            for name, shape in output_shapes:
+                self._output_shapes.setdefault(name, shape)
+        required_input_descriptions = set(self.input_names).union(
+            self._runtime_input_names
+        )
+        missing_inputs = required_input_descriptions - self._input_shapes.keys()
         missing_outputs = set(self.output_names) - self._output_shapes.keys()
         if missing_inputs or missing_outputs:
             self._runtime.release()
@@ -77,7 +84,6 @@ class RknnBackend(InferenceBackend):
                 f"missing inputs={sorted(missing_inputs)}, "
                 f"missing outputs={sorted(missing_outputs)}"
             )
-        self._runtime_input_names = tuple(runtime_input_names)
         self._ordered_inputs = [None] * len(self._runtime_input_names)
         self._outputs: dict[str, NDArray[np.generic]] = {}
         try:

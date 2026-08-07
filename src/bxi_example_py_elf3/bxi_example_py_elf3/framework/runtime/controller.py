@@ -15,7 +15,7 @@ from bxi_example_py_elf3.framework.joints import (
     JointLayout,
     JointStateView,
 )
-from bxi_example_py_elf3.framework.inference import InferenceFrame
+from bxi_example_py_elf3.framework.inference import InferenceFrame, default_runtime
 from bxi_example_py_elf3.framework.mod_api import (
     MotorFrame,
     RobotControlState,
@@ -55,6 +55,7 @@ class RobotControlFramework:
         self._ros_node = ros_node
         self._loggers = loggers
         self._logger = loggers.framework("controller")
+        default_runtime().set_logger(loggers.framework("inference"))
         self._closed = True
         if control_period <= 0.0:
             raise ValueError("control_period must be greater than zero")

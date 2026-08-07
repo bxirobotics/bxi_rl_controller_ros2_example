@@ -50,18 +50,14 @@ python3 tools/benchmark/backend_benchmark.py path/to/model.onnx \
   --input-range obs_history=-1,1 \
   --input-range depth_data=-0.5,0.5
 
-# Compare one model with an exact, named set of representative inputs
-python3 tools/benchmark/backend_benchmark.py path/to/model.onnx \
-  --input-npz /path/to/model-inputs.npz
-
 # Explicit report filename
 python3 tools/benchmark/backend_benchmark.py --json results/my-platform.json
 ```
 
-`--input-npz` requires exactly one model. Its array names, shapes and dtypes
-must exactly match the ONNX inputs, and all numeric values must be finite. The
-JSON report records the effective per-model seed and observed input minima and
-maxima so precision reports can be reproduced.
+The JSON report records the effective per-model seed and observed input minima
+and maxima so generated-input performance reports can be reproduced. Real
+policy input validation belongs to the live backend-comparison Mod, where the
+policy's own observation preprocessing and history construction are active.
 
 RKNN conversion remains opt-in. Converted models are stored in the ignored
 benchmark cache instead of beside source assets. An unquantized conversion can
@@ -73,11 +69,14 @@ BXI_RKNN_CONVERT_ON_LOAD=rk3588 \
 python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 ```
 
-The benchmark converts only the policy output named `actions` by default. This
-also avoids an RKNN Toolkit 2.3.2 optimizer bug in ONNX models that expose
-several differently shaped reference-trajectory outputs. A production policy
-that consumes more outputs must list the complete contract explicitly; the
-tool derives the corresponding physical input set from the ONNX graph:
+When an existing RKNN cache has a `.rknn.build.json` sidecar, the benchmark uses
+that cache's complete output contract automatically. For a new conversion or a
+legacy cache without a sidecar, it converts only the policy output named
+`actions` by default. This also avoids an RKNN Toolkit 2.3.2 optimizer bug in
+ONNX models that expose several differently shaped reference-trajectory
+outputs. A new production model that consumes more outputs must list the
+complete contract explicitly; the tool derives the corresponding physical
+input set from the ONNX graph:
 
 ```bash
 BXI_RKNN_CONVERT_ON_LOAD='{"target":"rk3588","force_rebuild":true}' \

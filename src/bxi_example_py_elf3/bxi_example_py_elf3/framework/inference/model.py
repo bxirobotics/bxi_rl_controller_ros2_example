@@ -121,11 +121,10 @@ class ModelSpec:
                     conversion_output_names=logical_output_names,
                     core_mask=rknn_core_mask,
                     runtime_input_names=rknn_inputs,
-                    input_shapes=tuple(
-                        (name, shape)
-                        for name, shape in input_shapes
-                        if name in rknn_inputs
-                    ),
+                    # Keep the complete logical ONNX description here. The
+                    # physical RKNN subset is represented independently by
+                    # runtime_input_names and is filtered by the builder.
+                    input_shapes=input_shapes,
                     output_shapes=tuple(
                         (name, shape)
                         for name, shape in output_shapes
