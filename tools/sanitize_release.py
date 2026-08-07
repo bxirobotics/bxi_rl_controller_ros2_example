@@ -23,6 +23,10 @@ from bxi_example_py_elf3.framework.mod_api_version import (  # noqa: E402
     parse_version_constraint,
     version_matches,
 )
+from bxi_example_py_elf3.framework.platform.cpu_affinity import (  # noqa: E402
+    CpuAffinityRole,
+    read_cpu_affinity,
+)
 
 
 DEFAULT_MOD_ROOT = Path("src/bxi_example_py_elf3/mods")
@@ -209,6 +213,7 @@ def validate_node_declaration(
         "depends_on",
         "shutdown",
         "runtime_profile",
+        "scheduling",
     }
     unknown_fields = set(node) - allowed_fields
     if unknown_fields:
@@ -256,6 +261,21 @@ def validate_node_declaration(
         raise ValueError(f"{context}.execution is invalid")
     if runtime != "python" and execution != "process":
         raise ValueError(f"{context}.execution must be 'process' for {runtime}")
+    scheduling = node.get("scheduling", {})
+    if not isinstance(scheduling, Mapping):
+        raise ValueError(f"{context}.scheduling must be a map")
+    unknown_scheduling = set(scheduling) - {"cpu_affinity"}
+    if unknown_scheduling:
+        raise ValueError(
+            f"{context}.scheduling has unknown fields: {sorted(unknown_scheduling)}"
+        )
+    if execution != "process" and "scheduling" in node:
+        raise ValueError(f"{context}.scheduling requires process execution")
+    read_cpu_affinity(
+        scheduling.get("cpu_affinity"),
+        f"{context}.scheduling.cpu_affinity",
+        default=CpuAffinityRole.SHARED,
+    )
     runtime_profile = node.get("runtime_profile")
     if runtime_profile is not None and (
         not isinstance(runtime_profile, str) or not runtime_profile
