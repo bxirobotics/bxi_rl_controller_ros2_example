@@ -49,20 +49,20 @@ ros2 run bxi_depth_camera cameras-inspect --watch \
 /hardware/<camera_name>/accel/sample
 ```
 
-例如 MuJoCo 中 `<camera name="body_depth_camera">` 对应真机
-`/hardware/body_depth_camera/depth/image_rect_raw`。序列号只用于打开物理设备，不进入策略
+例如 MuJoCo 中 `<camera name="head_depth_camera">` 对应真机
+`/hardware/head_depth_camera/depth/image_rect_raw`。序列号只用于打开物理设备，不进入策略
 话题名称。
 
 未配置序列号映射且只发现一台相机时，默认自动使用逻辑名称
-`body_depth_camera`，因此单相机机器人不需要配置序列号：
+`head_depth_camera`，因此单相机机器人不需要配置序列号：
 
 ```text
-/hardware/body_depth_camera/color/image_raw
-/hardware/body_depth_camera/depth/image_rect_raw
+/hardware/head_depth_camera/color/image_raw
+/hardware/head_depth_camera/depth/image_rect_raw
 ```
 
 该名称由 `single_camera_name` 参数控制。发现两台或更多未映射相机时，为避免连接
-顺序改变身体相机身份，自动回退为 `SN_<serial>`；此时应通过
+顺序改变头部相机身份，自动回退为 `SN_<serial>`；此时应通过
 `cameras.<logical_name>.serial_no` 明确映射。显式序列号映射始终优先。运行中插拔使
 设备数量在一台和多台之间变化时，相机 worker 会重启并切换到对应话题名称。
 
@@ -99,7 +99,7 @@ ros2 launch bxi_depth_camera cameras.launch.py \
 /depth_camera_manager:
   ros__parameters:
     cameras:
-      body_depth_camera:
+      head_depth_camera:
         serial_no: "349422070502"
         depth_module:
           rectification:
@@ -149,7 +149,7 @@ ros2 launch bxi_depth_camera cameras.launch.py serial_no:=349422070502
 
 ```bash
 ros2 param set /depth_camera_manager \
-  cameras.body_depth_camera.serial_no '"349422070502"'
+  cameras.head_depth_camera.serial_no '"349422070502"'
 ```
 
 部署时更适合保存为每台机器自己的 YAML：
@@ -158,7 +158,7 @@ ros2 param set /depth_camera_manager \
 /depth_camera_manager:
   ros__parameters:
     cameras:
-      body_depth_camera:
+      head_depth_camera:
         serial_no: "349422070502"
         depth_module:
           depth_profile: "640x480x30"
@@ -176,7 +176,7 @@ pipeline 会重建：
 
 ```bash
 ros2 param set /depth_camera_manager \
-  cameras.body_depth_camera.depth_module.depth_profile "640x480x30"
+  cameras.head_depth_camera.depth_module.depth_profile "640x480x30"
 
 ros2 param set /depth_camera_manager \
   cameras.rear_cam.depth_module.depth_profile "848x480x30"
@@ -187,7 +187,7 @@ pipeline：
 
 ```bash
 ros2 param delete /depth_camera_manager \
-  cameras.body_depth_camera.depth_module.depth_profile
+  cameras.head_depth_camera.depth_module.depth_profile
 ```
 
 全局相机参数也支持运行时修改；修改后会重建所有已连接相机：
