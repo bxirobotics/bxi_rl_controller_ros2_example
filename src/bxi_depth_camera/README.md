@@ -27,7 +27,22 @@ sudo apt install -y \
 不需要安装 `ros-humble-librealsense2`、`librealsense2-dev` 或系统版 Orbbec SDK。
 `libusb`、`libudev`、glibc 和 libstdc++ 属于操作系统基础库，不随包复制。
 
-首次部署时安装两家相机的 udev 规则，然后重新插拔相机：
+首次部署时，用包内脚本一键安装 Orbbec 和 RealSense 的 udev 规则：
+
+```bash
+source install/setup.bash
+ros2 run bxi_depth_camera install-udev-rules
+```
+
+也可以在构建前直接从源码树运行；脚本路径不依赖仓库所在位置：
+
+```bash
+src/bxi_depth_camera/tools/install_udev_rules.sh
+```
+
+脚本会按当前 CPU 架构寻找随包内置的规则，自动使用 `sudo` 安装、重新加载 udev，并
+重新触发已连接的 USB、IIO、HID 和 Video4Linux 设备。执行成功后仍建议重新插拔两种
+相机。以下是无需脚本时的手动安装方式：
 
 ```bash
 case "$(uname -m)" in

@@ -169,6 +169,11 @@ install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(FILES launch/cameras.launch.py DESTINATION share/${PROJECT_NAME}/launch)
 install(FILES README.md DESTINATION share/${PROJECT_NAME})
 install(
+  PROGRAMS tools/install_udev_rules.sh
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME install-udev-rules
+)
+install(
   DIRECTORY "${BXI_ORBBEC_ROOT}/lib/"
   DESTINATION lib
   USE_SOURCE_PERMISSIONS
