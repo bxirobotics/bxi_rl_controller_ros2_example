@@ -87,6 +87,17 @@ jobs:
               -Wall -Wextra -Wpedantic
           "
 
+      - name: Stage Runtime Dependency Installer
+        run: |
+          bash -n deploy_environment.sh
+          install -m 0755 deploy_environment.sh \
+            "${PACKAGE_TARGET_PATH}/deploy_environment.sh"
+          install -m 0644 requirement.txt \
+            "${PACKAGE_TARGET_PATH}/requirement.txt"
+          "${PACKAGE_TARGET_PATH}/deploy_environment.sh" --help >/dev/null
+          test -x "${PACKAGE_TARGET_PATH}/deploy_environment.sh"
+          test -r "${PACKAGE_TARGET_PATH}/requirement.txt"
+
       - name: Write Package Metadata
         run: |
           printf '%s\n' "${{ env.tag_name }}" | tee "${PACKAGE_TARGET_PATH}/.version" >/dev/null
@@ -96,6 +107,10 @@ jobs:
         run: |
           ARTIFACT="${PACKAGE_NAME}_${{ env.tag_name }}.tar.gz"
           tar -czvf "${ARTIFACT}" -C /opt/bxi "${PACKAGE_NAME}"
+          tar -tzf "${ARTIFACT}" | grep -Fx \
+            "${PACKAGE_NAME}/deploy_environment.sh"
+          tar -tzf "${ARTIFACT}" | grep -Fx \
+            "${PACKAGE_NAME}/requirement.txt"
           sha256sum "${ARTIFACT}" > "${ARTIFACT}.sha256"
 
       - name: Prepare Release Artifact
