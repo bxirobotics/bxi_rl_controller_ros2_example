@@ -491,6 +491,7 @@ def _cases_for_model(
     include_auto: bool,
     rknn_target: str | None,
     rknn_cache: Path,
+    rknn_output_names: tuple[str, ...],
     dynamic_dimension: int,
     shape_overrides: dict[str, tuple[int, ...]],
 ) -> list[BenchmarkCase]:
@@ -572,7 +573,14 @@ def _cases_for_model(
     else:
         rknn_path = _cached_rknn_path(model.path, rknn_cache)
     if adjacent_rknn.is_file() or rknn_path.is_file() or conversion_enabled:
-        rknn_outputs = tuple(
+        available_outputs = {item.name for item in model.outputs}
+        missing_outputs = set(rknn_output_names) - available_outputs
+        if missing_outputs:
+            raise ValueError(
+                "requested RKNN output(s) do not exist in "
+                f"{model.path.name}: {sorted(missing_outputs)}"
+            )
+        rknn_outputs = rknn_output_names or tuple(
             item.name for item in model.outputs if item.name == "actions"
         )
         if not rknn_outputs and model.outputs:
@@ -1238,6 +1246,16 @@ def _arguments() -> argparse.Namespace:
         default=ROOT / "tools/benchmark/cache/rknn",
         help="output cache used when RKNN conversion is explicitly enabled",
     )
+    parser.add_argument(
+        "--rknn-output",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "RKNN output to retain; repeat to preserve a multi-output production "
+            "contract. By default only actions (or the first model output) is used"
+        ),
+    )
     parser.add_argument("--seed", type=int, default=20260729)
     parser.add_argument(
         "--case-timeout",
@@ -1463,6 +1481,7 @@ def main() -> int:
             not args.no_openvino_auto,
             args.rknn_target,
             args.rknn_cache.expanduser().resolve(),
+            tuple(args.rknn_output),
             args.dynamic_dim,
             args.shape_overrides,
         ):

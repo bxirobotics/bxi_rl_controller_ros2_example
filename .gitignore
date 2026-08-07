@@ -25,3 +25,4 @@ src/livox_ros_driver2/
 !.agents/
 src/bxi_example_py_elf3/mods/private_mods/
 *.rknn
+*.rknn.build.json

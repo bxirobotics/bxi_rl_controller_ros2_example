@@ -249,6 +249,7 @@ def _fingerprint(
     settings: _ConversionSettings,
     previous: Mapping[str, object] | None,
     toolkit_version: str | None,
+    input_shapes: tuple[tuple[str, tuple[object, ...]], ...],
 ) -> dict[str, object]:
     previous_source = previous.get("source") if previous else None
     if not isinstance(previous_source, Mapping):
@@ -269,7 +270,100 @@ def _fingerprint(
         "dataset": dataset,
         "config": _json_value(dict(settings.config)),
         "outputs": list(settings.output_names),
+        "inputs": [
+            {"name": name, "shape": _json_value(shape)} for name, shape in input_shapes
+        ],
     }
+
+
+def _runtime_input_shapes(
+    artifact: RknnArtifact,
+) -> tuple[tuple[str, tuple[object, ...]], ...]:
+    """Return physical RKNN inputs in runtime order, rejecting incomplete specs."""
+
+    declared = dict(artifact.input_shapes)
+    if not artifact.runtime_input_names:
+        return artifact.input_shapes
+    missing = [name for name in artifact.runtime_input_names if name not in declared]
+    if missing:
+        raise ValueError(
+            "RKNN artifact is missing shapes for runtime inputs: " + ", ".join(missing)
+        )
+    return tuple((name, declared[name]) for name in artifact.runtime_input_names)
+
+
+def _manifest_contract_error(
+    artifact: RknnArtifact,
+    manifest: Mapping[str, object],
+    input_shapes: tuple[tuple[str, tuple[object, ...]], ...],
+) -> str | None:
+    """Check a portable cache sidecar without trusting machine-local paths."""
+
+    fingerprint = manifest.get("fingerprint")
+    if not isinstance(fingerprint, Mapping):
+        return "RKNN build manifest has no fingerprint object"
+
+    artifact_identity = manifest.get("artifact")
+    if artifact_identity is not None:
+        if not isinstance(artifact_identity, Mapping) or not isinstance(
+            artifact_identity.get("sha256"), str
+        ):
+            return "RKNN build manifest has an invalid artifact digest"
+        if artifact_identity["sha256"] != _sha256(artifact.resolved_path):
+            return "RKNN model does not match its build manifest"
+
+    expected_outputs = artifact.conversion_output_names
+    declared_outputs = fingerprint.get("outputs")
+    if expected_outputs:
+        if not isinstance(declared_outputs, list) or not all(
+            isinstance(item, str) for item in declared_outputs
+        ):
+            return "RKNN build manifest has no valid output contract"
+        if tuple(declared_outputs) != expected_outputs:
+            return (
+                "RKNN output contract mismatch: cache="
+                f"{tuple(declared_outputs)}, required={expected_outputs}"
+            )
+
+    declared_inputs = fingerprint.get("inputs")
+    if declared_inputs is not None:
+        if not isinstance(declared_inputs, list) or not all(
+            isinstance(item, Mapping)
+            and isinstance(item.get("name"), str)
+            and isinstance(item.get("shape"), list)
+            for item in declared_inputs
+        ):
+            return "RKNN build manifest has an invalid input contract"
+        cached_inputs = tuple(
+            (str(item["name"]), tuple(item["shape"])) for item in declared_inputs
+        )
+        if cached_inputs != input_shapes:
+            return (
+                "RKNN input contract mismatch: cache="
+                f"{cached_inputs}, required={input_shapes}"
+            )
+
+    source_identity = fingerprint.get("source")
+    source_path = (
+        Path(artifact.source_onnx).expanduser().resolve()
+        if artifact.source_onnx is not None
+        else None
+    )
+    if source_path is not None and source_path.is_file():
+        if not isinstance(source_identity, Mapping) or not isinstance(
+            source_identity.get("sha256"), str
+        ):
+            return "RKNN build manifest has no ONNX source digest"
+        if source_identity["sha256"] != _sha256(source_path):
+            return "RKNN cache was built from a different ONNX model"
+
+    cached_target = fingerprint.get("target")
+    if artifact.target and cached_target != artifact.target:
+        return (
+            f"RKNN target mismatch: cache={cached_target!r}, "
+            f"required={artifact.target!r}"
+        )
+    return None
 
 
 def _rknn_api():
@@ -289,7 +383,9 @@ def _check_result(operation: str, result: object) -> None:
         raise RuntimeError(f"RKNN {operation} failed with code {result}")
 
 
-def _write_manifest(path: Path, fingerprint: Mapping[str, object]) -> None:
+def _write_manifest(
+    path: Path, fingerprint: Mapping[str, object], artifact_path: Path
+) -> None:
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=path.name + ".", suffix=".tmp", dir=path.parent
     )
@@ -297,7 +393,14 @@ def _write_manifest(path: Path, fingerprint: Mapping[str, object]) -> None:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             json.dump(
-                {"schema": 1, "fingerprint": fingerprint},
+                {
+                    "schema": 1,
+                    "fingerprint": fingerprint,
+                    "artifact": {
+                        "size": artifact_path.stat().st_size,
+                        "sha256": _sha256(artifact_path),
+                    },
+                },
                 stream,
                 sort_keys=True,
                 separators=(",", ":"),
@@ -338,6 +441,7 @@ def _convert(
         settings,
         previous_fingerprint,
         _api_version(rknn_type, installed_version),
+        input_shapes,
     )
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=destination.stem + ".", suffix=".rknn", dir=destination.parent
@@ -376,7 +480,7 @@ def _convert(
         if not temporary.is_file() or temporary.stat().st_size == 0:
             raise RuntimeError("RKNN export_rknn did not create a non-empty model")
         os.replace(temporary, destination)
-        _write_manifest(manifest_path, fingerprint)
+        _write_manifest(manifest_path, fingerprint, destination)
     finally:
         try:
             if converter is not None:
@@ -392,15 +496,36 @@ def prepare_rknn_artifact(artifact: RknnArtifact) -> RknnPreparation:
     """Prepare an RKNN cache only when explicitly authorized by the environment."""
 
     destination = artifact.resolved_path
+    manifest_path = Path(str(destination) + ".build.json")
+    try:
+        input_shapes = _runtime_input_shapes(artifact)
+    except ValueError as exc:
+        return RknnPreparation(False, reason=str(exc))
     try:
         settings = _environment_settings(artifact)
     except (TypeError, ValueError) as exc:
         return RknnPreparation(False, reason=str(exc))
     if not settings.enabled:
         if destination.is_file():
+            if manifest_path.exists():
+                manifest = _read_manifest(manifest_path)
+                if manifest is None:
+                    return RknnPreparation(
+                        False,
+                        reason=f"invalid RKNN build manifest: {manifest_path}",
+                    )
+                contract_error = _manifest_contract_error(
+                    artifact, manifest, input_shapes
+                )
+                if contract_error:
+                    return RknnPreparation(False, reason=contract_error)
             return RknnPreparation(
                 True,
-                reason="RKNN model already exists",
+                reason=(
+                    "RKNN model and build contract are compatible"
+                    if manifest_path.exists()
+                    else "legacy RKNN model exists without a build contract"
+                ),
                 target=artifact.target,
             )
         return RknnPreparation(
@@ -440,7 +565,6 @@ def prepare_rknn_artifact(artifact: RknnArtifact) -> RknnPreparation:
         )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path = Path(str(destination) + ".build.json")
     lock_path = Path(str(destination) + ".build.lock")
     try:
         import fcntl
@@ -462,6 +586,7 @@ def prepare_rknn_artifact(artifact: RknnArtifact) -> RknnPreparation:
                 settings,
                 previous,
                 comparison_version,
+                input_shapes,
             )
             if not settings.force_rebuild and destination.is_file():
                 if previous == current:
@@ -495,7 +620,7 @@ def prepare_rknn_artifact(artifact: RknnArtifact) -> RknnPreparation:
                 source,
                 destination,
                 manifest_path,
-                artifact.input_shapes,
+                input_shapes,
                 settings,
                 previous,
                 installed_version,

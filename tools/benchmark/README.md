@@ -75,12 +75,16 @@ python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 
 The benchmark converts only the policy output named `actions` by default. This
 also avoids an RKNN Toolkit 2.3.2 optimizer bug in ONNX models that expose
-several differently shaped reference-trajectory outputs. Select outputs
-explicitly when needed:
+several differently shaped reference-trajectory outputs. A production policy
+that consumes more outputs must list the complete contract explicitly; the
+tool derives the corresponding physical input set from the ONNX graph:
 
 ```bash
-BXI_RKNN_CONVERT_ON_LOAD='{"target":"rk3588","outputs":["actions"],"force_rebuild":true}' \
-python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
+BXI_RKNN_CONVERT_ON_LOAD='{"target":"rk3588","force_rebuild":true}' \
+python3 tools/benchmark/backend_benchmark.py path/to/model.onnx \
+  --rknn-target rk3588 \
+  --rknn-output actions \
+  --rknn-output joint_pos
 ```
 
 ### Capture and build a representative INT8 model
@@ -170,12 +174,13 @@ corresponding ONNX model in one command:
 python3 tools/benchmark/install_rknn_cache.py
 ```
 
-The cache mirrors repository-relative paths, so only an RKNN file with a
-matching ONNX source is copied. Existing adjacent RKNN files are atomically
-updated and identical files are skipped. Preview the operation with
-`--dry-run`, or use `--cache PATH` for a non-default cache directory. The
-adjacent `.rknn` files can then be copied to the target board with the project
-and will be selected before OpenVINO and ONNX Runtime.
+The cache mirrors repository-relative paths. Installation requires both the
+RKNN file and its `.rknn.build.json` IO-contract sidecar, and copies both beside
+the matching ONNX source. Existing adjacent files are atomically updated and
+identical files are skipped. Preview the operation with `--dry-run`, or use
+`--cache PATH` for a non-default cache directory. At runtime the framework
+rejects a cache whose ONNX digest, input contract or output contract does not
+match the production `ModelSpec`, then safely tries OpenVINO or ONNX Runtime.
 
 Keep the machine idle, use the same power mode, and use the same benchmark
 settings when comparing reports from different platforms. The first backend in

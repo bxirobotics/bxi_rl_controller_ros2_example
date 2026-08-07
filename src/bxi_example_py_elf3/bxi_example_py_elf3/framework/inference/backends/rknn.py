@@ -56,9 +56,9 @@ class RknnBackend(InferenceBackend):
         self._input_shapes = dict(artifact.input_shapes)
         self._output_shapes = dict(artifact.output_shapes)
         self._metadata = dict(artifact.metadata)
-        if (not self._metadata or not self._input_shapes or not self._output_shapes) and (
-            artifact.source_onnx is not None
-        ):
+        if (
+            not self._metadata or not self._input_shapes or not self._output_shapes
+        ) and (artifact.source_onnx is not None):
             metadata, input_shapes, output_shapes = _read_onnx_description(
                 Path(artifact.source_onnx)
             )
@@ -80,6 +80,62 @@ class RknnBackend(InferenceBackend):
         self._runtime_input_names = tuple(runtime_input_names)
         self._ordered_inputs = [None] * len(self._runtime_input_names)
         self._outputs: dict[str, NDArray[np.generic]] = {}
+        try:
+            self._probe_runtime_contract()
+        except Exception:
+            self._runtime.release()
+            self._runtime = None
+            raise
+
+    @staticmethod
+    def _concrete_shape(name: str, shape: tuple[object, ...]) -> tuple[int, ...]:
+        if not shape or any(
+            not isinstance(dimension, int) or dimension <= 0 for dimension in shape
+        ):
+            raise ValueError(
+                f"RKNN input '{name}' needs a concrete positive shape for "
+                f"runtime contract validation, got {shape}"
+            )
+        return tuple(int(dimension) for dimension in shape)
+
+    def _probe_runtime_contract(self) -> None:
+        """Fail during resource preparation, never on the first control cycle."""
+
+        probe_inputs = [
+            np.zeros(
+                self._concrete_shape(name, self._input_shapes[name]),
+                dtype=np.float32,
+            )
+            for name in self._runtime_input_names
+        ]
+        try:
+            values = self._runtime.inference(inputs=probe_inputs)
+        except Exception as exc:
+            raise ValueError(
+                "RKNN runtime IO contract probe failed for "
+                f"inputs={self._runtime_input_names}, outputs={self.output_names}: "
+                f"{exc}"
+            ) from exc
+        if values is None:
+            raise ValueError(
+                "RKNN runtime IO contract probe returned no outputs for "
+                f"inputs={self._runtime_input_names}, outputs={self.output_names}; "
+                "the cached model was converted with a different IO contract"
+            )
+        if len(values) < len(self.output_names):
+            raise ValueError(
+                f"RKNN runtime exposes {len(values)} outputs, but the model "
+                f"contract requires {len(self.output_names)}: {self.output_names}"
+            )
+        for name, value in zip(self.output_names, values):
+            expected = self._output_shapes[name]
+            if all(isinstance(item, int) and item > 0 for item in expected):
+                actual = tuple(np.asarray(value).shape)
+                if actual != expected:
+                    raise ValueError(
+                        f"RKNN output '{name}' shape mismatch: runtime={actual}, "
+                        f"contract={expected}"
+                    )
 
     @property
     def metadata(self) -> Mapping[str, str]:
