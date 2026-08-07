@@ -1,0 +1,50 @@
+# bxi_rl_controller_ros2_example host Python environment
+#
+# Baseline: Ubuntu 22.04, ROS 2 Humble, CPython 3.10.
+# Install with the deployment script (it uses the interpreter selected for the
+# generated ROS executables and resolves this file relative to itself):
+#
+#   ./deploy_environment.sh
+#
+# ROS packages are intentionally not listed here. Install rclpy, launch,
+# ament_index_python, geometry_msgs, sensor_msgs, std_msgs, std_srvs,
+# rcl_interfaces and the BXI communication packages through ROS/apt and
+# /opt/bxi/bxi_ros2_pkg/setup.bash. PyPI packages with the same names are not
+# substitutes for the ROS 2 Humble packages.
+#
+# NumPy stays on the latest 1.x ABI because the bundled pyorbbecsdk2 2.1.1
+# runtimes for CPython 3.10 on both x86_64 and aarch64 declare numpy<2.
+# OpenCV 5 requires NumPy 2 on Python 3.10, so OpenCV 4.10 is the compatible
+# host baseline for the depth-camera manager and normal-depth Mod.
+numpy==1.26.4
+opencv-python==4.10.0.84
+
+# Geometry, PICO/GMR retargeting, MJLab utilities and simulation diagnostics.
+scipy==1.15.3
+mujoco==3.11.0
+
+# Model metadata plus the portable CPU inference fallback used when neither
+# RKNN Lite nor OpenVINO is available.
+onnx==1.20.1
+onnxruntime==1.23.2
+
+# Mod manifests, hardware-launch configuration and SONIC's host ROS bridge.
+PyYAML==6.0.2
+pyzmq==27.1.0
+
+# Deliberately excluded from this host file:
+#
+# - rknn-toolkit-lite2: install the official wheel matching the Rockchip SoC,
+#   architecture and CPython ABI. It is an optional target-specific backend.
+# - openvino: optional x86 inference backend; ONNX Runtime is the base fallback.
+# - pyrealsense2 and pyorbbecsdk2: bxi_depth_camera carries platform-matched
+#   vendor fallbacks and prefers a working system installation when present.
+# - xrobotoolkit_sdk: PICO Mods carry CPython/platform-matched vendor fallbacks.
+# - SONIC manager-only packages (msgpack and pinocchio): keep them in SONIC's
+#   isolated interpreter. Install/check them with:
+#
+#     src/bxi_example_py_elf3/mods/com.bxi.sonic/deploy_dependencies.sh \
+#       --mod-runtime
+#
+#   The corresponding dependency contract remains in
+#   src/bxi_example_py_elf3/mods/com.bxi.sonic/requirements-pico.txt.

@@ -27,7 +27,7 @@ class _Executor:
 
 
 class _Worker:
-    def __init__(self, stale=False, logical_name="body_depth_camera"):
+    def __init__(self, stale=False, logical_name="head_depth_camera"):
         self.stale = stale
         self.logical_name = logical_name
         self.destroyed = False
@@ -46,7 +46,7 @@ def _supervisor(discovered):
         retry_interval=2.0,
         get_logger=lambda: logger,
         take_pending_restarts=lambda: set(),
-        camera_name_for=lambda _serial: "body_depth_camera",
+        camera_name_for=lambda _serial: "head_depth_camera",
     )
     supervisor.executor = _Executor()
     supervisor.workers = {}
@@ -97,15 +97,15 @@ def test_reconcile_restarts_only_requested_camera():
     first = DeviceDescriptor("realsense", "123", "D435")
     second = DeviceDescriptor("orbbec", "ABC", "Gemini 335")
     supervisor, _logger = _supervisor({first.key: first, second.key: second})
-    first_worker = _Worker(logical_name="body_depth_camera")
+    first_worker = _Worker(logical_name="head_depth_camera")
     second_worker = _Worker(logical_name="rear_cam")
     supervisor.workers = {
         first.key: first_worker,
         second.key: second_worker,
     }
-    supervisor.manager.take_pending_restarts = lambda: {"body_depth_camera"}
+    supervisor.manager.take_pending_restarts = lambda: {"head_depth_camera"}
     supervisor.manager.camera_name_for = lambda serial: {
-        "123": "body_depth_camera",
+        "123": "head_depth_camera",
         "ABC": "rear_cam",
     }[serial]
     started = []
@@ -132,14 +132,14 @@ def test_reconcile_restarts_worker_when_single_camera_fallback_changes():
     assert [item[0] for item in started] == [descriptor]
 
 
-def test_single_unmapped_camera_uses_body_camera_name():
+def test_single_unmapped_camera_uses_head_camera_name():
     context = Context()
     context.init(initialize_logging=False)
     manager = CameraManager(context=context)
     try:
         manager.update_discovered_serials(["349422070502"])
 
-        assert manager.camera_name_for("349422070502") == "body_depth_camera"
+        assert manager.camera_name_for("349422070502") == "head_depth_camera"
     finally:
         manager.destroy_node()
         context.shutdown()

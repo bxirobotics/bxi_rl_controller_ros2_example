@@ -7,7 +7,7 @@
     serial_no: ""
     # 一台未映射的连接摄像机使用此稳定的逻辑名称。与两个或
     # 更多未映射的摄像机，每个摄像机都使用 SN_<serial> 直到明确映射为止。
-    single_camera_name: body_depth_camera
+    single_camera_name: head_depth_camera
     discovery_interval_sec: 1.0
     retry_interval_sec: 2.0
     device_timeout_sec: 3.0
@@ -19,9 +19,9 @@
     enable_gyro: false
     enable_accel: false
 
-    depth_module.depth_profile: "0,0,0"
+    depth_module.depth_profile: "848x480x30"
     depth_module.rectification.enable: false
-    rgb_camera.color_profile: "0,0,0"
+    rgb_camera.color_profile: "1920,1080,30"
     rgb_camera.rectification.enable: true
     infra1.rectification.enable: false
     infra2.rectification.enable: false
@@ -47,7 +47,7 @@
 
     # Example per-camera deployment mapping and overrides:
     # cameras:
-    #   body_depth_camera:
+    #   head_depth_camera:
     #     serial_no: "CP0F4630000L"
     #     depth_module:
     #       depth_profile: "848x480x30"
