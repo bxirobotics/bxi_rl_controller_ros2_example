@@ -1,28 +1,57 @@
-# .*
-!.vscode/
-.vscode/settings.json
-build/
-install/
-log/
-benchmarks/results/
-benchmarks/cache/
-tools/**/results/
-tools/**/cache/
-.cache/
-!.gitignore
-# proxsuite/
-bxi_hw_release/
-src/bxi_example_py_elf3/test/*
-!src/bxi_example_py_elf3/test/test_pico_gmr_motion.py
-!src/bxi_example_py_elf3/test/test_sonic_gripper.py
-__pycache__/
-MUJOCO_LOG.TXT
-.*/
-!.github/
+# ROS 2 / colcon build outputs
+/build/
+/install/
+/log/
+/bxi_hw_release/
+
+# ROS runtime data
 rosbag2_*/
-*.build.lock
-src/livox_ros_driver2/
-!.agents/
-src/bxi_example_py_elf3/mods/private_mods/
+**/.ros/
+MUJOCO_LOG.TXT
+
+# Python bytecode, test and analysis caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local Python environments and packaged-runtime smoke tests
+/.test_pack/
+/.venv/
+/venv/
+
+# Benchmark outputs and generated caches
+/benchmarks/cache/
+/benchmarks/results/
+/tools/**/cache/
+/tools/**/results/
+
+# Generated RKNN artifacts and conversion locks
 *.rknn
 *.rknn.build.json
+*.build.lock
+
+# Local/private source trees
+/src/livox_ros_driver2/
+/src/bxi_example_py_elf3/mods/private_mods/
+/src/bxi_example_py_elf3/test/*
+
+# Local editor, agent and documentation workspaces
+/.vscode/
+/.idea/
+/.wiki/
+/.codewhale/
+/.codex/
+/.deepseek/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# OS metadata
+.DS_Store
+Thumbs.db

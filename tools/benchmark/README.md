@@ -71,11 +71,15 @@ python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 
 When an existing RKNN cache has a `.rknn.build.json` sidecar, the benchmark uses
 that cache's complete output contract automatically. For a new conversion or a
-legacy cache without a sidecar, it converts only the policy output named
-`actions` by default. This also avoids an RKNN Toolkit 2.3.2 optimizer bug in
-ONNX models that expose several differently shaped reference-trajectory
-outputs. A new production model that consumes more outputs must list the
-complete contract explicitly; the tool derives the corresponding physical
+legacy cache without a sidecar, it converts only the learned policy output
+named `actions` by default. Deterministic reference-trajectory tensors such as
+`joint_pos` must be sampled from the policy's trajectory asset and composed
+with `actions` outside the inference backend. Besides making every backend use
+the same reference data, this avoids an RKNN Toolkit 2.3.2 optimizer bug in the
+exported `Cast/Clip/Gather` lookup graph.
+
+Only list additional outputs when they are genuine learned or recurrent model
+outputs consumed by the policy. The tool derives the corresponding physical
 input set from the ONNX graph:
 
 ```bash
@@ -83,7 +87,7 @@ BXI_RKNN_CONVERT_ON_LOAD='{"target":"rk3588","force_rebuild":true}' \
 python3 tools/benchmark/backend_benchmark.py path/to/model.onnx \
   --rknn-target rk3588 \
   --rknn-output actions \
-  --rknn-output joint_pos
+  --rknn-output recurrent_state
 ```
 
 ### Capture and build a representative INT8 model
