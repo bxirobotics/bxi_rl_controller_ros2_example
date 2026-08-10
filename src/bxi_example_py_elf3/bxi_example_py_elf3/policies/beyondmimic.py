@@ -339,17 +339,21 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
         self.motioninputpos = self.motion["joint_pos"]
         self.motioninputvel = self.motion["joint_vel"]
 
+        logical_outputs = (
+            ("actions", "joint_pos")
+            if reference_residual
+            else ("actions",)
+        )
         spec = (
             model_onnx_path
             if isinstance(model_onnx_path, ModelSpec)
             else ModelSpec.portable_onnx(
                 model_onnx_path,
                 input_names=("obs", "time_step"),
-                # Reference samples are deterministic policy data, not a
-                # learned model output. Keeping the backend contract limited
-                # to actions also prevents accelerator compilers from having
-                # to lower the exported Cast/Clip/Gather trajectory lookup.
-                output_names=("actions",),
+                output_names=logical_outputs,
+                # The framework preserves the complete logical ONNX contract
+                # and routes this compiler-compatible output subset to RKNN.
+                rknn_output_names=("actions",),
             )
         )
         self._backend = self._runtime.open_backend(spec, backend=backend)
@@ -467,13 +471,7 @@ class _HistoryMotionPolicy(_MotionGeometry, JointPolicy):
             out=self._scaled_action,
         )
         if self._reference_residual:
-            # The same NPZ drives both the command window and the residual
-            # target. Sampling it here keeps ONNX Runtime, OpenVINO and RKNN
-            # semantically identical even when an accelerator rewrites the
-            # exported model graph.
-            reference = self.motioninputpos[
-                min(int(self._frame), self._end_frame)
-            ]
+            reference = np.asarray(outputs["joint_pos"]).reshape(-1)
             np.add(reference, self._scaled_action, out=self._target)
         else:
             np.add(

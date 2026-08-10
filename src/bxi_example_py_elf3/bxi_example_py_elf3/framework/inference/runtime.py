@@ -10,12 +10,14 @@ import warnings
 
 from .backends import (
     BackendFactory,
+    CompositeBackend,
     InferenceBackend,
     OnnxBackendFactory,
     OpenVinoBackendFactory,
     RknnBackendFactory,
+    create_onnx_output_sidecar,
 )
-from .model import ModelSpec
+from .model import ModelSpec, OnnxArtifact, RknnArtifact
 
 
 class BackendUnavailableError(RuntimeError):
@@ -103,6 +105,12 @@ class InferenceRuntime:
             f"requested={requested}, selected_backend={selected.backend_name}, "
             f"artifact={artifact_path}"
         )
+        routes = getattr(selected, "output_routes", None)
+        if routes:
+            route_text = ", ".join(
+                f"{name}:{routes[name]}" for name in selected.output_names
+            )
+            prefix += f"; output_routes={{{route_text}}}"
         logger = self._logger
         if requested == "auto" and skipped and self.options.warn_on_fallback:
             message = (
@@ -122,6 +130,66 @@ class InferenceRuntime:
             return
         if logger is not None:
             logger.info(prefix)
+
+    @staticmethod
+    def _onnx_providers(
+        spec: ModelSpec,
+        source: Path,
+    ) -> tuple[str, ...] | None:
+        for artifact in spec.artifacts:
+            if (
+                isinstance(artifact, OnnxArtifact)
+                and artifact.resolved_path == source
+            ):
+                return artifact.providers
+        return None
+
+    def _open_rknn_candidate(
+        self,
+        factory: BackendFactory,
+        artifact: RknnArtifact,
+        spec: ModelSpec,
+    ) -> InferenceBackend:
+        physical_outputs = artifact.conversion_output_names or spec.output_names
+        unexpected = set(physical_outputs) - set(spec.output_names)
+        if unexpected:
+            raise ValueError(
+                "RKNN physical outputs are outside the logical model contract: "
+                f"{sorted(unexpected)}"
+            )
+        missing_outputs = tuple(
+            name for name in spec.output_names if name not in physical_outputs
+        )
+        if not missing_outputs:
+            return factory.open(artifact, spec)
+        if artifact.source_onnx is None:
+            raise ValueError(
+                "partial RKNN output contract requires source_onnx for the "
+                "missing-output sidecar"
+            )
+        if self.registry.get("onnxruntime") is None:
+            raise ValueError(
+                "partial RKNN output contract requires the onnxruntime backend"
+            )
+
+        physical_inputs = artifact.runtime_input_names or spec.input_names
+        primary_spec = ModelSpec(
+            artifacts=(artifact,),
+            input_names=physical_inputs,
+            output_names=physical_outputs,
+        )
+        primary = factory.open(artifact, primary_spec)
+        source = Path(artifact.source_onnx).expanduser().resolve()
+        try:
+            sidecar = create_onnx_output_sidecar(
+                source,
+                missing_outputs,
+                providers=self._onnx_providers(spec, source),
+            )
+            return CompositeBackend(primary, sidecar, spec)
+        except Exception:
+            primary.close()
+            raise
 
     def open_backend(
         self,
@@ -153,7 +221,11 @@ class InferenceRuntime:
                 skipped.append(detail)
                 continue
             try:
-                selected = factory.open(artifact, spec)
+                selected = (
+                    self._open_rknn_candidate(factory, artifact, spec)
+                    if isinstance(artifact, RknnArtifact)
+                    else factory.open(artifact, spec)
+                )
             except Exception as exc:
                 detail = f"{artifact.backend}: initialization failed: {exc}"
                 errors.append(detail)

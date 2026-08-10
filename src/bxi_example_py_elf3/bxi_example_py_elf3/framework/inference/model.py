@@ -87,13 +87,20 @@ class ModelSpec:
         rknn_path: str | Path | None = None,
         rknn_target: str | None = None,
         rknn_core_mask: object | None = None,
+        rknn_output_names: tuple[str, ...] | None = None,
         rknn_build_config: tuple[tuple[str, object], ...] = (),
         rknn_do_quantization: bool = False,
         rknn_dataset: str | Path | None = None,
         openvino_device: str = "AUTO",
         providers: tuple[str, ...] | None = None,
     ) -> "ModelSpec":
-        """Prefer RKNN, then OpenVINO, then ONNX Runtime for an ONNX file."""
+        """Prefer RKNN, then OpenVINO, then ONNX Runtime for an ONNX file.
+
+        ``output_names`` is the stable logical model contract. When
+        ``rknn_output_names`` declares a strict subset, the runtime executes
+        that subset on RKNN and preserves every missing output with an exact
+        ONNX Runtime sidecar extracted from the source graph.
+        """
 
         onnx_path = Path(path)
         rknn_model_path = (
@@ -104,8 +111,23 @@ class ModelSpec:
         inferred_output_names = tuple(name for name, _shape in output_shapes)
         logical_input_names = input_names or inferred_input_names
         logical_output_names = output_names or inferred_output_names
+        physical_rknn_outputs = (
+            logical_output_names
+            if rknn_output_names is None
+            else tuple(rknn_output_names)
+        )
+        if not physical_rknn_outputs:
+            raise ValueError("RKNN physical output names must not be empty")
+        unknown_rknn_outputs = set(physical_rknn_outputs) - set(
+            logical_output_names
+        )
+        if unknown_rknn_outputs:
+            raise ValueError(
+                "RKNN physical outputs are outside the logical model contract: "
+                f"{sorted(unknown_rknn_outputs)}"
+            )
         rknn_inputs = (
-            _required_onnx_inputs(onnx_path, logical_output_names)
+            _required_onnx_inputs(onnx_path, physical_rknn_outputs)
             or logical_input_names
         )
 
@@ -118,17 +140,17 @@ class ModelSpec:
                     do_quantization=rknn_do_quantization,
                     dataset=rknn_dataset,
                     build_config=rknn_build_config,
-                    conversion_output_names=logical_output_names,
+                    conversion_output_names=physical_rknn_outputs,
                     core_mask=rknn_core_mask,
                     runtime_input_names=rknn_inputs,
-                    # Keep the complete logical ONNX description here. The
-                    # physical RKNN subset is represented independently by
-                    # runtime_input_names and is filtered by the builder.
+                    # Keep all logical input descriptions so a composite
+                    # backend can expose one stable model contract. Physical
+                    # RKNN inputs and outputs are declared independently.
                     input_shapes=input_shapes,
                     output_shapes=tuple(
                         (name, shape)
                         for name, shape in output_shapes
-                        if name in logical_output_names
+                        if name in physical_rknn_outputs
                     ),
                     metadata=metadata,
                 ),
