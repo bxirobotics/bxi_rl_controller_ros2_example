@@ -1,151 +1,79 @@
-"""Button states used by the combined suspended test node."""
+"""Compatibility imports for the suspended motor-test Mod."""
 
-from .framework.control_state import ButtonControlState
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+import sys
 
-
-class SuspendedRunningState(ButtonControlState):
-    name = "running"
-    button = "X"
-    message_field = "btn_9"
-    source = "remote X button"
-
-    def is_active(self, node):
-        return node.run_enabled
-
-    def is_pending(self, node):
-        return node.pending_mode == "running"
-
-    def handle_button(self, node, request_received_at):
-        with node.state_lock:
-            if node.safety_fault:
-                node.get_logger().error(
-                    "X rejected after a latched safety fault; restart required"
-                )
-                return
-            if node.reset_stage != 2:
-                node.get_logger().warning(
-                    "X ignored because robot initialization is incomplete"
-                )
-                return
-            if self.is_active(node):
-                node._stop_running_locked(self.source)
-                return
-            if (
-                node.test_enabled
-                or node.joint_test_running
-                or node.limb_test_running
-            ):
-                node.get_logger().warning(
-                    "X rejected while vibration or joint test is active; "
-                    "stop the active mode first"
-                )
-                return
-            if node.returning_to_center or node.pending_mode:
-                node.get_logger().warning(
-                    "X ignored while a mode transition is in progress"
-                )
-                return
-            node._prepare_running_locked(self.source)
+try:
+    from ament_index_python.packages import (
+        PackageNotFoundError,
+        get_package_share_path,
+    )
+except ModuleNotFoundError:
+    PackageNotFoundError = Exception
+    get_package_share_path = None
 
 
-class SuspendedVibrationState(ButtonControlState):
-    name = "vibration"
-    button = "Y"
-    message_field = "btn_10"
-    source = "remote Y button"
-
-    def is_active(self, node):
-        return node.test_enabled
-
-    def is_pending(self, node):
-        return node.pending_mode in ("vibration", "vibration_start")
-
-    def handle_button(self, node, request_received_at):
-        with node.state_lock:
-            if node.safety_fault:
-                node.get_logger().error(
-                    "Y rejected after a latched safety fault; restart required"
-                )
-                return
-            if node.reset_stage != 2:
-                node.get_logger().warning(
-                    "Y ignored because robot initialization is incomplete"
-                )
-                return
-            if self.is_active(node):
-                node._stop_test(self.source)
-                return
-            if node.limb_test_running:
-                node.get_logger().warning(
-                    "Y rejected while the A-key joint test is active; press A "
-                    "to stop it first"
-                )
-                return
-            if node.joint_test_running:
-                node._cancel_joint_rotation_test(self.source)
-                return
-            if self.is_pending(node):
-                node.pending_mode = ""
-                node._queue_diagnostic_log(
-                    "info",
-                    "pending vibration start cancelled by remote Y button",
-                )
-                return
-            if (
-                node.returning_to_center
-                and node.return_owner == "limb_test_stop"
-            ):
-                node.pending_mode = "vibration"
-                node._queue_diagnostic_log(
-                    "info",
-                    "vibration requested during A-key safe return; vibration "
-                    "will start automatically after the zero pose is reached",
-                )
-                return
-            if node.returning_to_center or node.pending_mode:
-                node.get_logger().warning(
-                    "Y ignored while a mode transition is in progress"
-                )
-                return
-        node._request_vibration_start(self.source, request_received_at)
+_MOD_ID = "com.bxi.suspended_tests"
+_MODULE_NAME = "bxi_example_py_elf3._suspended_tests_mod_state"
 
 
-class SuspendedLimbTestState(ButtonControlState):
-    name = "whole_body_joint_test"
-    button = "A"
-    message_field = "btn_7"
-    source = "remote A button"
+def _candidate_state_files():
+    source_file = (
+        Path(__file__).resolve().parents[1] / "mods" / _MOD_ID / "state.py"
+    )
+    yield source_file
+    if get_package_share_path is None:
+        return
+    try:
+        yield (
+            get_package_share_path("bxi_example_py_elf3")
+            / "mods"
+            / _MOD_ID
+            / "state.py"
+        )
+    except PackageNotFoundError:
+        return
 
-    def is_active(self, node):
-        return node.limb_test_running
 
-    def is_pending(self, node):
-        return node.pending_mode == "limb_test"
+def _load_state_module():
+    cached = sys.modules.get(_MODULE_NAME)
+    if cached is not None:
+        return cached
+    for state_file in _candidate_state_files():
+        if not state_file.is_file():
+            continue
+        spec = spec_from_file_location(_MODULE_NAME, state_file)
+        if spec is None or spec.loader is None:
+            continue
+        module = module_from_spec(spec)
+        sys.modules[_MODULE_NAME] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(_MODULE_NAME, None)
+            raise
+        return module
+    raise ImportError("cannot find suspended tests Mod state.py")
 
-    def handle_button(self, node, request_received_at):
-        with node.state_lock:
-            if node.safety_fault:
-                node.get_logger().error(
-                    "A rejected after a latched safety fault; restart required"
-                )
-                return
-            if node.reset_stage != 2:
-                node.get_logger().warning(
-                    "A ignored because robot initialization is incomplete"
-                )
-                return
-            if self.is_active(node):
-                node._stop_limb_test_locked(self.source)
-                return
-            if node.test_enabled or node.joint_test_running:
-                node.get_logger().warning(
-                    "A rejected while vibration is active; stop it with Y "
-                    "first"
-                )
-                return
-            if node.returning_to_center or node.pending_mode:
-                node.get_logger().warning(
-                    "A ignored while a mode transition is in progress"
-                )
-                return
-            node._prepare_limb_test_locked(self.source)
+
+_state_module = _load_state_module()
+SuspendedRunningState = _state_module.SuspendedRunningState
+SuspendedVibrationState = _state_module.SuspendedVibrationState
+SuspendedLimbTestState = _state_module.SuspendedLimbTestState
+
+
+def create_button_states():
+    return (
+        SuspendedRunningState(),
+        SuspendedVibrationState(),
+        SuspendedLimbTestState(),
+    )
+
+
+__all__ = [
+    "create_button_states",
+    "SuspendedLimbTestState",
+    "SuspendedRunningState",
+    "SuspendedVibrationState",
+]

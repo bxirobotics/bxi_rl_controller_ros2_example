@@ -27,11 +27,7 @@ from .control.limb_sequence import (
     velocity_limited_duration,
 )
 from .control.trajectory import load_joint_trajectory, minimum_jerk_progress
-from .suspended_states import (
-    SuspendedLimbTestState,
-    SuspendedRunningState,
-    SuspendedVibrationState,
-)
+from .suspended_states import create_button_states
 
 
 class SuspendedTestNode(VibrationTestNode):
@@ -199,9 +195,11 @@ class SuspendedTestNode(VibrationTestNode):
             self.motion_button_mode,
             self.motion_command_resync_sec,
         )
-        self.run_button_state = SuspendedRunningState()
-        self.vibration_button_state = SuspendedVibrationState()
-        self.limb_test_button_state = SuspendedLimbTestState()
+        (
+            self.run_button_state,
+            self.vibration_button_state,
+            self.limb_test_button_state,
+        ) = create_button_states()
         self.remote_button_states = (
             (self.run_button, self.run_button_state),
             (self.vibration_button, self.vibration_button_state),
