@@ -27,6 +27,11 @@ from .control.limb_sequence import (
     velocity_limited_duration,
 )
 from .control.trajectory import load_joint_trajectory, minimum_jerk_progress
+from .suspended_states import (
+    SuspendedLimbTestState,
+    SuspendedRunningState,
+    SuspendedVibrationState,
+)
 
 
 class SuspendedTestNode(VibrationTestNode):
@@ -194,6 +199,14 @@ class SuspendedTestNode(VibrationTestNode):
             self.motion_button_mode,
             self.motion_command_resync_sec,
         )
+        self.run_button_state = SuspendedRunningState()
+        self.vibration_button_state = SuspendedVibrationState()
+        self.limb_test_button_state = SuspendedLimbTestState()
+        self.remote_button_states = (
+            (self.run_button, self.run_button_state),
+            (self.vibration_button, self.vibration_button_state),
+            (self.limb_test_button, self.limb_test_button_state),
+        )
         self.run_enabled = False
         self.run_phase = "idle"
         self.run_phase_started_at = 0.0
@@ -299,140 +312,21 @@ class SuspendedTestNode(VibrationTestNode):
                 self.last_remote_conflict_log_at = now
             return
 
+        activated_states = []
         with self.state_lock:
-            run_activated = self.run_button.update(msg.btn_9 != 0, now)
-            vibration_activated = self.vibration_button.update(
-                msg.btn_10 != 0,
-                now,
-            )
-            limb_test_activated = self.limb_test_button.update(
-                msg.btn_7 != 0,
-                now,
-            )
+            for button_edge, button_state in self.remote_button_states:
+                pressed = getattr(msg, button_state.message_field) != 0
+                if button_edge.update(pressed, now):
+                    activated_states.append(button_state)
 
-        if sum((run_activated, vibration_activated, limb_test_activated)) > 1:
+        if len(activated_states) > 1:
             self.get_logger().error(
                 "multiple X/Y/A buttons changed in the same remote sample; "
                 "all commands were ignored"
             )
             return
-        if run_activated:
-            self._handle_run_button()
-        elif vibration_activated:
-            self._handle_vibration_button(now)
-        elif limb_test_activated:
-            self._handle_limb_test_button()
-
-    def _handle_run_button(self):
-        with self.state_lock:
-            if self.safety_fault:
-                self.get_logger().error(
-                    "X rejected after a latched safety fault; restart required"
-                )
-                return
-            if self.reset_stage != 2:
-                self.get_logger().warning(
-                    "X ignored because robot initialization is incomplete"
-                )
-                return
-            if self.run_enabled:
-                self._stop_running_locked("remote X button")
-                return
-            if (
-                self.test_enabled
-                or self.joint_test_running
-                or self.limb_test_running
-            ):
-                self.get_logger().warning(
-                    "X rejected while vibration or joint test is active; "
-                    "stop the active mode first"
-                )
-                return
-            if self.returning_to_center or self.pending_mode:
-                self.get_logger().warning(
-                    "X ignored while a mode transition is in progress"
-                )
-                return
-            self._prepare_running_locked("remote X button")
-
-    def _handle_vibration_button(self, request_received_at):
-        with self.state_lock:
-            if self.safety_fault:
-                self.get_logger().error(
-                    "Y rejected after a latched safety fault; restart required"
-                )
-                return
-            if self.reset_stage != 2:
-                self.get_logger().warning(
-                    "Y ignored because robot initialization is incomplete"
-                )
-                return
-            if self.test_enabled:
-                self._stop_test("remote Y button")
-                return
-            if self.limb_test_running:
-                self.get_logger().warning(
-                    "Y rejected while the A-key joint test is active; press A "
-                    "to stop it first"
-                )
-                return
-            if self.joint_test_running:
-                self._cancel_joint_rotation_test("remote Y button")
-                return
-            if self.pending_mode in ("vibration", "vibration_start"):
-                self.pending_mode = ""
-                self._queue_diagnostic_log(
-                    "info",
-                    "pending vibration start cancelled by remote Y button",
-                )
-                return
-            if (
-                self.returning_to_center
-                and self.return_owner == "limb_test_stop"
-            ):
-                self.pending_mode = "vibration"
-                self._queue_diagnostic_log(
-                    "info",
-                    "vibration requested during A-key safe return; vibration "
-                    "will start automatically after the zero pose is reached",
-                )
-                return
-            if self.returning_to_center or self.pending_mode:
-                self.get_logger().warning(
-                    "Y ignored while a mode transition is in progress"
-                )
-                return
-        self._request_vibration_start(
-            "remote Y button", request_received_at
-        )
-
-    def _handle_limb_test_button(self):
-        with self.state_lock:
-            if self.safety_fault:
-                self.get_logger().error(
-                    "A rejected after a latched safety fault; restart required"
-                )
-                return
-            if self.reset_stage != 2:
-                self.get_logger().warning(
-                    "A ignored because robot initialization is incomplete"
-                )
-                return
-            if self.limb_test_running:
-                self._stop_limb_test_locked("remote A button")
-                return
-            if self.test_enabled or self.joint_test_running:
-                self.get_logger().warning(
-                    "A rejected while vibration is active; stop it with Y "
-                    "first"
-                )
-                return
-            if self.returning_to_center or self.pending_mode:
-                self.get_logger().warning(
-                    "A ignored while a mode transition is in progress"
-                )
-                return
-            self._prepare_limb_test_locked("remote A button")
+        if activated_states:
+            activated_states[0].handle_button(self, now)
 
     def _preflight_limb_plan(self):
         """Verify every full-range segment against model collision geoms."""

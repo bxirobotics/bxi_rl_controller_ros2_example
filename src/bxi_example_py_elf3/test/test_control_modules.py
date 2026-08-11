@@ -23,6 +23,11 @@ from bxi_example_py_elf3.control.trajectory import (
     JointTrajectory,
     minimum_jerk_progress,
 )
+from bxi_example_py_elf3.suspended_states import (
+    SuspendedLimbTestState,
+    SuspendedRunningState,
+    SuspendedVibrationState,
+)
 
 
 def test_shared_joint_configuration_is_consistent():
@@ -77,6 +82,22 @@ def test_x_and_y_use_independent_toggle_edges():
     assert not vibration_button.update(0, 1.1)
     assert not run_button.update(1, 1.2)
     assert vibration_button.update(1, 1.2)
+
+
+def test_suspended_button_states_have_independent_remote_fields():
+    states = (
+        SuspendedRunningState(),
+        SuspendedVibrationState(),
+        SuspendedLimbTestState(),
+    )
+    assert [state.button for state in states] == ["X", "Y", "A"]
+    assert [state.message_field for state in states] == [
+        "btn_9",
+        "btn_10",
+        "btn_7",
+    ]
+    assert len({state.name for state in states}) == len(states)
+    assert len({state.message_field for state in states}) == len(states)
 
 
 def test_minimum_jerk_blend_has_clamped_endpoints_and_is_monotonic():
