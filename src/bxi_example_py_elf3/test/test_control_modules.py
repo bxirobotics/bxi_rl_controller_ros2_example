@@ -1,3 +1,6 @@
+import inspect
+from pathlib import Path
+
 import numpy as np
 
 from bxi_example_py_elf3.control.elf3 import (
@@ -22,6 +25,12 @@ from bxi_example_py_elf3.control.limb_sequence import (
 from bxi_example_py_elf3.control.trajectory import (
     JointTrajectory,
     minimum_jerk_progress,
+)
+from bxi_example_py_elf3.suspended_states import (
+    SuspendedLimbTestState,
+    SuspendedRunningState,
+    SuspendedVibrationState,
+    create_button_states,
 )
 
 
@@ -77,6 +86,24 @@ def test_x_and_y_use_independent_toggle_edges():
     assert not vibration_button.update(0, 1.1)
     assert not run_button.update(1, 1.2)
     assert vibration_button.update(1, 1.2)
+
+
+def test_suspended_button_states_have_independent_remote_fields():
+    states = create_button_states()
+    assert isinstance(states[0], SuspendedRunningState)
+    assert isinstance(states[1], SuspendedVibrationState)
+    assert isinstance(states[2], SuspendedLimbTestState)
+    assert [state.button for state in states] == ["X", "Y", "A"]
+    assert [state.message_field for state in states] == [
+        "btn_9",
+        "btn_10",
+        "btn_7",
+    ]
+    assert len({state.name for state in states}) == len(states)
+    assert len({state.message_field for state in states}) == len(states)
+    state_file = Path(inspect.getsourcefile(SuspendedRunningState))
+    assert "mods" in state_file.parts
+    assert "com.bxi.suspended_tests" in state_file.parts
 
 
 def test_minimum_jerk_blend_has_clamped_endpoints_and_is_monotonic():

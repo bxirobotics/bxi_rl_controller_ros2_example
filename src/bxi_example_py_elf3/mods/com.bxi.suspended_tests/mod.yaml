@@ -1,0 +1,47 @@
+schema: 1
+id: com.bxi.suspended_tests
+name: Suspended motor tests
+version: 1.0.0
+api: "lightweight"
+enable: true
+entrypoint: plugin:create_mod
+visibility: public
+requires: []
+conflicts: []
+python_exports: []
+runtime_requirements:
+  python: []
+  ros:
+    - package: rclpy
+    - package: std_srvs
+  system: []
+
+events:
+  running:
+    slot: btn_9
+    value: 1
+  vibration:
+    slot: btn_10
+    value: 1
+  whole_body_joint_test:
+    slot: btn_7
+    value: 1
+
+states:
+  running:
+    manifest:
+      label: Suspended running trajectory
+      priority: 900
+      group: Tests
+  vibration:
+    manifest:
+      label: Centered vibration test
+      priority: 890
+      group: Tests
+      confirm: true
+  whole_body_joint_test:
+    manifest:
+      label: Full-range joint test
+      priority: 880
+      group: Tests
+      confirm: true
