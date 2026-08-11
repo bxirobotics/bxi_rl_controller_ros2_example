@@ -71,6 +71,11 @@ class SuspendedTestNode(VibrationTestNode):
                 "vibration_start_envelope_slack_rad", 0.001
             ).value
         )
+        self.vibration_start_center_tolerance_rad = float(
+            self.declare_parameter(
+                "vibration_start_center_tolerance_rad", 0.1
+            ).value
+        )
         self.limb_test_collision_margin_deg = float(
             self.declare_parameter(
                 "limb_test_collision_margin_deg", 5.0
@@ -126,9 +131,17 @@ class SuspendedTestNode(VibrationTestNode):
                 "limb_test_visual_check_period_sec",
                 self.limb_test_visual_check_period_sec,
             ),
+            (
+                "vibration_start_center_tolerance_rad",
+                self.vibration_start_center_tolerance_rad,
+            ),
         ):
             if not math.isfinite(value) or value <= 0.0:
                 raise ValueError("%s must be finite and > 0" % name)
+        if self.vibration_start_center_tolerance_rad > 0.1:
+            raise ValueError(
+                "vibration_start_center_tolerance_rad must be <= 0.1"
+            )
         if (
             not math.isfinite(self.vibration_start_envelope_slack_rad)
             or self.vibration_start_envelope_slack_rad < 0.0
@@ -243,10 +256,12 @@ class SuspendedTestNode(VibrationTestNode):
         )
         self.get_logger().info(
             "combined start tolerances: running/A center=%.3f deg, "
-            "vibration envelope slack=%.6f rad; vibration commands remain "
-            "clipped to the configured software position limits"
+            "vibration center=%.6f rad, vibration envelope slack=%.6f rad; "
+            "vibration commands remain clipped to the configured software "
+            "position limits"
             % (
                 math.degrees(self.limb_test_start_tolerance_rad),
+                self.vibration_start_center_tolerance_rad,
                 self.vibration_start_envelope_slack_rad,
             )
         )
@@ -723,8 +738,31 @@ class SuspendedTestNode(VibrationTestNode):
             return False
         with self.feedback_lock:
             measured = self.measured_positions.copy()
+        target_center = self.center_positions.copy()
+        center_error = np.abs(measured - target_center)
+        worst_center_index = int(np.argmax(center_error))
+        if (
+            center_error[worst_center_index]
+            > self.vibration_start_center_tolerance_rad
+        ):
+            with self.state_lock:
+                self.pending_mode = "vibration_start"
+                if now - self.vibration_last_settle_log_at >= 1.0:
+                    self._queue_diagnostic_log(
+                        "warning",
+                        "waiting for measured joints to settle within the "
+                        "vibration center tolerance: %s error %.6f rad "
+                        "exceeds %.6f rad"
+                        % (
+                            JOINT_NAMES[worst_center_index],
+                            center_error[worst_center_index],
+                            self.vibration_start_center_tolerance_rad,
+                        ),
+                    )
+                    self.vibration_last_settle_log_at = now
+            return False
         violations = self._envelope_violation_details(
-            measured,
+            target_center,
             self.amplitude_rad,
             self.active_joint_indices,
             slack_rad=self.vibration_start_envelope_slack_rad,
@@ -740,7 +778,10 @@ class SuspendedTestNode(VibrationTestNode):
                     )
                     self.vibration_last_settle_log_at = now
             return False
-        return self._start_test(request_received_at=now)
+        return self._start_test(
+            request_received_at=now,
+            center_override=target_center,
+        )
 
     def _prepare_running_locked(self, source):
         self.joint_test_passed = False
@@ -1112,7 +1153,7 @@ class SuspendedTestNode(VibrationTestNode):
             "starts vibration directly and A runs the full-range joint test"
         )
 
-    def _start_test(self, request_received_at=None):
+    def _start_test(self, request_received_at=None, center_override=None):
         with self.state_lock:
             if (
                 self.run_enabled
@@ -1126,6 +1167,7 @@ class SuspendedTestNode(VibrationTestNode):
         return super()._start_test(
             request_received_at=request_received_at,
             envelope_slack_rad=self.vibration_start_envelope_slack_rad,
+            center_override=center_override,
         )
 
     def _run_enable_service_callback(self, request, response):

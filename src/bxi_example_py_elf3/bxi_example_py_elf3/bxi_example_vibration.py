@@ -1725,8 +1725,19 @@ class VibrationTestNode(Node):
         self,
         request_received_at=None,
         envelope_slack_rad=0.0,
+        center_override=None,
     ):
         now = time.monotonic()
+        if center_override is not None:
+            center_override = np.asarray(center_override, dtype=np.float64)
+            if (
+                center_override.shape != (DOF_NUM,)
+                or not np.all(np.isfinite(center_override))
+            ):
+                return self._reject_start(
+                    "invalid vibration center override; expected %d finite "
+                    "joint positions" % DOF_NUM
+                )
         with self.state_lock:
             if self.safety_fault:
                 return self._reject_start(
@@ -1791,7 +1802,9 @@ class VibrationTestNode(Node):
             has_joint_state = self.has_joint_state
             measured_center = self.measured_positions.copy()
 
-        if use_precheck_center:
+        if center_override is not None:
+            candidate_center = center_override.copy()
+        elif use_precheck_center:
             candidate_center = precheck_center
             if has_joint_state:
                 center_error = np.abs(
