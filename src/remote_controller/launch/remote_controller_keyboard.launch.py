@@ -13,6 +13,7 @@ def launch_setup(context):
         "config/xbox_default.yaml",
     )
     arguments = [
+        "--keyboard",
         "--config", remote_config,
         "__log_level:=debug",
     ]

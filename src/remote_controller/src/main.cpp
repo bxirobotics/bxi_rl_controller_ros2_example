@@ -1,345 +1,223 @@
-#include <iostream>
-#include <atomic>
-#include <communication/msg/motion_commands.hpp>
-#include <linux/joystick.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
+#include <chrono>
+#include <cstdlib>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
 #include "rclcpp/rclcpp.hpp"
+#include "remote_controller/config.hpp"
+#include "remote_controller/input_device_manager.hpp"
+#include "remote_controller/input_mapper.hpp"
 
 using namespace std::chrono_literals;
-using namespace std;
+using remote_controller::InputMapper;
+using remote_controller::RemoteConfig;
 
-// XBOX joystick mapping reported by jstest for the deployed controller.
-#define JS_VELX_AXIS 3
-#define JS_VELX_AXIS_DIR -1
-#define JS_VELY_AXIS 0
-#define JS_VELY_AXIS_DIR -1
-#define JS_VELR_AXIS 6
-#define JS_VELR_AXIS_DIR -1
-
-#define JS_STOP_BT 11
-#define JS_START_BT 14
-#define JS_SWITCH_A 0
-#define JS_SWITCH_B 1
-#define JS_SWITCH_X 3
-#define JS_SWITCH_Y 4
-
-#define AXIS_DEAD_ZONE  1000
-
-#define MIN_SPEED_X -0.5
-#define MAX_SPEED_X 1.0
-#define MIN_SPEED_Y -0.4
-#define MAX_SPEED_Y 0.4
-#define MIN_SPEED_R -0.6
-#define MAX_SPEED_R 0.6
-
-#define AXIS_VALUE_MAX 32767
-
-#define STAND_HEIGHT 1.0
-#define STAND_HEIGHT_MIN    1.0
-#define STAND_HEIGHT_MAX    3.0
-
-static void run_shell_command(const char *command)
-{
-    int ret = system(command);
-    (void)ret;
-}
-
-static void stop_robot_processes()
-{
-    run_shell_command(
-        "killall -SIGINT hardware_elf3 bxi_example_hw "
-        "bxi_example_py_elf3 bxi_example_py_elf3_demo "
-        "bxi_example_py_elf3_vibration "
-        "bxi_example_py_elf3_suspended_tests "
-        "bxi_bms bxi_example_bms 2>/dev/null");
-    run_shell_command("sleep 1");
-}
-
-static void launch_suspended_tests_hw()
-{
-    run_shell_command("mkdir -p /var/log/bxi_log");
-    run_shell_command(
-        "ros2 launch bxi_example_py_elf3 "
-        "example_launch_suspended_tests_hw.launch.py "
-        "start_remote_controller:=false "
-        "> /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log "
-        "2>&1 &");
-    run_shell_command(
-        "ros2 launch bxi_example_bms bms.launch.py "
-        "> /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log "
-        "2>&1 &");
-}
-
-class COMPublisher : public rclcpp::Node{
+class COMPublisher : public rclcpp::Node {
 public:
-    COMPublisher(const char *_js_dev) : Node("COM_publisher"){
-        if (strlen(_js_dev) >= 128){
-            printf("dev:%s error\n", _js_dev);
-            exit(-1);
-        }
-
-        strcpy(_js_dev_name, _js_dev);
-        
-        while (rclcpp::ok()){
-            js_fd = open(_js_dev_name, O_RDONLY | O_NONBLOCK);
-            if (js_fd < 0){
-                printf("open:%s failed\n", _js_dev_name);
-                sleep(1);      
-            }
-            else{
-                printf("open js dev: %s\n", _js_dev_name);
-                break;
-            }
-        }
-
-        if (!rclcpp::ok()){
-            return;
-        }
-        
-        com_pub = this->create_publisher<communication::msg::MotionCommands>("motion_commands", 20);
+    COMPublisher(
+        const std::string &config_path,
+        const std::string &driver_filter,
+        bool driver_debug_enabled)
+        : Node("COM_publisher"),
+          mapper_(remote_controller::load_remote_config(config_path))
+    {
+        print_config_diagnostics(mapper_.config());
+        com_pub_ = this->create_publisher<communication::msg::MotionCommands>(
+            "motion_commands", 20);
         timer_ = this->create_wall_timer(10ms, std::bind(&COMPublisher::timer_callback, this));
-        js_loop_thread_ = std::thread(&COMPublisher::js_loop, this);
+
+        input_manager_.reset(new remote_controller::InputDeviceManager(
+            mapper_.config(),
+            mapper_,
+            lock_,
+            [this](const std::vector<std::string> &outputs) { dispatch_outputs(outputs); },
+            [this](const std::string &message) {
+                RCLCPP_INFO(this->get_logger(), "%s", message.c_str());
+            },
+            driver_debug_enabled,
+            driver_filter));
+        if (driver_debug_enabled) {
+            RCLCPP_INFO(this->get_logger(), "input driver debug is enabled");
+        }
     }
 
-    ~COMPublisher(){
-        running_.store(false);
-        if (js_loop_thread_.joinable()){
-            js_loop_thread_.join();
-        }
-        if (js_fd >= 0){
-            close(js_fd);
-            js_fd = -1;
+    ~COMPublisher()
+    {
+        if (input_manager_) {
+            input_manager_->stop();
         }
     }
 
 private:
     mutable std::mutex lock_;
-
-    char _js_dev_name[128] = {0};
-    int js_fd = -1;
-    double js_axis[20] = {0};   // original data of js axis data
-    double js_bt[20] = {0};    // original data of ja button data
-    std::thread js_loop_thread_;
-    std::atomic<bool> running_{true};
-
-    double velxy[2] = {0};                      //x y速度       (x,y speed)
-    double velxy_filt[2] = {0};                 //x y速度滤波值  (x,y speed filter)
-    double stand_height = STAND_HEIGHT;
-    double height_filt = STAND_HEIGHT;
-    double velr = 0;                            //旋转速度       (rotation speed)
-    double velr_filt = 0;
-
-    bool LB_press = false;              // 长按改变状态，弹起恢复                   (pressed for change state, release for recover)
-    bool RB_press = false;              // 长按改变状态，弹起恢复
-    bool launch_lock = false;           // 防止多次启动程序
-    // 按下RB的变量
-    bool normal_mode = false;           // 按下改变状态，切换为普通模式，站立走路跑步   (change to normal state,for stand run and walk)
-    bool zero_torque_mode = false;      // 按下改变状态，切换为零力模式               (change to zero torque mode)
-    bool pd_brake_mode = false;         // 按下改变状态，切换为pd抱死模式             (change to zero torque mode)
-    bool initial_pos_mode = false;      // 按下改变状态，切换为初始位置模式            (set motors to zero position)
-    // 按下LB的变量
-    bool host_mode = false;             // 按下改变状态，切换为host起身模式           (change to host mode, for stand up)
-    bool dance_mode = false;            // 按下改变状态，切换为跳舞模式               (change to dance mode)
-
-    bool dance_flag = false;            // 按下改变状态，暂停或继续跳舞               (stop or continue dancing)
-    bool vibration_flag = false;        // Y: 启动/停止吊挂振动测试
-    bool joint_test_flag = false;       // A: 启动/停止整机关节测试
-
-    double vel_offset = 0.0;
-
-    // timer_callback to publish messages
-    void timer_callback(){                 
-        auto message = communication::msg::MotionCommands();{    // initialize a ROS2 message
-            const std::lock_guard<std::mutex> guard(lock_);
-
-            velxy[0] = (js_axis[JS_VELX_AXIS] * JS_VELX_AXIS_DIR) / (double)AXIS_VALUE_MAX;
-            velxy[1] = (js_axis[JS_VELY_AXIS] * JS_VELY_AXIS_DIR) / (double)AXIS_VALUE_MAX;
-            velr = (js_axis[JS_VELR_AXIS] * JS_VELR_AXIS_DIR) / (double)AXIS_VALUE_MAX;
-
-            velxy[0] = fabs(velxy[0]) > AXIS_DEAD_ZONE / (double)AXIS_VALUE_MAX ? velxy[0] : 0;
-            velxy[1] = fabs(velxy[1]) > AXIS_DEAD_ZONE / (double)AXIS_VALUE_MAX ? velxy[1] : 0;
-            velr = fabs(velr) > AXIS_DEAD_ZONE / (double)AXIS_VALUE_MAX ? velr : 0;
-            
-            //按定义最大速度缩放
-            if (velxy[0] > 0){
-                velxy[0] *= MAX_SPEED_X;
-            }
-            else if (velxy[0] < 0){
-                velxy[0] *= -MIN_SPEED_X;
-            }
-
-            if (velxy[1] > 0){
-                velxy[1] *= MAX_SPEED_Y;
-            }
-            else if (velxy[1] < 0){
-                velxy[1] *= -MIN_SPEED_Y;
-            }
-
-            if (velr > 0){
-                velr *= MAX_SPEED_R;
-            }
-            else if (velr < 0){
-                velr *= -MIN_SPEED_R;
-            }
-
-            velxy_filt[0] = velxy[0] * 0.03 + velxy_filt[0] * 0.97;
-            velxy_filt[1] = velxy[1] * 0.03 + velxy_filt[1] * 0.97;
-
-            velr_filt = velr * 0.05 + velr_filt *  0.95;
-
-            message.vel_des.x = velxy_filt[0] + vel_offset;
-            message.vel_des.y = velxy_filt[1];
-            message.yawdot_des = velr_filt;
-            // message.mode = mode;
-
-            // RB组合键
-            message.btn_1 = normal_mode ? 1 : 0;
-            message.btn_2 = zero_torque_mode ? 1 : 0;
-            message.btn_3 = pd_brake_mode ? 1 : 0;
-            message.btn_4 = initial_pos_mode ? 1 : 0;
-
-            // LB组合键
-            message.btn_5 = dance_mode ? 1 : 0;
-            message.btn_6 = host_mode ? 1 : 0; 
-            message.btn_7 = joint_test_flag ? 1 : 0;
-            // message.btn_8 =  
-
-            // 纯按键
-            message.btn_9 = dance_flag ? 1 : 0;
-            message.btn_10 = vibration_flag ? 1 : 0;
-            // message.btn_11 = 
-            // message.btn_12 = 
-
-            height_filt = height_filt * 0.9 + stand_height * 0.1;
-            message.height_des = height_filt;
-        }
-
-        com_pub->publish(message);
-    }
-
-    void reset_value()
-    {
-        const std::lock_guard<std::mutex> guard(lock_);
-        memset(js_axis, 0, sizeof(js_axis));
-        memset(velxy, 0, sizeof(velxy));
-        memset(velxy_filt, 0, sizeof(velxy_filt));
-        velr_filt = 0;
-        height_filt = STAND_HEIGHT;
-        dance_flag = false;
-        vibration_flag = false;
-        joint_test_flag = false;
-    }
-
-    void handle_button_press(int button)
-    {
-        if (button == JS_STOP_BT){
-            printf("EMERGENCY STOP: terminating robot programs\n");
-            fflush(stdout);
-            stop_robot_processes();
-            launch_lock = false;
-            reset_value();
-        }
-        else if (button == JS_START_BT){
-            if (!launch_lock){
-                printf("START: launching suspended tests hardware program\n");
-                fflush(stdout);
-                stop_robot_processes();
-                launch_suspended_tests_hw();
-                reset_value();
-                launch_lock = true;
-            }
-            else{
-                printf("\nprograme already exist! stop launch!!\n\n");
-            }
-        }
-        else if (button == JS_SWITCH_X){
-            const std::lock_guard<std::mutex> guard(lock_);
-            dance_flag = !dance_flag;
-            printf("dance_flag: %d\n", dance_flag);
-        }
-        else if (button == JS_SWITCH_Y){
-            const std::lock_guard<std::mutex> guard(lock_);
-            vibration_flag = !vibration_flag;
-            printf("vibration_flag: %d\n", vibration_flag);
-        }
-        else if (button == JS_SWITCH_A){
-            const std::lock_guard<std::mutex> guard(lock_);
-            joint_test_flag = !joint_test_flag;
-            printf("joint_test_flag: %d\n", joint_test_flag);
-        }
-        else if (button == JS_SWITCH_B){
-            printf("B\n");
-        }
-    }
-
-    void js_loop(){
-        while (running_.load() && rclcpp::ok()){
-            ssize_t len;
-            struct js_event event;
-            
-            // 读取js端口数据到event (read js date to event)
-            len = read(js_fd, &event, sizeof(event));
-
-            if (len == sizeof(event)){
-                if (event.type & JS_EVENT_AXIS){  // axis event
-                    //printf("Axis: %d -> %d\n", (int)event.number, (int)event.value);
-                    if (event.number < 20){
-                        const std::lock_guard<std::mutex> guard(lock_);
-                        js_axis[event.number] = event.value;
-                    }
-                }
-                else if (event.type & JS_EVENT_BUTTON){ // button event
-                    if (event.value){
-                        handle_button_press(
-                            static_cast<int>(event.number));
-                    }
-                }
-                else{
-                    printf("unknown event:%u\n", event.type);
-                }
-            }
-            if (
-                len < 0
-                && (errno == EAGAIN || errno == EWOULDBLOCK)
-            ){
-                usleep(5000);
-                continue;
-            }
-            if (len <= 0 && running_.load() && rclcpp::ok()){
-                printf("js dev lost, retry\n");
-                close(js_fd);
-                js_fd = -1;
-                while (running_.load() && rclcpp::ok()){
-                    js_fd = open(_js_dev_name, O_RDONLY | O_NONBLOCK);
-                    if (js_fd < 0){
-                        printf("open:%s failed\n", _js_dev_name);
-                        sleep(1);
-                    }
-                    else{
-                        printf("open js dev: %s\n", _js_dev_name);
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    InputMapper mapper_;
+    std::unique_ptr<remote_controller::InputDeviceManager> input_manager_;
+    std::map<std::string, bool> system_mutex_locked_;
+    bool has_last_published_payload_ = false;
+    communication::msg::MotionCommands last_published_payload_;
 
     rclcpp::TimerBase::SharedPtr timer_;
-    rclcpp::Publisher<communication::msg::MotionCommands>::SharedPtr com_pub;
+    rclcpp::Publisher<communication::msg::MotionCommands>::SharedPtr com_pub_;
+
+    void print_config_diagnostics(const RemoteConfig &config)
+    {
+        for (const auto &diagnostic : config.diagnostics) {
+            if (diagnostic.severity == "warning") {
+                RCLCPP_WARN(this->get_logger(), "%s", diagnostic.message.c_str());
+            } else {
+                RCLCPP_INFO(this->get_logger(), "%s", diagnostic.message.c_str());
+            }
+        }
+    }
+
+    void timer_callback()
+    {
+        const bool must_publish_safe_command = input_manager_ && input_manager_->tick();
+        auto message = communication::msg::MotionCommands();
+        std::vector<std::string> outputs;
+        bool publish_on_change = true;
+        {
+            const std::lock_guard<std::mutex> guard(lock_);
+            outputs = mapper_.tick();
+            mapper_.fill_message(message);
+            publish_on_change = mapper_.config().publish_on_change;
+        }
+        dispatch_outputs(outputs);
+        if (publish_on_change) {
+            if (!must_publish_safe_command &&
+                has_last_published_payload_ && message == last_published_payload_) {
+                return;
+            }
+
+            last_published_payload_ = message;
+            has_last_published_payload_ = true;
+        }
+
+        message.header.stamp = this->now();
+        message.header.frame_id = "remote_controller";
+        com_pub_->publish(message);
+        if (must_publish_safe_command && input_manager_) {
+            input_manager_->notify_safe_output_published();
+        }
+    }
+
+    void dispatch_outputs(const std::vector<std::string> &outputs)
+    {
+        for (const auto &output : outputs) {
+            if (remote_controller::starts_with(output, "system.")) {
+                run_system_action(output.substr(std::string("system.").size()));
+            } else if (!output.empty()) {
+                RCLCPP_WARN(this->get_logger(), "unknown binding output: %s", output.c_str());
+            }
+        }
+    }
+
+    void run_system_action(const std::string &action)
+    {
+        std::vector<std::string> commands;
+        bool reset_motion_after_system = false;
+        {
+            const std::lock_guard<std::mutex> guard(lock_);
+            const std::string blocked_by = blocking_system_mutex_locked(action);
+            if (!blocked_by.empty()) {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "system.%s ignored because mutex '%s' is already acquired",
+                    action.c_str(),
+                    blocked_by.c_str());
+                return;
+            }
+
+            const auto &system_commands = mapper_.config().system_commands;
+            const auto command_it = system_commands.find(action);
+            if (command_it == system_commands.end()) {
+                RCLCPP_WARN(this->get_logger(), "unknown system output: system.%s", action.c_str());
+                return;
+            }
+            commands = command_it->second;
+            reset_motion_after_system = mapper_.config().reset_motion_after_system.count(action) > 0;
+        }
+
+        run_commands(commands);
+
+        {
+            const std::lock_guard<std::mutex> guard(lock_);
+            update_system_mutexes_locked(action);
+            if (reset_motion_after_system) {
+                mapper_.reset_motion();
+            }
+        }
+    }
+
+    std::string blocking_system_mutex_locked(const std::string &action) const
+    {
+        for (const auto &mutex : mapper_.config().system_mutexes) {
+            if (mutex.acquire != action) {
+                continue;
+            }
+            const auto lock_it = system_mutex_locked_.find(mutex.name);
+            if (lock_it != system_mutex_locked_.end() && lock_it->second) {
+                return mutex.name;
+            }
+        }
+        return "";
+    }
+
+    void update_system_mutexes_locked(const std::string &action)
+    {
+        for (const auto &mutex : mapper_.config().system_mutexes) {
+            if (mutex.release == action) {
+                system_mutex_locked_[mutex.name] = false;
+            }
+            if (mutex.acquire == action) {
+                system_mutex_locked_[mutex.name] = true;
+            }
+        }
+    }
+
+    void run_commands(const std::vector<std::string> &commands)
+    {
+        for (const auto &command : commands) {
+            const int ret = std::system(command.c_str());
+            (void)ret;
+        }
+    }
 };
 
-int main(int argc, const char *argv[]){
+int main(int argc, const char *argv[])
+{
+    std::string driver_filter;
+    std::string config_path;
+    bool driver_debug_enabled = false;
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--keyboard") {
+            printf("in keyboard input mode\n");
+            driver_filter = "keyboard";
+        } else if (arg == "--driver" && i + 1 < argc) {
+            driver_filter = argv[++i];
+        } else if (arg == "--config" && i + 1 < argc) {
+            config_path = argv[++i];
+        } else if (arg == "--DEBUG" || arg == "--debug") {
+            driver_debug_enabled = true;
+        }
+    }
+
+    if (config_path.empty()) {
+        fprintf(stderr, "remote_controller requires --config <yaml_path>\n");
+        return 1;
+    }
+
     rclcpp::init(argc, argv);
-    auto node = std::make_shared<COMPublisher>("/dev/input/js0");
-    if (rclcpp::ok()){
-        rclcpp::spin(node);
-    }
-    node.reset();
-    if (rclcpp::ok()){
-        rclcpp::shutdown();
-    }
+    rclcpp::spin(std::make_shared<COMPublisher>(
+        config_path,
+        driver_filter,
+        driver_debug_enabled));
+    rclcpp::shutdown();
 
     return 0;
 }

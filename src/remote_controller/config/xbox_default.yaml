@@ -1,0 +1,129 @@
+inputs:
+  selection:
+    scan_interval_ms: 100
+    promote_stable_ms: 500
+
+sources:
+  gamepad:
+    type: joystick
+    device: /dev/input/js0
+    priority: 50
+    ready_timeout_ms: 1000
+    loss_timeout_ms: 300
+    cooldown_ms: 1000
+    signals:
+      # Xbox joystick mapping reported by jstest for the deployed controller.
+      gamepad.left_y: {from: js.axis.3}
+      gamepad.left_x: {from: js.axis.0}
+      gamepad.yaw: {from: js.axis.6}
+      gamepad.stop: {from: js.button.11}
+      gamepad.start: {from: js.button.14}
+      gamepad.a: {from: js.button.0}
+      gamepad.b: {from: js.button.1}
+      gamepad.x: {from: js.button.3}
+      gamepad.y: {from: js.button.4}
+
+curves:
+  vx_suspended:
+    type: piecewise
+    deadzone: 0.0305
+    limit: [-0.5, 1.0]
+    points:
+      - [-1.0, -0.5]
+      - [0.0, 0.0]
+      - [1.0, 1.0]
+
+  vy_suspended:
+    type: expo
+    deadzone: 0.0305
+    limit: [-0.4, 0.4]
+    calibration:
+      input: [-1.0, 0.0, 1.0]
+      output: [-0.4, 0.0, 0.4]
+
+  yaw_suspended:
+    type: expo
+    deadzone: 0.0305
+    limit: [-0.6, 0.6]
+    calibration:
+      input: [-1.0, 0.0, 1.0]
+      output: [-0.6, 0.0, 0.6]
+
+controls:
+  move.vx:
+    type: analog
+    inputs:
+      - source: gamepad.left_y
+        direction: -1
+    curve: vx_suspended
+    alpha: 0.03
+
+  move.vy:
+    type: analog
+    inputs:
+      - source: gamepad.left_x
+        direction: -1
+    curve: vy_suspended
+    alpha: 0.03
+
+  move.yaw:
+    type: analog
+    inputs:
+      - source: gamepad.yaw
+        direction: -1
+    curve: yaw_suspended
+    alpha: 0.05
+
+  system.stop_event: {type: bool, inputs: [{source: gamepad.stop}]}
+  system.start_event: {type: bool, inputs: [{source: gamepad.start}]}
+  button.a_event: {type: bool, inputs: [{source: gamepad.a}]}
+  button.b_event: {type: bool, inputs: [{source: gamepad.b}]}
+  button.x_event: {type: bool, inputs: [{source: gamepad.x}]}
+  button.y_event: {type: bool, inputs: [{source: gamepad.y}]}
+
+outputs:
+  conflict_policy: first_wins
+  publish_on_change: true
+
+  analog:
+    vx: move.vx
+    vy: move.vy
+    yaw: move.yaw
+    height:
+      control: move.vx
+      scale: 0.0
+      offset: 1.0
+
+  edge:
+    - output: system.stop
+      when: [system.stop_event]
+    - output: system.start
+      when: [system.start_event]
+
+  level:
+    # Keep the suspended-tests button semantics unchanged:
+    # X -> btn_9, Y -> btn_10, A -> btn_7. B remains unused.
+    - output: btn_9=1
+      when: [button.x_event]
+    - output: btn_10=1
+      when: [button.y_event]
+    - output: btn_7=1
+      when: [button.a_event]
+
+system:
+  start:
+    - "mkdir -p /var/log/bxi_log"
+    - "ros2 launch bxi_example_py_elf3 example_launch_suspended_tests_hw.launch.py start_remote_controller:=false > /var/log/bxi_log/$(date +%Y-%m-%d_%H-%M-%S)_elf.log 2>&1 &"
+    - "ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log 2>&1 &"
+  stop:
+    - "killall -SIGINT hardware_elf3 bxi_example_hw bxi_example_py_elf3 bxi_example_py_elf3_demo bxi_example_py_elf3_vibration bxi_example_py_elf3_suspended_tests bxi_bms bxi_example_bms 2>/dev/null"
+    - "sleep 1"
+
+system_mutexes:
+  robot_process:
+    acquire: start
+    release: stop
+
+system_reset_motion_after:
+  - start
+  - stop
