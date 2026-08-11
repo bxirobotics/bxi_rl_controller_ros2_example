@@ -41,7 +41,7 @@ def hardware_node_from_context(context) -> Any:
     robot_config = _load_robot_config(config_file)
     enable_head = _resolve_enable_head(enable_head_arg, robot_config)
     hardware_config = _resolve_hardware_config(robot_config, enable_head)
-    package_name = "hardware_elf3_head" if enable_head else "hardware_elf3"
+    package_name = "hardware_elf3"
 
     print(
         "[bxi hardware config] "
