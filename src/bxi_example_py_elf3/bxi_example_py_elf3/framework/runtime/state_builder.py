@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import math
 from typing import cast
 import zlib
 
@@ -70,6 +71,21 @@ def build_robot_states(
         if speed_profile is not None and not isinstance(speed_profile, str):
             raise ValueError(f"states.{state_name}.speed_profile must be a string")
         state.speed_profile_name = speed_profile
+
+        inference_hz = state_config.get("inference_hz")
+        if inference_hz is not None:
+            if isinstance(inference_hz, bool) or not isinstance(
+                inference_hz, (int, float)
+            ):
+                raise ValueError(
+                    f"states.{state_name}.inference_hz must be a number"
+                )
+            inference_hz = float(inference_hz)
+            if not math.isfinite(inference_hz) or inference_hz <= 0.0:
+                raise ValueError(
+                    f"states.{state_name}.inference_hz must be finite and positive"
+                )
+        state.inference_hz = inference_hz
 
         manifest = _mapping(
             state_config.get("manifest"), f"states.{state_name}.manifest"

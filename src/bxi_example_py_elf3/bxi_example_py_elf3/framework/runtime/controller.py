@@ -59,7 +59,8 @@ class RobotControlFramework:
         self._closed = True
         if control_period <= 0.0:
             raise ValueError("control_period must be greater than zero")
-        self.dt = float(control_period)
+        self._default_control_period = float(control_period)
+        self.dt = self._default_control_period
         self.loop_count = 0
 
         self.current_quat_xyzw = np.zeros(4, dtype=np.float64)
@@ -190,6 +191,14 @@ class RobotControlFramework:
         return self.state_machine.current_state_name
 
     @property
+    def desired_control_period(self) -> float:
+        """Period requested by the current state or active transition."""
+
+        default_hz = 1.0 / self._default_control_period
+        requested_hz = self.state_machine.requested_inference_hz(default_hz)
+        return 1.0 / requested_hz
+
+    @property
     def robot_layout(self) -> JointLayout:
         if self._robot_layout is None:
             raise RuntimeError("robot joint layout is not bound to an observation yet")
@@ -246,7 +255,7 @@ class RobotControlFramework:
         return frame
 
     def maintenance_update(self) -> None:
-        """Run non-control Mod supervision outside the 50 Hz data path."""
+        """Run non-control Mod supervision outside the control data path."""
         if self._closed:
             return
         self.node_manager.poll()
@@ -330,6 +339,7 @@ class RobotControlFramework:
         info.update(
             {
                 "loop_count": self.loop_count,
+                "inference_hz": 1.0 / self.desired_control_period,
                 "cmd_vel": {
                     "x": float(self.current_cmd_vel[0]),
                     "y": float(self.current_cmd_vel[1]),
