@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 import math
 from typing import cast
 import zlib
@@ -12,6 +13,18 @@ from bxi_example_py_elf3.framework.mod_api import (
     StateBuildContext,
     StateFactory,
 )
+
+
+@dataclass(frozen=True)
+class ConfiguredState:
+    """Pure configuration metadata shared by runtime and offline inspection."""
+
+    name: str
+    state_id: int
+    params: Mapping[str, object]
+    speed_profile: str | None
+    inference_hz: float | None
+    manifest: Mapping[str, object]
 
 
 def _allocate_state_id(
@@ -40,37 +53,23 @@ def _allocate_state_id(
     return state_id
 
 
-def build_robot_states(
-    config: Mapping[str, object],
-    factories: Mapping[str, StateFactory],
-) -> dict[str, RobotControlState]:
+def configured_states(config: Mapping[str, object]) -> tuple[ConfiguredState, ...]:
+    """Compile state IDs and presentation metadata without importing a Mod."""
+
     states_config = _mapping(config.get("states"), "states")
     if not states_config:
         raise ValueError("state machine config must define states")
 
-    states: dict[str, RobotControlState] = {}
+    result: list[ConfiguredState] = []
     used_ids: set[int] = set()
 
     for state_name, raw_state_config in states_config.items():
         state_config = _mapping(raw_state_config, f"states.{state_name}")
-        factory = factories.get(state_name)
-        if factory is None:
-            raise ValueError(f"no Mod factory registered for state '{state_name}'")
-
         state_id = _allocate_state_id(state_name, state_config, used_ids)
         params = _mapping(state_config.get("params"), f"states.{state_name}.params")
-        build_context = StateBuildContext(state_name, state_id, params)
-        state = factory(build_context)
-        if not isinstance(state, RobotControlState):
-            raise TypeError(
-                f"state factory for '{state_name}' must return RobotControlState"
-            )
-        build_context.finish()
-
         speed_profile = state_config.get("speed_profile")
         if speed_profile is not None and not isinstance(speed_profile, str):
             raise ValueError(f"states.{state_name}.speed_profile must be a string")
-        state.speed_profile_name = speed_profile
 
         inference_hz = state_config.get("inference_hz")
         if inference_hz is not None:
@@ -85,13 +84,53 @@ def build_robot_states(
                 raise ValueError(
                     f"states.{state_name}.inference_hz must be finite and positive"
                 )
-        state.inference_hz = inference_hz
 
         manifest = _mapping(
             state_config.get("manifest"), f"states.{state_name}.manifest"
         )
-        state.manifest.update(manifest)
-        states[state_name] = state
+        result.append(
+            ConfiguredState(
+                name=state_name,
+                state_id=state_id,
+                params=params,
+                speed_profile=cast(str | None, speed_profile),
+                inference_hz=cast(float | None, inference_hz),
+                manifest=manifest,
+            )
+        )
+
+    return tuple(result)
+
+
+def build_robot_states(
+    config: Mapping[str, object],
+    factories: Mapping[str, StateFactory],
+) -> dict[str, RobotControlState]:
+    states: dict[str, RobotControlState] = {}
+
+    for configured in configured_states(config):
+        factory = factories.get(configured.name)
+        if factory is None:
+            raise ValueError(
+                f"no Mod factory registered for state '{configured.name}'"
+            )
+
+        build_context = StateBuildContext(
+            configured.name,
+            configured.state_id,
+            configured.params,
+        )
+        state = factory(build_context)
+        if not isinstance(state, RobotControlState):
+            raise TypeError(
+                f"state factory for '{configured.name}' must return RobotControlState"
+            )
+        build_context.finish()
+
+        state.speed_profile_name = configured.speed_profile
+        state.inference_hz = configured.inference_hz
+        state.manifest.update(configured.manifest)
+        states[configured.name] = state
 
     return states
 
