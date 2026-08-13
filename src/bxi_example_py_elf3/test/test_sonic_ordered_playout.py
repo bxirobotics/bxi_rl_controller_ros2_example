@@ -41,6 +41,7 @@ merger_module = _load_module(
     "pico/streamed_smpl_ref.py",
 )
 policy_module = _load_module("policy", "policy.py")
+state_module = _load_module("state", "state.py")
 bridge_module = _load_module(
     "pico.pose_to_smpl_ref_bridge",
     "pico/pose_to_smpl_ref_bridge.py",
@@ -52,6 +53,7 @@ SonicTeleopPolicy = policy_module.SonicTeleopPolicy
 WINDOW = merger_module.WINDOW
 NUM_JOINTS = policy_module.NUM_JOINTS
 MODEL_INPUT_DIM = policy_module.MODEL_INPUT_DIM
+SonicTeleopState = state_module.SonicTeleopState
 
 
 class _FakeBackend:
@@ -70,8 +72,14 @@ class _FakeBackend:
 
 
 class _Logger:
+    def __init__(self) -> None:
+        self.warnings = []
+
     def info(self, _message: str) -> None:
         pass
+
+    def warning(self, message: str) -> None:
+        self.warnings.append(message)
 
 
 def _chunk(start: int, count: int = WINDOW) -> IncomingChunk:
@@ -174,6 +182,28 @@ def _observation():
         np.asarray([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
         np.zeros(3, dtype=np.float32),
     )
+
+
+def test_missing_canfd_packet_disables_only_optional_gripper(monkeypatch):
+    monkeypatch.delattr(state_module.bxi_msg, "CANFDPacket", raising=False)
+    monkeypatch.delattr(state_module.bxi_msg, "CanfdPacket", raising=False)
+
+    state = SonicTeleopState.__new__(SonicTeleopState)
+    state.hardware_gripper = True
+    state._gripper_available = False
+    state._policy = SimpleNamespace(status="unloaded")
+    logger = _Logger()
+    state._bind_logger(logger)
+
+    state.on_bind(SimpleNamespace())
+
+    assert state.hardware_gripper is False
+    assert state._gripper_available is True
+    assert state.is_available(SimpleNamespace()) is True
+    assert logger.warnings == [
+        "SONIC夹爪已禁用：缺少communication.msg.CANFDPacket；"
+        "全身遥操仍可用"
+    ]
 
 
 def test_merger_never_clamps_and_advances_at_most_one_frame():

@@ -39,6 +39,7 @@ htmlcov/
 /src/bxi_example_py_elf3/mods/private_mods/
 /src/bxi_example_py_elf3/test/*
 !/src/bxi_example_py_elf3/test/test_sonic_ordered_playout.py
+!/src/bxi_example_py_elf3/test/test_sonic_python_runtime.py
 
 # Local editor, agent and documentation workspaces
 /.vscode/
