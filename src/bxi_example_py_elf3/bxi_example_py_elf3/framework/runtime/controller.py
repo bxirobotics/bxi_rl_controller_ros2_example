@@ -66,6 +66,7 @@ class RobotControlFramework:
         self.current_quat_xyzw = np.zeros(4, dtype=np.float64)
         self.current_quat_wxyz = np.zeros(4, dtype=np.float64)
         self.current_omega = np.zeros(3, dtype=np.float64)
+        self.current_linear_acceleration = np.zeros(3, dtype=np.float64)
         self.current_raw_cmd_vel = np.zeros(3, dtype=np.float32)
         self.current_cmd_vel = np.zeros(3, dtype=np.float32)
         self._command_defaults = command_defaults
@@ -475,6 +476,15 @@ class RobotControlFramework:
         self._copy_vector(observation.quat_xyzw, self.current_quat_xyzw, "quat_xyzw")
         self._copy_vector(observation.quat_wxyz, self.current_quat_wxyz, "quat_wxyz")
         self._copy_vector(observation.omega, self.current_omega, "omega")
+        if observation.linear_acceleration is None:
+            self.inference_frame.linear_acceleration = None
+        else:
+            self._copy_vector(
+                observation.linear_acceleration,
+                self.current_linear_acceleration,
+                "linear_acceleration",
+            )
+            self.inference_frame.linear_acceleration = self.current_linear_acceleration
         self._copy_vector(
             observation.raw_cmd_vel,
             self.current_raw_cmd_vel,
@@ -506,6 +516,7 @@ class RobotControlFramework:
             angular_velocity=self.current_omega,
             command=self.current_cmd_vel,
             timestamp_ns=joints.timestamp_ns,
+            linear_acceleration=None,
         )
 
     @staticmethod
