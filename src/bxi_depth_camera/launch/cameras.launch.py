@@ -1,11 +1,9 @@
-import os
-
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
 
 
 _USE_CONFIG = "__use_config__"
@@ -23,6 +21,11 @@ ARGUMENTS = {
     "enable_infra2": bool,
     "enable_gyro": bool,
     "enable_accel": bool,
+    "align_depth.enable": bool,
+    "pointcloud.enable": bool,
+    "pointcloud.ordered_pc": bool,
+    "pointcloud.allow_no_texture_points": bool,
+    "pointcloud.max_fps": float,
     "depth_module.depth_profile": str,
     "depth_module.rectification.enable": bool,
     "rgb_camera.color_profile": str,
@@ -55,10 +58,8 @@ def _camera_node(context):
         for name, value_type in ARGUMENTS.items()
         if LaunchConfiguration(name).perform(context) != _USE_CONFIG
     }
-    default_config = os.path.join(
-        get_package_share_directory("bxi_depth_camera"),
-        "config",
-        "default.yaml",
+    default_config = PathJoinSubstitution(
+        [FindPackageShare("bxi_depth_camera"), "config", "default.yaml"]
     )
     parameter_sources = [default_config]
     config_file = LaunchConfiguration("config_file").perform(context).strip()

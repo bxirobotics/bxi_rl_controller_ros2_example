@@ -25,6 +25,7 @@ class RobotObservation:
     quat_wxyz: FloatArray
     omega: FloatArray
     raw_cmd_vel: FloatArray
+    linear_acceleration: FloatArray | None = None
 
 
 class ControlPlatformAdapter(Protocol):

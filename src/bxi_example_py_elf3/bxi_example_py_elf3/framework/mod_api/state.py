@@ -22,6 +22,11 @@ class StateBehavior(Generic[CtxT]):
     def __init__(self, name: str, state_id: int):
         self.name = name
         self.state_id = state_id
+        # ``None`` inherits the platform-wide control rate.  The runtime sets
+        # this from the state-level ``inference_hz`` config field after the
+        # factory has returned, so state implementations do not need to parse
+        # scheduler configuration themselves.
+        self.inference_hz: float | None = None
         self.manifest: dict[str, object] = {
             "label": "Unknown",
             "index": None,

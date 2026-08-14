@@ -1,0 +1,22 @@
+Component: MediaMTX
+Version: 1.15.6
+Upstream: https://github.com/bluenviron/mediamtx
+Release: https://github.com/bluenviron/mediamtx/releases/tag/v1.15.6
+Retrieved: 2026-08-06
+License: MIT (see MediaMTX.LICENSE)
+
+Bundled upstream release artifacts:
+
+- runtime/linux-x86_64/mediamtx
+  Archive: mediamtx_v1.15.6_linux_amd64.tar.gz
+  Archive SHA-256: 3993d26c45b65cf337d5baf400e0e68e2f14689bcd31333ad34fa549f47ea55e
+  Binary SHA-256: 61b4c6a59891bdf12e1ecf4dfebbf5b91d7a44d277da587d127e03e00c2aa53d
+
+- runtime/linux-aarch64/mediamtx
+  Archive: mediamtx_v1.15.6_linux_arm64.tar.gz
+  Archive SHA-256: 09a51632e4457f830d69ecef4af6fb22596d26815468d0efd218dc4de571ad69
+  Binary SHA-256: 51b97a33e88bfed647ddf1cd2513c3a1f592bfab48e78ddfb9ade6de7b8b0891
+
+The archive hashes were verified against the checksums.sha256 asset published
+with the upstream v1.15.6 release. Both binaries are unmodified, statically
+linked upstream release executables.

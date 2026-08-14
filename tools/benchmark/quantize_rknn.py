@@ -230,20 +230,28 @@ def _convert(
 
 def _install(source: Path, model_path: Path) -> Path:
     destination = model_path.with_suffix(".rknn")
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-            dir=destination.parent,
-            delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-        shutil.copy2(source, temporary_path)
-        os.replace(temporary_path, destination)
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
+    source_manifest = Path(str(source) + ".build.json")
+    destination_manifest = Path(str(destination) + ".build.json")
+    if not source_manifest.is_file():
+        raise RuntimeError(f"RKNN build contract does not exist: {source_manifest}")
+    for source_path, destination_path in (
+        (source, destination),
+        (source_manifest, destination_manifest),
+    ):
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                prefix=f".{destination_path.name}.",
+                suffix=".tmp",
+                dir=destination_path.parent,
+                delete=False,
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+            shutil.copy2(source_path, temporary_path)
+            os.replace(temporary_path, destination_path)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
     return destination
 
 

@@ -48,3 +48,11 @@ retains its own license, notice, provenance and `setting.ini`.
 Canonical source notices used by `deploy_dependencies.sh` are stored under
 `licenses/`; the BXI service configuration template is stored separately under
 `../config/roboticsservice-minimal.ini`.
+
+## MediaMTX
+
+`runtime/linux-x86_64/mediamtx` and `runtime/linux-aarch64/mediamtx` are the
+unmodified official MediaMTX 1.15.6 static executables used by SONIC's
+state-scoped RTSP server. Their upstream release URLs, archive hashes and
+binary hashes are recorded in `licenses/MediaMTX.PROVENANCE.txt`; the MIT
+license is retained in `licenses/MediaMTX.LICENSE`.

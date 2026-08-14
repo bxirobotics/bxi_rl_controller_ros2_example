@@ -50,18 +50,14 @@ python3 tools/benchmark/backend_benchmark.py path/to/model.onnx \
   --input-range obs_history=-1,1 \
   --input-range depth_data=-0.5,0.5
 
-# Compare one model with an exact, named set of representative inputs
-python3 tools/benchmark/backend_benchmark.py path/to/model.onnx \
-  --input-npz /path/to/model-inputs.npz
-
 # Explicit report filename
 python3 tools/benchmark/backend_benchmark.py --json results/my-platform.json
 ```
 
-`--input-npz` requires exactly one model. Its array names, shapes and dtypes
-must exactly match the ONNX inputs, and all numeric values must be finite. The
-JSON report records the effective per-model seed and observed input minima and
-maxima so precision reports can be reproduced.
+The JSON report records the effective per-model seed and observed input minima
+and maxima so generated-input performance reports can be reproduced. Real
+policy input validation belongs to the live backend-comparison Mod, where the
+policy's own observation preprocessing and history construction are active.
 
 RKNN conversion remains opt-in. Converted models are stored in the ignored
 benchmark cache instead of beside source assets. An unquantized conversion can
@@ -73,14 +69,25 @@ BXI_RKNN_CONVERT_ON_LOAD=rk3588 \
 python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 ```
 
-The benchmark converts only the policy output named `actions` by default. This
-also avoids an RKNN Toolkit 2.3.2 optimizer bug in ONNX models that expose
-several differently shaped reference-trajectory outputs. Select outputs
-explicitly when needed:
+When an existing RKNN cache has a `.rknn.build.json` sidecar, the benchmark uses
+that cache's complete output contract automatically. For a new conversion or a
+legacy cache without a sidecar, it converts only the learned policy output
+named `actions` by default. Deterministic reference-trajectory tensors such as
+`joint_pos` must be sampled from the policy's trajectory asset and composed
+with `actions` outside the inference backend. Besides making every backend use
+the same reference data, this avoids an RKNN Toolkit 2.3.2 optimizer bug in the
+exported `Cast/Clip/Gather` lookup graph.
+
+Only list additional outputs when they are genuine learned or recurrent model
+outputs consumed by the policy. The tool derives the corresponding physical
+input set from the ONNX graph:
 
 ```bash
-BXI_RKNN_CONVERT_ON_LOAD='{"target":"rk3588","outputs":["actions"],"force_rebuild":true}' \
-python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
+BXI_RKNN_CONVERT_ON_LOAD='{"target":"rk3588","force_rebuild":true}' \
+python3 tools/benchmark/backend_benchmark.py path/to/model.onnx \
+  --rknn-target rk3588 \
+  --rknn-output actions \
+  --rknn-output recurrent_state
 ```
 
 ### Capture and build a representative INT8 model
@@ -170,12 +177,13 @@ corresponding ONNX model in one command:
 python3 tools/benchmark/install_rknn_cache.py
 ```
 
-The cache mirrors repository-relative paths, so only an RKNN file with a
-matching ONNX source is copied. Existing adjacent RKNN files are atomically
-updated and identical files are skipped. Preview the operation with
-`--dry-run`, or use `--cache PATH` for a non-default cache directory. The
-adjacent `.rknn` files can then be copied to the target board with the project
-and will be selected before OpenVINO and ONNX Runtime.
+The cache mirrors repository-relative paths. Installation requires both the
+RKNN file and its `.rknn.build.json` IO-contract sidecar, and copies both beside
+the matching ONNX source. Existing adjacent files are atomically updated and
+identical files are skipped. Preview the operation with `--dry-run`, or use
+`--cache PATH` for a non-default cache directory. At runtime the framework
+rejects a cache whose ONNX digest, input contract or output contract does not
+match the production `ModelSpec`, then safely tries OpenVINO or ONNX Runtime.
 
 Keep the machine idle, use the same power mode, and use the same benchmark
 settings when comparing reports from different platforms. The first backend in

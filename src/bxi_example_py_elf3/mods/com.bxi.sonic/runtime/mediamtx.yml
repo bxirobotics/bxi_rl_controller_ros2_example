@@ -1,0 +1,35 @@
+logLevel: info
+logDestinations: [stdout]
+
+readTimeout: 10s
+writeTimeout: 10s
+writeQueueSize: 512
+udpMaxPayloadSize: 1472
+
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+        path:
+      - action: read
+        path:
+
+rtsp: yes
+rtspTransports: [udp, tcp]
+rtspEncryption: "no"
+rtspAddress: :2212
+rtpAddress: :8002
+rtcpAddress: :8003
+rtspAuthMethods: [basic]
+
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+
+paths:
+  all_others:
+    source: publisher

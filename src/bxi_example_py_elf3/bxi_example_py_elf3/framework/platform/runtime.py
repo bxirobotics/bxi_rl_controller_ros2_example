@@ -247,7 +247,7 @@ class RobotControlRuntime:
 
     @property
     def period_sec(self) -> float:
-        return self.config.period_sec
+        return self.scheduler.period_sec
 
     def start(self) -> None:
         if self._closed:
@@ -349,7 +349,7 @@ class RobotControlRuntime:
 
     def snapshot(self, *, include_graph: bool = False) -> dict[str, object] | None:
         """Return a coherent status snapshot, or None near a control deadline."""
-        if not self._wait_for_maintenance_window(self.config.period_sec):
+        if not self._wait_for_maintenance_window(self.period_sec):
             return None
         if not self._framework_lock.acquire(blocking=False):
             return None
@@ -370,16 +370,21 @@ class RobotControlRuntime:
         self._last_control_events = events
 
         with self._framework_lock:
+            cycle_period_sec = self.scheduler.period_sec
             frame = self.framework.update(
                 observation,
                 events,
-                self.config.period_sec,
+                cycle_period_sec,
             )
             state_name = self.framework.current_state_name
+            next_period_sec = self.framework.desired_control_period
 
         if frame is not None:
             self._platform.publish_motor_frame(frame)
-        return ControlCycleResult(state=state_name)
+        return ControlCycleResult(
+            state=state_name,
+            next_period_sec=next_period_sec,
+        )
 
     def _maintenance_loop(self) -> None:
         period_sec = 1.0 / self.config.maintenance_hz
@@ -397,7 +402,7 @@ class RobotControlRuntime:
 
             self._drain_deadline_misses()
 
-            if self._wait_for_maintenance_window(self.config.period_sec):
+            if self._wait_for_maintenance_window(self.period_sec):
                 if self._framework_lock.acquire(blocking=False):
                     try:
                         self.framework.maintenance_update()
@@ -434,6 +439,7 @@ class RobotControlRuntime:
             return
 
         budget_ms = self.config.compute_budget_sec * 1000.0
+        period_ms = float(summary["period_ms"])
         wake_events = int(summary["wake_events"])
         finish_events = int(summary["finish_events"])
         finish_detail = (
@@ -466,7 +472,8 @@ class RobotControlRuntime:
             f"最大唤醒延迟{summary['max_wake_late_ms']:.2f} ms"
             f"（允许偏差{tolerance_ms:.2f} ms），"
             f"最大周期执行耗时{summary['max_cycle_ms']:.2f} ms"
-            f"（预算{budget_ms:.2f} ms）{finish_detail}。"
+            f"（预算{budget_ms:.2f} ms，目标周期{period_ms:.2f} ms）"
+            f"{finish_detail}。"
             f"{conclusion}"
             f"启动以来累计异常{summary['latest_count']}次。",
         )
@@ -488,6 +495,7 @@ class RobotControlRuntime:
         if summary is None:
             summary = {
                 "state": str(miss["state"]),
+                "period_ms": float(miss["period_ms"]),
                 "events": 0,
                 "wake_events": 0,
                 "finish_events": 0,
@@ -498,6 +506,7 @@ class RobotControlRuntime:
             }
             self._pending_deadline_summary = summary
         summary["state"] = str(miss["state"])
+        summary["period_ms"] = float(miss["period_ms"])
         summary["events"] = int(summary["events"]) + 1
         if wake_late_ms > tolerance_ms:
             summary["wake_events"] = int(summary["wake_events"]) + 1
@@ -562,7 +571,7 @@ class RobotControlRuntime:
         wake = timing["wake_late_ms"]
         cycle = timing["cycle_ms"]
         interval = timing["frame_interval_ms"]
-        period_ms = self.config.period_sec * 1000.0
+        period_ms = float(timing["period_ms"])
         budget_ms = self.config.compute_budget_sec * 1000.0
         miss_rate = (
             100.0 * misses_since_report / cycles_since_report

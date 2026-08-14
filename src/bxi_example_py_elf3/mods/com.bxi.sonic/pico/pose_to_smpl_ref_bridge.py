@@ -1,26 +1,22 @@
-"""Bridge official PICO manager ``pose`` stream to ELF3 ``smpl_ref`` stream.
+"""Adapt the official PICO ``pose`` stream into ordered ELF3 source chunks.
 
 The official ``gear_sonic/scripts/pico_manager_thread_server.py --manager`` sends
 packed ZMQ messages on topic ``pose``.  For the ELF3 native _smpl.onnx deploy we
-publish the same long-lived reference contract used by ``smpl_ref_bridge.py``:
+publish complete rolling chunks for the downstream SONIC policy:
 
-    term1_local : float32 [10,72]   SMPL joints local, flattened per frame
-    root_quat   : float32 [10,4]    SMPL root quaternion, wxyz
-    wrist       : float32 [10,6]    ELF3 native wrist x/y/z, left then right
+    term1_local    : float32 [N,72] SMPL joints local, flattened per frame
+    root_quat      : float32 [N,4]  SMPL root quaternion, wxyz
+    wrist          : float32 [N,6]  ELF3 native wrist x/y/z, left then right
+    head_joint_pos : float32 [N,2]  ELF3 head pitch/yaw per frame
 
-The bridge is intentionally only an adapter: PICO/SMPL normalization stays in
-the official PICO manager, while the downstream SONIC policy consumes the
-normalized reference tensors.  Live PICO chunks are merged with the same
-sliding-window semantics as the official C++ StreamedMotionMerger, so the
-published 10-frame smpl_ref window is a true future window instead of a tiled
-latest frame.
+The bridge owns no playback clock, cursor or acknowledgement channel.  It
+forwards each new complete source chunk once; the policy alone merges chunks,
+gathers a complete ten-frame window and advances after successful inference.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-import sys
 import time
 from typing import Any
 
@@ -33,6 +29,12 @@ from std_msgs.msg import Float32
 from bxi_example_py_elf3.framework.mod_api import NodeBuildContext
 
 from .zmq_messages import pack_pose_message
+from .streamed_smpl_ref import (
+    IncomingChunk,
+    WINDOW,
+    classify_frame_progress,
+    new_stream_epoch,
+)
 from .runtime_config import (
     PICO_HOST,
     PICO_PORT,
@@ -58,9 +60,6 @@ DTYPE_MAP = {
 # Export the six wrist joints as:
 #   l_wrist_x, l_wrist_y, l_wrist_z, r_wrist_x, r_wrist_y, r_wrist_z.
 ELF3_NATIVE_WRIST_IDX = [19, 20, 21, 26, 27, 28]
-WINDOW = 10
-HISTORY_FRAMES = 5
-MAX_GAP_FRAMES = 200
 DEFAULT_RATE_HZ = 50.0
 POSE_STREAM_MODE = 1
 READY_CONSECUTIVE_MESSAGES = 3
@@ -81,9 +80,6 @@ BRIDGE_DEFAULTS: dict[str, object] = {
     "out_port": SMPL_REF_PORT,
     "out_topic": SMPL_REF_TOPIC,
     "rate_hz": DEFAULT_RATE_HZ,
-    "history_frames": HISTORY_FRAMES,
-    "max_gap_frames": MAX_GAP_FRAMES,
-    "catch_up_enabled": True,
     "stale_warning_seconds": PICO_STALE_SECONDS,
 }
 
@@ -100,21 +96,6 @@ def _field_scalar(fields: dict[str, np.ndarray], name: str) -> float | None:
         return None
     scalar = float(arr[0])
     return scalar if np.isfinite(scalar) else None
-
-
-@dataclass
-class IncomingChunk:
-    frame_indices: np.ndarray
-    term1_local: np.ndarray
-    root_quat: np.ndarray
-    wrist: np.ndarray
-
-
-@dataclass
-class MergeResult:
-    did_catchup_reset: bool = False
-    frame_offset_adjustment: int = 0
-    frame_step: int = 1
 
 
 class PicoSourceReadinessGate:
@@ -151,7 +132,12 @@ class PicoSourceReadinessGate:
             finite = all(
                 np.asarray(fields[name]).size > 0
                 and np.isfinite(np.asarray(fields[name])).all()
-                for name in ("smpl_joints", "body_quat_w", "joint_pos")
+                for name in (
+                    "smpl_joints",
+                    "body_quat_w",
+                    "joint_pos",
+                    "head_joint_pos",
+                )
             )
         except (KeyError, TypeError, ValueError, IndexError):
             mode, calibrated, finite = -1, False, False
@@ -171,18 +157,20 @@ class PicoSourceReadinessGate:
             self.last_frame_index = None
             self.last_ready_mono = None
 
-        progressing = frame_index is not None and (
-            self.last_frame_index is None or frame_index > self.last_frame_index
-        )
-        if frame_index is not None and (
-            self.last_frame_index is None or frame_index > self.last_frame_index
-        ):
-            self.last_frame_index = frame_index
-        if source_valid and progressing:
-            self.streak += 1
-        else:
+        if not source_valid or frame_index is None:
             self.streak = 0
             self.last_ready_mono = None
+            return False
+
+        # A rolling PICO chunk may be observed twice when its source frame is
+        # late by one bridge tick.  It is not fresh progress and is filtered by
+        # the caller, but it must not revoke an already-established readiness
+        # state or force three subsequent progressing chunks to re-arm it.
+        if self.last_frame_index is not None and frame_index == self.last_frame_index:
+            return self.streak >= self.required_consecutive
+
+        self.last_frame_index = frame_index
+        self.streak += 1
         ready = self.streak >= self.required_consecutive
         if ready:
             self.last_ready_mono = now_mono
@@ -255,7 +243,13 @@ def _extract_wrist_frames(joint_pos: np.ndarray) -> np.ndarray:
 def _parse_incoming_chunk(fields: dict[str, np.ndarray]) -> IncomingChunk:
     missing = [
         k
-        for k in ("frame_index", "smpl_joints", "body_quat_w", "joint_pos")
+        for k in (
+            "frame_index",
+            "smpl_joints",
+            "body_quat_w",
+            "joint_pos",
+            "head_joint_pos",
+        )
         if k not in fields
     ]
     if missing:
@@ -277,215 +271,82 @@ def _parse_incoming_chunk(fields: dict[str, np.ndarray]) -> IncomingChunk:
 
     root_quat = _as_frame_matrix(fields["body_quat_w"], 4, "body_quat_w")
     wrist = _extract_wrist_frames(fields["joint_pos"])
+    head_joint_pos = _as_frame_matrix(
+        fields["head_joint_pos"], 2, "head_joint_pos"
+    )
     frame_indices = np.asarray(fields["frame_index"], dtype=np.int64).reshape(-1)
 
     n = term1.shape[0]
-    if root_quat.shape[0] != n or wrist.shape[0] != n or frame_indices.shape[0] != n:
+    if (
+        root_quat.shape[0] != n
+        or wrist.shape[0] != n
+        or head_joint_pos.shape[0] != n
+        or frame_indices.shape[0] != n
+    ):
         raise ValueError(
             "PICO pose frame count mismatch: "
             f"frame_index={frame_indices.shape[0]} term1={term1.shape[0]} "
-            f"root={root_quat.shape[0]} wrist={wrist.shape[0]}"
+            f"root={root_quat.shape[0]} wrist={wrist.shape[0]} "
+            f"head={head_joint_pos.shape[0]}"
         )
-    if n <= 0:
-        raise ValueError("PICO pose message has zero frames")
-    if n > 1 and np.any(np.diff(frame_indices) <= 0):
+    if n < WINDOW:
         raise ValueError(
-            f"frame_index must be strictly increasing: {frame_indices.tolist()}"
+            f"PICO pose message has {n} frames; need at least {WINDOW}"
         )
+    if np.any(np.diff(frame_indices) != 1):
+        raise ValueError(
+            "frame_index must be consecutive with step 1: "
+            f"{frame_indices.tolist()}"
+        )
+    for name, values in (
+        ("smpl_joints", term1),
+        ("body_quat_w", root_quat),
+        ("joint_pos", wrist),
+        ("head_joint_pos", head_joint_pos),
+    ):
+        if not np.isfinite(values).all():
+            raise ValueError(f"{name} contains non-finite values")
 
     return IncomingChunk(
         frame_indices=np.ascontiguousarray(frame_indices, dtype=np.int64),
         term1_local=term1,
         root_quat=root_quat,
         wrist=wrist,
+        head_joint_pos=head_joint_pos,
     )
 
 
-class StreamedSmplRefMerger:
-    """Python port of C++ StreamedMotionMerger for live PICO SMPL refs."""
-
-    def __init__(
-        self,
-        history_frames: int = HISTORY_FRAMES,
-        max_gap_frames: int = MAX_GAP_FRAMES,
-        catch_up_enabled: bool = True,
-    ):
-        self.history_frames = int(history_frames)
-        self.max_gap_frames = int(max_gap_frames)
-        self.catch_up_enabled = bool(catch_up_enabled)
-        self.reset()
-
-    def reset(self) -> None:
-        self.term1_local = np.zeros((0, 72), dtype=np.float32)
-        self.root_quat = np.zeros((0, 4), dtype=np.float32)
-        self.wrist = np.zeros((0, 6), dtype=np.float32)
-        self.stream_window_start = 0
-        self.current_frame = 0
-        self.frame_step = 1
-        self.total_merges = 0
-        self.catchup_count = 0
-
-    @property
-    def timesteps(self) -> int:
-        return int(self.term1_local.shape[0])
-
-    def _calculate_frame_step(self, frame_indices: np.ndarray) -> int:
-        if frame_indices.shape[0] < 2:
-            return 1
-        step = abs(int(frame_indices[1]) - int(frame_indices[0]))
-        return step if step > 0 else 1
-
-    def _calculate_sliding_window(
-        self,
-        incoming_frame_start: int,
-        incoming_frame_end: int,
-        frame_step: int,
-    ) -> tuple[int, int, bool]:
-        if self.timesteps <= 0:
-            return incoming_frame_start, 0, True
-
-        global_playback_frame = self.stream_window_start + frame_step * max(
-            0, self.current_frame - self.history_frames
-        )
-        max_gap_frames = (
-            self.max_gap_frames + self.history_frames
-            if self.catch_up_enabled
-            else sys.maxsize
-        )
-        stream_window_end = self.stream_window_start + frame_step * (self.timesteps - 1)
-
-        if incoming_frame_start <= self.stream_window_start:
-            return incoming_frame_start, 0, True
-        if incoming_frame_end <= stream_window_end:
-            return incoming_frame_start, 0, True
-
-        desired_window_start = global_playback_frame
-        tentative_window_start = min(desired_window_start, incoming_frame_start)
-        delta_to_incoming = incoming_frame_start - tentative_window_start
-        tentative_merge_dst = delta_to_incoming // frame_step if frame_step > 0 else 0
-        large_gap_from_old = incoming_frame_start > stream_window_end + frame_step
-
-        if tentative_merge_dst > max_gap_frames or large_gap_from_old:
-            return incoming_frame_start, 0, True
-        return tentative_window_start, tentative_merge_dst, False
-
-    def merge(self, chunk: IncomingChunk) -> MergeResult:
-        frame_step = self._calculate_frame_step(chunk.frame_indices)
-        incoming_frame_start = int(chunk.frame_indices[0])
-        incoming_frame_end = int(chunk.frame_indices[-1])
-
-        new_window_start, merge_dst_frame, did_catchup = self._calculate_sliding_window(
-            incoming_frame_start,
-            incoming_frame_end,
-            frame_step,
-        )
-
-        new_len = merge_dst_frame + int(chunk.frame_indices.shape[0])
-        new_term1 = np.zeros((new_len, 72), dtype=np.float32)
-        new_root = np.zeros((new_len, 4), dtype=np.float32)
-        new_wrist = np.zeros((new_len, 6), dtype=np.float32)
-
-        old_window_start = self.stream_window_start
-        if merge_dst_frame > 0 and self.timesteps > 0:
-            old_window_end = old_window_start + frame_step * self.timesteps
-            need_start_global = new_window_start
-            need_end_global = incoming_frame_start
-            overlap_start_global = max(need_start_global, old_window_start)
-            overlap_end_global = min(need_end_global, old_window_end)
-            if overlap_start_global < overlap_end_global:
-                start_offset_old = overlap_start_global - old_window_start
-                start_offset_new = overlap_start_global - new_window_start
-                overlap_span = overlap_end_global - overlap_start_global
-                copy_src_idx = start_offset_old // frame_step if frame_step > 0 else 0
-                copy_dst_idx = start_offset_new // frame_step if frame_step > 0 else 0
-                copy_count = overlap_span // frame_step if frame_step > 0 else 0
-                if copy_count > 0:
-                    new_term1[
-                        copy_dst_idx : copy_dst_idx + copy_count
-                    ] = self.term1_local[copy_src_idx : copy_src_idx + copy_count]
-                    new_root[copy_dst_idx : copy_dst_idx + copy_count] = self.root_quat[
-                        copy_src_idx : copy_src_idx + copy_count
-                    ]
-                    new_wrist[copy_dst_idx : copy_dst_idx + copy_count] = self.wrist[
-                        copy_src_idx : copy_src_idx + copy_count
-                    ]
-
-        n_in = int(chunk.frame_indices.shape[0])
-        new_term1[merge_dst_frame : merge_dst_frame + n_in] = chunk.term1_local
-        new_root[merge_dst_frame : merge_dst_frame + n_in] = chunk.root_quat
-        new_wrist[merge_dst_frame : merge_dst_frame + n_in] = chunk.wrist
-
-        window_shift_ticks = new_window_start - old_window_start
-        window_shift = window_shift_ticks // frame_step if frame_step > 0 else 0
-
-        self.term1_local = new_term1
-        self.root_quat = new_root
-        self.wrist = new_wrist
-        self.stream_window_start = new_window_start
-        self.frame_step = frame_step
-        self.total_merges += 1
-
-        if did_catchup:
-            self.current_frame = 0
-            self.catchup_count += 1
-            frame_offset_adjustment = 0
-        else:
-            self.current_frame = max(0, self.current_frame - window_shift)
-            frame_offset_adjustment = window_shift
-
-        return MergeResult(
-            did_catchup_reset=did_catchup,
-            frame_offset_adjustment=frame_offset_adjustment,
-            frame_step=frame_step,
-        )
-
-    def advance(self, playing: bool = True) -> None:
-        if self.timesteps <= 0:
-            return
-        if playing and self.current_frame + 1 < self.timesteps:
-            self.current_frame += 1
-        self.current_frame = int(np.clip(self.current_frame, 0, self.timesteps - 1))
-
-    def build_smpl_ref(self) -> dict[str, np.ndarray] | None:
-        if self.timesteps <= 0:
-            return None
-        self.advance(playing=True)
-        idx = np.minimum(
-            self.current_frame + np.arange(WINDOW, dtype=np.int64),
-            self.timesteps - 1,
-        )
-        current_global_frame = (
-            self.stream_window_start + self.current_frame * self.frame_step
-        )
-        return {
-            "term1_local": np.ascontiguousarray(
-                self.term1_local[idx], dtype=np.float32
-            ),
-            "root_quat": np.ascontiguousarray(self.root_quat[idx], dtype=np.float32),
-            "wrist": np.ascontiguousarray(self.wrist[idx], dtype=np.float32),
-            "frame_index": np.asarray([current_global_frame], dtype=np.int64),
-        }
-
-
-def _build_live_smpl_ref_if_ready(
-    source_gate: PicoSourceReadinessGate,
-    merger: StreamedSmplRefMerger,
-    now_mono: float,
-    stale_seconds: float,
-) -> dict[str, np.ndarray] | None:
-    """Build one live output only while the calibrated POSE source is fresh."""
-    if not source_gate.is_fresh(now_mono, stale_seconds):
-        if merger.timesteps:
-            merger.reset()
-        return None
-
-    smpl_ref = merger.build_smpl_ref()
-    if smpl_ref is None:
-        return None
-    smpl_ref["source_ready"] = np.array([True], dtype=bool)
-    smpl_ref["source_stream_mode"] = np.array([POSE_STREAM_MODE], dtype=np.int32)
-    smpl_ref["source_calibration_ready"] = np.array([True], dtype=bool)
-    return smpl_ref
+def _source_chunk_fields(
+    chunk: IncomingChunk,
+    *,
+    source_stream_epoch: int,
+    received_monotonic_ns: int,
+) -> dict[str, np.ndarray]:
+    """Build the one-way rolling chunk consumed by the policy merger."""
+    return {
+        "source_chunk": np.asarray([1], dtype=np.uint8),
+        "source_stream_epoch": np.asarray(
+            [source_stream_epoch], dtype=np.int64
+        ),
+        "source_received_monotonic_ns": np.asarray(
+            [received_monotonic_ns], dtype=np.int64
+        ),
+        "frame_index": np.ascontiguousarray(
+            chunk.frame_indices, dtype=np.int64
+        ),
+        "term1_local": np.ascontiguousarray(
+            chunk.term1_local, dtype=np.float32
+        ),
+        "root_quat": np.ascontiguousarray(
+            chunk.root_quat, dtype=np.float32
+        ),
+        "wrist": np.ascontiguousarray(chunk.wrist, dtype=np.float32),
+        "head_joint_pos": np.ascontiguousarray(
+            chunk.head_joint_pos, dtype=np.float32
+        ),
+        "valid_horizon": np.asarray([WINDOW], dtype=np.int32),
+        "clamp_slots": np.asarray([0], dtype=np.int32),
+    }
 
 
 def _validated_params(raw: dict[str, object]) -> dict[str, object]:
@@ -506,10 +367,6 @@ def _validated_params(raw: dict[str, object]) -> dict[str, object]:
             or not 1 <= value <= 65535
         ):
             raise ValueError(f"{name} must be an integer from 1 to 65535")
-    for name in ("history_frames", "max_gap_frames"):
-        value = params[name]
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise ValueError(f"{name} must be a non-negative integer")
     for name in ("rate_hz", "stale_warning_seconds"):
         value = params[name]
         if (
@@ -518,8 +375,6 @@ def _validated_params(raw: dict[str, object]) -> dict[str, object]:
             or value <= 0
         ):
             raise ValueError(f"{name} must be greater than zero")
-    if not isinstance(params["catch_up_enabled"], bool):
-        raise ValueError("catch_up_enabled must be a boolean")
     return params
 
 
@@ -533,21 +388,21 @@ class SmplRefBridgeNode(Node):
         self._pico_topic = str(params["pico_topic"])
         self._out_topic = str(params["out_topic"])
         self._stale_seconds = float(params["stale_warning_seconds"])
-        self._merger = StreamedSmplRefMerger(
-            history_frames=int(params["history_frames"]),
-            max_gap_frames=int(params["max_gap_frames"]),
-            catch_up_enabled=bool(params["catch_up_enabled"]),
-        )
         self._source_gate = PicoSourceReadinessGate()
         self._button_publishers = {
             name: self.create_publisher(Float32, f"pico/{name}", 10)
             for name in PICO_BUTTON_FIELDS
         }
         self._invalid_button_fields: set[str] = set()
-        self._pending_fields: dict[str, np.ndarray] | None = None
         self._last_received_mono: float | None = None
+        self._last_valid_newest_frame: int | None = None
+        self._source_stream_epoch = new_stream_epoch()
         self._received = 0
+        self._sent = 0
         self._skipped = 0
+        self._duplicate_chunks = 0
+        self._counter_restarts = 0
+        self._send_dropped = 0
         self._stale_was_reported = False
         self._stream_state: str | None = None
         self._closed = False
@@ -555,14 +410,14 @@ class SmplRefBridgeNode(Node):
         self._zmq_context = zmq.Context()
         self._sub = self._zmq_context.socket(zmq.SUB)
         self._sub.setsockopt(zmq.LINGER, 0)
-        self._sub.setsockopt(zmq.RCVHWM, 1)
+        self._sub.setsockopt(zmq.RCVHWM, 64)
         self._sub.setsockopt_string(zmq.SUBSCRIBE, self._pico_topic)
         self._pico_endpoint = f"tcp://{params['pico_host']}:{params['pico_port']}"
         self._sub.connect(self._pico_endpoint)
 
         self._pub = self._zmq_context.socket(zmq.PUB)
         self._pub.setsockopt(zmq.LINGER, 0)
-        self._pub.setsockopt(zmq.SNDHWM, 2)
+        self._pub.setsockopt(zmq.SNDHWM, 8)
         self._out_endpoint = f"tcp://{params['out_host']}:{params['out_port']}"
         try:
             self._pub.bind(self._out_endpoint)
@@ -577,7 +432,8 @@ class SmplRefBridgeNode(Node):
         self.get_logger().info(
             f"SONIC bridge SUB {self._pico_endpoint} topic='{self._pico_topic}', "
             f"PUB {self._out_endpoint} topic='{self._out_topic}', "
-            f"rate={float(params['rate_hz']):g}Hz"
+            f"poll={float(params['rate_hz']):g}Hz, "
+            "playback_owner=policy, ack_channel=none"
         )
 
     def _publish_buttons(self, fields: dict[str, np.ndarray]) -> None:
@@ -612,51 +468,67 @@ class SmplRefBridgeNode(Node):
             if fields is None:
                 continue
             self._publish_buttons(fields)
+            self._received += 1
             received_mono = time.monotonic()
-            self._pending_fields = (
-                fields
-                if self._source_gate.observe(
-                    fields,
-                    received_mono,
-                    self._stale_seconds,
-                )
-                else None
+            if not self._source_gate.observe(
+                fields,
+                received_mono,
+                self._stale_seconds,
+            ):
+                continue
+
+            try:
+                chunk = _parse_incoming_chunk(fields)
+            except (KeyError, TypeError, ValueError, IndexError) as exc:
+                self._skipped += 1
+                self.get_logger().warning(f"skipped invalid PICO pose: {exc}")
+                continue
+
+            newest = int(chunk.frame_indices[-1])
+            progress = classify_frame_progress(
+                newest,
+                self._last_valid_newest_frame,
             )
+            if progress == "duplicate":
+                self._duplicate_chunks += 1
+                continue
+            if progress == "restart":
+                previous_epoch = self._source_stream_epoch
+                self._source_stream_epoch = new_stream_epoch(previous_epoch)
+                self._counter_restarts += 1
+                self.get_logger().info(
+                    "PICO frame counter restarted; "
+                    f"newest={newest} previous={self._last_valid_newest_frame} "
+                    f"source_epoch={previous_epoch}->{self._source_stream_epoch}"
+                )
+
+            source_fields = _source_chunk_fields(
+                chunk,
+                source_stream_epoch=self._source_stream_epoch,
+                received_monotonic_ns=int(received_mono * 1.0e9),
+            )
+            try:
+                self._pub.send(
+                    pack_pose_message(
+                        source_fields,
+                        topic=self._out_topic,
+                        version=5,
+                    ),
+                    flags=zmq.NOBLOCK,
+                )
+                self._sent += 1
+            except zmq.Again:
+                self._send_dropped += 1
+
+            self._last_valid_newest_frame = newest
             self._last_received_mono = received_mono
             self._stale_was_reported = False
-            self._received += 1
 
     def _tick(self) -> None:
         if self._closed:
             return
         self._drain_input()
         now = time.monotonic()
-        if self._pending_fields is not None and self._source_gate.is_fresh(
-            now, self._stale_seconds
-        ):
-            try:
-                self._merger.merge(_parse_incoming_chunk(self._pending_fields))
-            except (KeyError, TypeError, ValueError, IndexError) as exc:
-                self._skipped += 1
-                self._source_gate.reset()
-                self.get_logger().warning(f"skipped invalid PICO pose: {exc}")
-            self._pending_fields = None
-
-        smpl_ref = _build_live_smpl_ref_if_ready(
-            self._source_gate,
-            self._merger,
-            now,
-            self._stale_seconds,
-        )
-        if smpl_ref is not None:
-            try:
-                self._pub.send(
-                    pack_pose_message(smpl_ref, topic=self._out_topic, version=4),
-                    flags=zmq.NOBLOCK,
-                )
-            except zmq.Again:
-                self._skipped += 1
-
         input_age = (
             now - self._last_received_mono
             if self._last_received_mono is not None
@@ -670,13 +542,14 @@ class SmplRefBridgeNode(Node):
             self.get_logger().warning(
                 "PICO pose input stale; "
                 f"age_ms={input_age * 1000.0:.0f} received={self._received}. "
-                "Live smpl_ref publication stopped; policy uses idle reference."
+                "No synthetic window is published; policy consumes its buffer "
+                "then holds the last complete window."
             )
             self._stale_was_reported = True
 
         current_state = (
             "streaming"
-            if smpl_ref is not None
+            if self._last_received_mono is not None and not self._stale_was_reported
             else "stale" if self._stale_was_reported else "waiting"
         )
         if current_state == self._stream_state:
@@ -687,11 +560,14 @@ class SmplRefBridgeNode(Node):
                 "waiting for calibrated, fresh PICO pose frames; "
                 f"received={self._received} skipped={self._skipped}"
             )
-        elif current_state == "streaming" and smpl_ref is not None:
+        elif current_state == "streaming":
             self.get_logger().info(
-                "PICO stream ready; "
-                f"frame={int(smpl_ref['frame_index'][0])} "
-                f"input_age_ms={input_age * 1000.0:.0f}"
+                "PICO source chunks ready; "
+                f"sent={self._sent} newest={self._last_valid_newest_frame} "
+                f"epoch={self._source_stream_epoch} "
+                f"duplicates={self._duplicate_chunks} "
+                f"restarts={self._counter_restarts} "
+                f"dropped={self._send_dropped}"
             )
 
     def destroy_node(self):
@@ -720,6 +596,6 @@ __all__ = [
     "IncomingChunk",
     "PicoSourceReadinessGate",
     "SmplRefBridgeNode",
-    "StreamedSmplRefMerger",
+    "_source_chunk_fields",
     "create_node",
 ]
