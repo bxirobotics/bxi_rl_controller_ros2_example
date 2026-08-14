@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+import math
 from threading import current_thread, Event, Lock, Thread
 import time
 
@@ -22,6 +23,7 @@ class ControlCycleResult:
 
     state: str
     active: bool = True
+    next_period_sec: float | None = None
 
 
 def _percentile_summary(values_ns: list[int]) -> dict[str, float]:
@@ -107,7 +109,8 @@ class ControlScheduler:
             raise ValueError("control realtime priority must be in [0, 99]")
 
         self._cycle = cycle
-        self.period_ns = int(round(period_sec * 1_000_000_000.0))
+        self._period_sec = float(period_sec)
+        self.period_ns = int(round(self._period_sec * 1_000_000_000.0))
         self.compute_budget_ns = int(round(compute_budget_sec * 1_000_000_000.0))
         self.deadline_tolerance_ns = int(
             round(deadline_tolerance_sec * 1_000_000_000.0)
@@ -142,6 +145,12 @@ class ControlScheduler:
     def fatal_error(self) -> str | None:
         with self._stats_lock:
             return self._fatal_error
+
+    @property
+    def period_sec(self) -> float:
+        """Exact logical period supplied to the current control cycle."""
+
+        return self._period_sec
 
     def start(self) -> None:
         if self.is_running:
@@ -207,10 +216,11 @@ class ControlScheduler:
             state = self._last_state
             last_miss = dict(self._last_miss) if self._last_miss else None
             fatal_error = self._fatal_error
+            period_ns = self.period_ns
             if reset_window:
                 self._reset_window_locked()
         return {
-            "period_ms": self.period_ns / 1_000_000.0,
+            "period_ms": period_ns / 1_000_000.0,
             "compute_budget_ms": self.compute_budget_ns / 1_000_000.0,
             "cycles": window_cycles,
             "budget_overruns": window_budget_overruns,
@@ -253,10 +263,12 @@ class ControlScheduler:
     def _run(self) -> None:
         self._configure_current_thread()
         # Releases, rather than completion times or the compute budget, define
-        # the fixed 50 Hz inference time line.
+        # a drift-free time line.  A completed cycle may select the period for
+        # the next release when the active state's inference rate changes.
         release_ns = time.monotonic_ns()
         last_active_started_ns: int | None = None
         while not self._stop_event.is_set():
+            cycle_period_ns = self.period_ns
             self._next_wake_ns = release_ns
             if not self._wait_until(release_ns):
                 break
@@ -266,6 +278,11 @@ class ControlScheduler:
                 result = self._cycle()
                 if not isinstance(result, ControlCycleResult):
                     raise TypeError("control cycle must return ControlCycleResult")
+                next_period_sec, next_period_ns = self._resolve_next_period(
+                    result.next_period_sec,
+                    current_period_sec=self._period_sec,
+                    current_period_ns=cycle_period_ns,
+                )
             except BaseException as exc:
                 message = f"control scheduler stopped after cycle failure: {exc}"
                 with self._stats_lock:
@@ -285,7 +302,12 @@ class ControlScheduler:
 
             if not result.active:
                 last_active_started_ns = None
-                release_ns = self._next_release_after(release_ns, finished_ns)
+                self._set_period(next_period_sec, next_period_ns, result.state)
+                release_ns = self._next_release_after(
+                    release_ns,
+                    finished_ns,
+                    next_period_ns,
+                )
                 continue
             if last_active_started_ns is None:
                 with self._stats_lock:
@@ -302,7 +324,7 @@ class ControlScheduler:
 
             # Each release owns the complete following period.  Starting late
             # and finishing after the next release are both deadline failures.
-            deadline_ns = release_ns + self.period_ns
+            deadline_ns = release_ns + cycle_period_ns
             finish_late_ns = max(0, finished_ns - deadline_ns)
             deadline_missed = (
                 wake_late_ns > self.deadline_tolerance_ns
@@ -310,19 +332,20 @@ class ControlScheduler:
             )
             budget_overrun = cycle_ns > self.compute_budget_ns
 
-            next_release_ns = deadline_ns
+            next_release_ns = release_ns + next_period_ns
             skipped_periods = 0
             # A small overrun runs the overdue release immediately and catches
             # the original time line on a later short cycle.  Skip only release
             # points for which another complete period has already elapsed.
-            if finished_ns >= next_release_ns + self.period_ns:
+            if finished_ns >= next_release_ns + next_period_ns:
                 skipped_periods = (
                     finished_ns - next_release_ns
-                ) // self.period_ns
-                next_release_ns += skipped_periods * self.period_ns
+                ) // next_period_ns
+                next_release_ns += skipped_periods * next_period_ns
 
             miss_event = self._record_cycle(
                 result,
+                period_ns=cycle_period_ns,
                 wake_late_ns=wake_late_ns,
                 cycle_ns=cycle_ns,
                 frame_interval_ns=frame_interval_ns,
@@ -336,18 +359,66 @@ class ControlScheduler:
                     self._deadline_miss_callback(miss_event)
                 except Exception as exc:
                     self._log("error", f"deadline miss callback failed: {exc}")
+            self._set_period(next_period_sec, next_period_ns, result.state)
             release_ns = next_release_ns
         self._next_wake_ns = None
 
-    def _next_release_after(self, release_ns: int, finished_ns: int) -> int:
+    def _resolve_next_period(
+        self,
+        requested_sec: float | None,
+        *,
+        current_period_sec: float,
+        current_period_ns: int,
+    ) -> tuple[float, int]:
+        if requested_sec is None:
+            return current_period_sec, current_period_ns
+        if isinstance(requested_sec, bool) or not isinstance(
+            requested_sec, (int, float)
+        ):
+            raise ValueError("next control period must be a number")
+        period_sec = float(requested_sec)
+        if not math.isfinite(period_sec) or period_sec <= 0.0:
+            raise ValueError("next control period must be finite and positive")
+        period_ns = int(round(period_sec * 1_000_000_000.0))
+        if period_ns <= 0:
+            raise ValueError("next control period is below scheduler resolution")
+        if period_ns <= self.compute_budget_ns:
+            raise ValueError(
+                "next control period must be greater than the configured "
+                "compute budget"
+            )
+        if self.spin_wait_ns >= period_ns:
+            raise ValueError(
+                "next control period must be greater than the configured spin wait"
+            )
+        return period_sec, period_ns
+
+    def _set_period(self, period_sec: float, period_ns: int, state: str) -> None:
+        previous_ns = self.period_ns
+        self._period_sec = period_sec
+        self.period_ns = period_ns
+        if period_ns != previous_ns:
+            self._log(
+                "info",
+                "控制周期已切换："
+                f"状态={state}，频率={1.0 / period_sec:.3f} Hz，"
+                f"周期={period_ns / 1_000_000.0:.3f} ms",
+            )
+
+    @staticmethod
+    def _next_release_after(
+        release_ns: int,
+        finished_ns: int,
+        period_ns: int,
+    ) -> int:
         """Keep inactive/startup work on the same period-aligned time line."""
-        next_release_ns = release_ns + self.period_ns
+        next_release_ns = release_ns + period_ns
         if finished_ns <= next_release_ns:
             return next_release_ns
         skipped = (
-            finished_ns - next_release_ns + self.period_ns - 1
-        ) // self.period_ns
-        return next_release_ns + skipped * self.period_ns
+            finished_ns - next_release_ns + period_ns - 1
+        ) // period_ns
+        return next_release_ns + skipped * period_ns
 
     def _wait_until(self, target_ns: int) -> bool:
         while not self._stop_event.is_set():
@@ -357,7 +428,7 @@ class ControlScheduler:
 
             # Sleep for most of the wait, then optionally busy-spin over only
             # the configured final slice.  The absolute target is unchanged,
-            # so the fixed-frequency release time line cannot drift.
+            # so the absolute release time line cannot drift.
             if self.spin_wait_ns >= 0 and remaining_ns <= self.spin_wait_ns:
                 while time.monotonic_ns() < target_ns:
                     pass
@@ -374,6 +445,7 @@ class ControlScheduler:
         self,
         result: ControlCycleResult,
         *,
+        period_ns: int,
         wake_late_ns: int,
         cycle_ns: int,
         frame_interval_ns: int,
@@ -401,6 +473,7 @@ class ControlScheduler:
                 self._total_deadline_misses += 1
                 miss_event = {
                     "state": result.state,
+                    "period_ms": period_ns / 1_000_000.0,
                     "wake_late_ms": wake_late_ns / 1_000_000.0,
                     "cycle_ms": cycle_ns / 1_000_000.0,
                     "finish_late_ms": finish_late_ns / 1_000_000.0,

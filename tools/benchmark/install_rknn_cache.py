@@ -49,7 +49,9 @@ def _atomic_copy(source: Path, destination: Path) -> None:
 
 def install_cache(cache_root: Path, *, dry_run: bool) -> int:
     if not cache_root.is_dir():
-        print(f"error: RKNN cache directory does not exist: {cache_root}", file=sys.stderr)
+        print(
+            f"error: RKNN cache directory does not exist: {cache_root}", file=sys.stderr
+        )
         return 2
 
     cache_files = sorted(cache_root.rglob("*.rknn"))
@@ -65,6 +67,8 @@ def install_cache(cache_root: Path, *, dry_run: bool) -> int:
     for source in cache_files:
         relative = source.relative_to(cache_root)
         destination = ROOT / relative
+        source_manifest = Path(str(source) + ".build.json")
+        destination_manifest = Path(str(destination) + ".build.json")
         onnx_path = destination.with_suffix(".onnx")
 
         try:
@@ -78,9 +82,19 @@ def install_cache(cache_root: Path, *, dry_run: bool) -> int:
             print(f"SKIP  no matching ONNX: {onnx_path.relative_to(ROOT)}")
             skipped += 1
             continue
+        if not source_manifest.is_file():
+            print(
+                f"SKIP  no RKNN build contract: {source_manifest.relative_to(cache_root)}"
+            )
+            skipped += 1
+            continue
 
         try:
-            if _same_file_contents(source, destination):
+            model_matches = _same_file_contents(source, destination)
+            manifest_matches = _same_file_contents(
+                source_manifest, destination_manifest
+            )
+            if model_matches and manifest_matches:
                 print(f"SAME  {destination.relative_to(ROOT)}")
                 unchanged += 1
                 continue
@@ -88,7 +102,10 @@ def install_cache(cache_root: Path, *, dry_run: bool) -> int:
             action = "WOULD INSTALL" if dry_run else "INSTALL"
             print(f"{action:<13} {destination.relative_to(ROOT)}")
             if not dry_run:
-                _atomic_copy(source, destination)
+                if not model_matches:
+                    _atomic_copy(source, destination)
+                if not manifest_matches:
+                    _atomic_copy(source_manifest, destination_manifest)
             installed += 1
         except OSError as exc:
             print(f"FAIL  {destination.relative_to(ROOT)}: {exc}", file=sys.stderr)

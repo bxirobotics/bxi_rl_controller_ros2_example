@@ -31,7 +31,7 @@ control_runtime:
   realtime_priority: 50 #需要程序以root运行，或者sudo prlimit --pid "$$" --rtprio=99:99赋予当前终端权限
 
 graph:
-  validate: true
+  validate: false
   export:
     dot: /tmp/elf3_state_machine.dot
     mermaid: /tmp/elf3_state_machine.mmd

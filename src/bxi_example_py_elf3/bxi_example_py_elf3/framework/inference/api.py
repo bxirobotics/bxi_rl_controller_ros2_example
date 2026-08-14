@@ -24,6 +24,10 @@ class InferenceFrame:
     depth: NDArray[np.floating] | None = None
     depth_frame_id: int | None = None
     timestamp_ns: int = 0
+    # Raw body-frame specific force from the platform IMU.  Policies that
+    # were trained with an accelerometer must reject a missing value rather
+    # than silently substituting zeros.
+    linear_acceleration: NDArray[np.floating] | None = None
 
 
 @dataclass(slots=True)

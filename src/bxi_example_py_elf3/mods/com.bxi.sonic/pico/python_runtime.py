@@ -93,18 +93,35 @@ def _clean_python_environment() -> dict[str, str]:
 
 
 def _resolve_python(value: str) -> Path | None:
+    """Return an executable path without resolving its final symlink.
+
+    A standard virtual environment normally exposes ``bin/python`` as a
+    symlink to the base interpreter.  Python discovers the adjacent
+    ``pyvenv.cfg`` from the *launcher path*, so canonicalising that symlink
+    silently turns the virtual-environment interpreter back into the system
+    interpreter and loses all of the environment's installed packages.
+    """
     value = value.strip()
     if not value:
         return None
     if os.sep not in value:
         resolved = shutil.which(value)
-        return Path(resolved).resolve() if resolved else None
+        if resolved is None:
+            return None
+        candidate = Path(os.path.abspath(resolved))
+        return (
+            candidate
+            if candidate.is_file() and os.access(candidate, os.X_OK)
+            else None
+        )
     candidate = Path(value).expanduser()
     if not candidate.is_absolute():
         candidate = Path.cwd() / candidate
     try:
-        candidate = candidate.resolve()
-    except OSError:
+        # ``abspath`` normalises ``.`` and ``..`` while deliberately
+        # preserving the final symlink that gives a venv its identity.
+        candidate = Path(os.path.abspath(os.fspath(candidate)))
+    except (OSError, ValueError):
         return None
     return candidate if candidate.is_file() and os.access(candidate, os.X_OK) else None
 
@@ -303,10 +320,9 @@ def select_python(
 
 
 def reexec_if_needed(component: str, imports: Sequence[str]) -> None:
-    try:
-        current = Path(sys.executable).resolve()
-    except OSError:
-        current = Path(sys.executable)
+    current = _resolve_python(sys.executable)
+    if current is None:
+        current = Path(os.path.abspath(sys.executable))
     previously_selected = _resolve_python(os.environ.get(_SELECTED_PYTHON_ENV, ""))
     if previously_selected == current:
         if os.environ.get(_BINDING_SOURCE_ENV) == _BUNDLED_BINDING:
@@ -320,6 +336,7 @@ def reexec_if_needed(component: str, imports: Sequence[str]) -> None:
         str(selected.executable),
         (
             str(selected.executable),
+            "-u",
             "-B",
             "-E",
             "-s",

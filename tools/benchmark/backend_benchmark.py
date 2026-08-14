@@ -398,11 +398,7 @@ def _make_inputs(
     dynamic_dimension: int,
     seed: int,
     input_ranges: dict[str, tuple[float, float]],
-    input_npz: Path | None,
 ) -> dict[str, np.ndarray]:
-    if input_npz is not None:
-        return _load_input_npz(model, overrides, dynamic_dimension, input_npz)
-
     rng = np.random.default_rng(seed)
     inputs: dict[str, np.ndarray] = {}
     for tensor in model.inputs:
@@ -428,48 +424,6 @@ def _make_inputs(
     return inputs
 
 
-def _load_input_npz(
-    model: ModelInfo,
-    overrides: dict[str, tuple[int, ...]],
-    dynamic_dimension: int,
-    path: Path,
-) -> dict[str, np.ndarray]:
-    expected_names = tuple(tensor.name for tensor in model.inputs)
-    try:
-        archive = np.load(path, allow_pickle=False)
-    except Exception as exc:
-        raise ValueError(f"cannot load benchmark input NPZ {path}: {exc}") from exc
-    with archive:
-        actual_names = tuple(archive.files)
-        missing = set(expected_names) - set(actual_names)
-        extra = set(actual_names) - set(expected_names)
-        if missing or extra:
-            raise ValueError(
-                f"benchmark input NPZ names do not match model: "
-                f"missing={sorted(missing)}, extra={sorted(extra)}"
-            )
-        inputs: dict[str, np.ndarray] = {}
-        for tensor in model.inputs:
-            value = np.asarray(archive[tensor.name])
-            expected_shape = _concrete_shape(tensor, overrides, dynamic_dimension)
-            if value.shape != expected_shape:
-                raise ValueError(
-                    f"benchmark input {tensor.name!r} shape is {value.shape}, "
-                    f"expected {expected_shape}"
-                )
-            if value.dtype != tensor.dtype:
-                raise ValueError(
-                    f"benchmark input {tensor.name!r} dtype is {value.dtype}, "
-                    f"expected {tensor.dtype}"
-                )
-            if np.issubdtype(value.dtype, np.number) and not np.isfinite(value).all():
-                raise ValueError(
-                    f"benchmark input {tensor.name!r} contains NaN or infinity"
-                )
-            inputs[tensor.name] = np.ascontiguousarray(value)
-    return inputs
-
-
 def _model_seed(base_seed: int, path: Path) -> int:
     identity = _relative_path(path).encode("utf-8")
     offset = int.from_bytes(hashlib.sha256(identity).digest()[:8], "big")
@@ -484,6 +438,29 @@ def _cached_rknn_path(source: Path, cache_root: Path) -> Path:
     return cache_root / relative.with_suffix(".rknn")
 
 
+def _cached_rknn_outputs(path: Path) -> tuple[str, ...] | None:
+    manifest_path = Path(str(path) + ".build.json")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read RKNN build manifest {manifest_path}: {exc}") from exc
+
+    fingerprint = manifest.get("fingerprint")
+    outputs = fingerprint.get("outputs") if isinstance(fingerprint, dict) else None
+    if (
+        not isinstance(outputs, list)
+        or not outputs
+        or not all(isinstance(name, str) and name for name in outputs)
+        or len(set(outputs)) != len(outputs)
+    ):
+        raise ValueError(
+            f"RKNN build manifest has no valid output contract: {manifest_path}"
+        )
+    return tuple(outputs)
+
+
 def _cases_for_model(
     model: ModelInfo,
     onnxruntime_providers: list[str],
@@ -491,6 +468,7 @@ def _cases_for_model(
     include_auto: bool,
     rknn_target: str | None,
     rknn_cache: Path,
+    rknn_output_names: tuple[str, ...],
     dynamic_dimension: int,
     shape_overrides: dict[str, tuple[int, ...]],
 ) -> list[BenchmarkCase]:
@@ -572,11 +550,26 @@ def _cases_for_model(
     else:
         rknn_path = _cached_rknn_path(model.path, rknn_cache)
     if adjacent_rknn.is_file() or rknn_path.is_file() or conversion_enabled:
-        rknn_outputs = tuple(
+        available_outputs = {item.name for item in model.outputs}
+        missing_outputs = set(rknn_output_names) - available_outputs
+        if missing_outputs:
+            raise ValueError(
+                "requested RKNN output(s) do not exist in "
+                f"{model.path.name}: {sorted(missing_outputs)}"
+            )
+        cached_outputs = _cached_rknn_outputs(rknn_path)
+        rknn_outputs = rknn_output_names or cached_outputs or tuple(
             item.name for item in model.outputs if item.name == "actions"
         )
         if not rknn_outputs and model.outputs:
             rknn_outputs = (model.outputs[0].name,)
+        missing_effective_outputs = set(rknn_outputs) - available_outputs
+        if missing_effective_outputs:
+            source = "requested" if rknn_output_names else "cached"
+            raise ValueError(
+                f"{source} RKNN output(s) do not exist in {model.path.name}: "
+                f"{sorted(missing_effective_outputs)}"
+            )
         rknn_inputs = _required_onnx_inputs(model.path, rknn_outputs) or tuple(
             item.name for item in model.inputs
         )
@@ -897,7 +890,6 @@ def _worker_main(args: argparse.Namespace) -> int:
             args.dynamic_dim,
             args.seed,
             args.input_ranges,
-            args.input_npz,
         )
         case = _worker_case(args, model)
         result, outputs = _run_case(
@@ -996,9 +988,6 @@ def _run_case_isolated(
             command.extend(("--shape", f"{name}=" + ",".join(map(str, shape))))
         for name, (low, high) in args.input_ranges.items():
             command.extend(("--input-range", f"{name}={low!r},{high!r}"))
-        if args.input_npz is not None:
-            command.extend(("--input-npz", str(args.input_npz)))
-
         try:
             completed = subprocess.run(
                 command,
@@ -1213,14 +1202,6 @@ def _arguments() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--input-npz",
-        type=Path,
-        help=(
-            "load named model inputs from one NPZ file; requires exactly one model "
-            "and cannot be combined with --input-range"
-        ),
-    )
-    parser.add_argument(
         "--dynamic-dim",
         type=int,
         default=1,
@@ -1237,6 +1218,17 @@ def _arguments() -> argparse.Namespace:
         type=Path,
         default=ROOT / "tools/benchmark/cache/rknn",
         help="output cache used when RKNN conversion is explicitly enabled",
+    )
+    parser.add_argument(
+        "--rknn-output",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "RKNN output to retain; repeat to preserve a multi-output production "
+            "contract. Existing caches use their build-manifest contract; new or "
+            "legacy caches default to actions (or the first model output)"
+        ),
     )
     parser.add_argument("--seed", type=int, default=20260729)
     parser.add_argument(
@@ -1328,12 +1320,6 @@ def _arguments() -> argparse.Namespace:
         args.input_ranges = _parse_input_ranges(args.input_range)
     except argparse.ArgumentTypeError as exc:
         parser.error(str(exc))
-    if args.input_npz is not None:
-        if args.input_range:
-            parser.error("--input-npz cannot be combined with --input-range")
-        args.input_npz = args.input_npz.expanduser().resolve()
-        if not args.input_npz.is_file():
-            parser.error(f"input NPZ does not exist: {args.input_npz}")
     return args
 
 
@@ -1355,10 +1341,6 @@ def main() -> int:
     if not models:
         print("no ONNX models found", file=sys.stderr)
         return 2
-    if args.input_npz is not None and len(models) != 1:
-        print("--input-npz requires exactly one discovered model", file=sys.stderr)
-        return 2
-
     environment, openvino_devices = _environment()
     _print_environment(environment)
     report: dict[str, Any] = {
@@ -1375,9 +1357,7 @@ def main() -> int:
             "shape_overrides": {
                 name: list(shape) for name, shape in args.shape_overrides.items()
             },
-            "input_source": (
-                str(args.input_npz) if args.input_npz is not None else "generated"
-            ),
+            "input_source": "generated",
             "default_float_distribution": "uniform[-1,1]",
             "input_ranges": {
                 name: [low, high] for name, (low, high) in args.input_ranges.items()
@@ -1406,7 +1386,6 @@ def main() -> int:
                 args.dynamic_dim,
                 effective_seed,
                 args.input_ranges,
-                args.input_npz,
             )
         except Exception as exc:
             print(f"Model: {_relative_path(path)}\n  inspect error: {exc}\n")
@@ -1422,9 +1401,7 @@ def main() -> int:
         model_result: dict[str, Any] = {
             "path": _relative_path(path),
             "size_bytes": path.stat().st_size,
-            "input_source": (
-                str(args.input_npz) if args.input_npz is not None else "generated"
-            ),
+            "input_source": "generated",
             "effective_seed": effective_seed,
             "inputs": [
                 {
@@ -1449,9 +1426,7 @@ def main() -> int:
         _print_model_header(
             model,
             inputs,
-            input_source=(
-                str(args.input_npz) if args.input_npz is not None else "generated"
-            ),
+            input_source="generated",
             effective_seed=effective_seed,
         )
         reference_outputs = None
@@ -1463,6 +1438,7 @@ def main() -> int:
             not args.no_openvino_auto,
             args.rknn_target,
             args.rknn_cache.expanduser().resolve(),
+            tuple(args.rknn_output),
             args.dynamic_dim,
             args.shape_overrides,
         ):

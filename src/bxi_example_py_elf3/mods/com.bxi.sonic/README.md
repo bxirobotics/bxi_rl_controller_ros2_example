@@ -1,7 +1,8 @@
 # SONIC 遥操 Mod
 
 Mod 负责一个参数化控制状态、SONIC 模型推理、PICO 数据接入、POSE 到 SMPL reference 的
-转换以及可选夹爪命令；MuJoCo、机器人平台 I/O 和主控制器仍由宿主负责。
+转换、头部相机 RTSP 图传以及可选夹爪命令；MuJoCo、机器人平台 I/O 和主控制器仍由宿主
+负责。
 
 目录按框架 Mod 约定分工：
 
@@ -9,7 +10,11 @@ Mod 负责一个参数化控制状态、SONIC 模型推理、PICO 数据接入�
 assets/                 控制策略模型与参考数据
 config/                 部署时使用的静态配置模板
 pico/                   PICO manager、bridge 和协议代码
-runtime/<platform>/     可移动的 RoboticsService 应用运行时
+bin/<platform>/         ROS/FFmpeg 头部相机 RTSP 推流器
+native/rtsp_streamer/   推流器源码和 CMake 工程
+runtime/<platform>/     RoboticsService 与 MediaMTX 平台运行时
+runtime/mediamtx.yml    Mod 自有 RTSP 服务配置
+tools/                  当前平台原生推流器构建工具
 vendor/python/<target>/ 当前平台与 CPython ABI 对应的二进制扩展
 vendor/lib/<platform>/  框架可注入的厂商动态库入口
 vendor/licenses/        第三方许可证与来源记录
@@ -24,7 +29,7 @@ PICO 头显/追踪设备
   -> pico_manager（ZMQ pose）
   -> smpl_bridge（ZMQ smpl_ref）
   -> SonicTeleopPolicy
-  -> 29 个具名策略关节
+  -> 29 个具名策略关节 + 2 个具名头部关节
   -> MotorFrame
 ```
 
@@ -39,20 +44,44 @@ RKNN -> OpenVINO -> ONNX Runtime
 
 ## 状态和事件
 
-- `com.bxi.sonic/sonic_teleop`：控制机器人本体的 29 个策略关节；是否控制夹爪由
-  `hardware_gripper` 参数决定。
+- `com.bxi.sonic/sonic_teleop`：控制机器人本体的 29 个策略关节，并在进入 PICO
+  `POSE` 后控制 `head_y_joint/head_z_joint`；是否控制夹爪由 `hardware_gripper`
+  参数决定。
 - `com.bxi.sonic/activate`：默认 `btn_10=9`。
 - `com.bxi.sonic/reset_alignment`：默认 `btn_9=1`。
 
-SONIC 明确声明 ELF3 的 29 关节模型布局。框架按关节名映射到机器人布局；机器人额外
-关节由其他命令来源或显式 defaults 提供，不依赖数组位置猜测。
+SONIC 策略仍明确声明 ELF3 的 29 关节模型布局，状态再用具名命令合成器追加
+`head_y_joint/head_z_joint`。框架按关节名映射到机器人布局：31 关节机器人接收
+完整身体和头部命令，29 关节机器人会按名称忽略不存在的两个头部关节，不依赖数组
+位置猜测。
+
+## PICO 头部控制
+
+是否由 SONIC 状态控制头部由 `states.sonic_teleop.params.head_control_enabled`
+决定，默认为 `true`。设为 `false` 后 SONIC 仅输出策略的 29 个身体关节，不声明
+`head_y_joint/head_z_joint` 的命令所有权；头部由机器人平台默认命令或其他命令来源处理。
+
+头部映射与 `com.bxi.pico_gmr_motion` 保持一致：使用 `Spine3` 到 `Head` 的相对旋转，
+将相对 XYZ roll 取反后映射到 `head_y_joint`，将相对 XYZ pitch 映射到
+`head_z_joint`。每次切入 `POSE` 都以当前头显姿态为中心重新归零，因此不会把进入
+模式前的绝对朝向瞬间施加给机器人。
+
+头部目标通过 `pose.head_joint_pos -> smpl_ref.head_joint_pos` 与身体参考同步传输。默认
+俯仰/偏航限位为 `0.5/1.0 rad`，速度限制为 `1.5/2.0 rad/s`，死区为
+`0.015 rad`，PD 增益为 `kp=16.747, kd=1.066`。离开 `POSE`、引用超时或回到
+idle reference 时，头部目标置零并按速度限制平滑回中。
 
 ## 框架生命周期
 
-`mod.yaml` 把两个组件放在各自正确的运行边界：
+`mod.yaml` 把四个组件放在各自正确的运行边界：
 
 ```text
 ModNodeManager
+├── mediamtx_server
+│   └── 当前平台随包 MediaMTX，监听 RTSP 2212
+├── head_camera_rtsp
+│   └── 当前平台 ROS/FFmpeg 推流器
+│       depends_on: mediamtx_server
 ├── pico_manager
 │   └── 独立选择的 Python：pico/manager_launcher.py
 └── smpl_bridge
@@ -64,7 +93,7 @@ ModNodeManager
 中选择用户 Python 或内置回退；`smpl_bridge` 显式使用 `host_ros` profile。因此用户或
 内置的厂商 Python/SDK 路径都不会进入宿主 ROS bridge。
 
-两个节点均为 `lifecycle: state`，关联唯一的 `sonic_teleop` 状态。框架会：
+四个节点均为 `lifecycle: state`，关联唯一的 `sonic_teleop` 状态。框架会：
 
 1. 在目标状态 prepare 阶段先启动 `pico_manager`，再启动 `smpl_bridge`。
 2. 把 bridge 加入宿主 `MultiThreadedExecutor`，由 50 Hz 非阻塞 timer 排空 ZMQ 输入；
@@ -75,6 +104,41 @@ ModNodeManager
 5. manager 退出后，框架停止并标记依赖它的 bridge。
 6. 向 manager 独立进程组发送 `SIGINT`，3 秒后升级为 `SIGTERM`，5 秒后发送
    `SIGKILL`，包括清理仍存活的派生进程。
+
+## 头部相机 RTSP 图传
+
+进入 `sonic_teleop` 时，框架会同时启动 `mediamtx_server` 和
+`head_camera_rtsp`。推流器订阅：
+
+```text
+/simulation/head_depth_camera/color/image_raw
+/hardware/head_depth_camera/color/image_raw
+```
+
+默认 `source_mode=auto`：连续收到 3 帧真机图像后优先使用硬件；硬件超过 0.5 秒断流
+则自动回到仿真。输出为 424x240、H.264/YUV420P、目标 60 FPS、3 Mbps、无 B 帧，
+地址为：
+
+```text
+rtsp://<机器人IP>:2212/video
+```
+
+推流器只保留每个来源的最新帧，编码或网络变慢时丢弃旧图，避免排队累积延迟。图传节点
+故障由 Mod Node 的有限重启策略处理，不会直接切换机器人状态或写入电机命令。离开 SONIC
+时框架按依赖逆序先停止推流器，再停止 MediaMTX。
+
+MediaMTX 1.15.6 的 x86_64 与 ARM64 官方静态程序、许可证和来源校验记录均随 Mod 安装。
+ROS/FFmpeg 推流器也同时提供 x86_64 与 ARM64 产物；它动态链接目标系统的 ROS Humble、
+FFmpeg 和 x264。需要为其他 ABI 重建时执行：
+
+```bash
+source /opt/ros/humble/setup.bash
+/usr/bin/python3 -B \
+  src/bxi_example_py_elf3/mods/com.bxi.sonic/tools/build_rtsp_streamer.py
+```
+
+MediaMTX 使用 TCP 2212、UDP 8002 和 UDP 8003。PICO 从其他机器访问时必须使用机器人
+实际局域网 IP；匿名读写配置只适合可信局域网，不应直接暴露到公网。
 
 `pico_manager` 内部仍负责释放 `xrobotoolkit_sdk` 并关闭它自己创建的
 `RoboticsServiceProcess`。这是 SDK 资源所有权，不是另一套状态生命周期。
@@ -334,6 +398,7 @@ SONIC 对外只保留部署环境相关变量：
 | --- | --- | --- |
 | `SONIC_PICO_PYTHON` | 自动探测 | 可选；强制 manager 使用指定解释器 |
 | `SONIC_XRT_SERVICE_DIR` | `/opt/apps/roboticsservice`，不存在时使用当前平台内置 runtime | RoboticsService 根目录 |
+| `SONIC_MEDIAMTX_BIN` | 当前平台内置 runtime，随后尝试 `PATH` | 可选；覆盖 MediaMTX 程序路径 |
 
 算法行为和夹爪硬件配置不使用环境变量，统一写在 `mod.yaml` 的 state `params`。
 这样启动进程、状态可用性检查和 policy 使用的是同一份显式配置，启动 shell 中残留的
@@ -360,8 +425,41 @@ SONIC 对外只保留部署环境相关变量：
 | `gripper_left_bus` | `5` | 左夹爪 CAN 总线号 |
 | `gripper_right_bus` | `6` | 右夹爪 CAN 总线号 |
 | `gripper_can_id` | `1` | 两侧夹爪电机 CAN ID |
+| `gripper_master_id` | `17` | 电机响应帧仲裁 ID，默认 `can_id | 0x10` |
 | `gripper_kp` | `20.0` | 夹爪位置环 KP |
 | `gripper_kd` | `1.0` | 夹爪位置环 KD |
+| `gripper_calibration_speed_rad_s` | `0.2` | 每次进入状态时寻找机械限位的目标角度速度 |
+| `gripper_calibration_kp` | `5.0` | 限位校准期间使用的低位置增益 |
+| `gripper_calibration_kd` | `0.5` | 限位校准期间使用的速度增益 |
+| `gripper_contact_torque` | `2.0` | 持续达到该反馈力矩后判定接触限位 |
+| `gripper_abort_torque` | `8.0` | 达到该反馈力矩立即中止校准并退出电机模式 |
+| `gripper_contact_confirm_s` | `0.25` | 力矩、低速和跟踪误差同时成立的确认时间 |
+| `gripper_stopped_velocity_rad_s` | `0.1` | 限位接触判定的最大实测速度 |
+| `gripper_tracking_error_rad` | `0.08` | 限位接触判定和回退稳定判定的角度误差 |
+| `gripper_limit_margin_rad` | `0.15` | 从两侧机械硬限位向内回退的软限位距离 |
+| `gripper_minimum_span_rad` | `1.0` | 合法软开闭位置之间的最小行程 |
+| `gripper_maximum_search_travel_rad` | `7.0` | 单方向校准允许的最大实测行程 |
+| `gripper_response_timeout_s` | `1.0` | 进入状态后等待首个合法响应帧的时间 |
+| `gripper_feedback_timeout_s` | `0.3` | 校准期间允许响应帧中断的最长时间 |
+| `gripper_phase_timeout_s` | `45.0` | 单个限位搜索或返回阶段的最长时间 |
+| `gripper_maximum_mos_temperature_c` | `80` | 驱动 MOS 温度上限 |
+| `gripper_maximum_motor_temperature_c` | `80` | 电机线圈温度上限 |
+
+### 夹爪响应与自动校准
+
+启用硬件夹爪后，状态发布 `/canfd_packet/tx` 并订阅
+`/canfd_packet/rx`。合法响应必须同时匹配左右总线号、`gripper_master_id`、8 字节
+载荷以及载荷首字节中的 `gripper_can_id`。位置、速度和力矩分别按 16、12、12 位
+MIT 线性范围解码，最后两个字节作为 MOS 和电机温度。
+
+每次进入 `sonic_teleop` 都会重新执行完整校准：等待两侧新鲜响应、低速寻找张开硬
+限位、向内回退、低速寻找闭合硬限位、再次回退，最后低速返回张开软限位。限位必须
+同时满足滤波力矩、低实测速度、目标跟踪误差和持续时间条件。校准完成前忽略 trigger
+夹爪目标；完成后将 trigger 映射到各侧独立测得的软开闭位置。
+
+任一侧没有首帧、反馈中途超时、超过最大行程/阶段时间、力矩达到中止阈值或温度
+超限，都会判定本次夹爪校准失败，并让左右夹爪一起退出电机模式。机器人本体的
+SONIC 策略仍保持运行，错误会在状态日志中明确报告。
 
 bridge 始终发布 `pico/left_trigger`、`pico/right_trigger`、`pico/left_grip` 和
 `pico/right_grip`。是否真正向夹爪发送 CAN 命令只由 `mod.yaml` 中的
@@ -380,6 +478,13 @@ SONIC 的 ZMQ 只用于同一台机器上的 Mod 内部进程通信，默认拓�
 bridge 的 endpoint、topic、频率和新鲜度配置在 `mod.yaml` 的 node `params` 中显式
 声明，由 `NodeBuildContext` 注入，不读取散落的环境变量，也不再提供 wrapper 命令行
 兼容入口。
+
+bridge 的 50 Hz timer 只负责非阻塞排空 ZMQ 和转发完整 rolling source chunk，不是
+reference 播放时钟；它不维护 playhead、不等待 ACK，也不合成或复制未来帧。Policy 在
+控制线程内按顺序合并 source chunk，始终 gather 完整的 `current+[0..9]`，仅在 ONNX
+推理和动作解码成功后最多推进一帧。源帧晚到会保持当前窗口，burst 到达仍逐帧消费，
+断流会在缓冲耗尽后保持最后完整窗口；`BXI_SONIC_TELEMETRY_LOG_EVERY=N` 可按 N 个成功
+推理 tick 输出一次 `[sonic-playback-telemetry]` JSON，用于审计实际消费序列。
 
 ## 部署检查
 
@@ -406,10 +511,11 @@ ss -lntup | grep -E ':(60061|5556|5557)\b'
 
 ## 实时 reference 与 idle fallback
 
-默认 `require_live_reference: false`。进入状态时允许使用随 Mod 安装的 idle reference；
-PICO 同时按住 `A+B+X+Y` 请求校准后平滑切到 live reference，数据过期后平滑退回
-idle。按键请求与身体追踪数据解耦：若按下组合键时身体流尚未就绪，manager 会保留这次
-请求，并在第一帧新鲜身体数据到达后自动完成校准，不需要反复按键。
+默认 `require_live_reference: false`。进入状态时允许使用随 Mod 安装的自采站姿
+reference；PICO 同时按住 `A+B+X+Y` 请求校准后平滑切到 live reference。首次 live
+成功后，短时或长期断流均保持最后完整窗口而不回 idle；重新进入或显式重置状态才回到
+站姿 reference。按键请求与身体追踪数据解耦：若按下组合键时身体流尚未就绪，manager
+会保留这次请求，并在第一帧新鲜身体数据到达后自动完成校准，不需要反复按键。
 
 启动日志会明确区分三个阶段：
 

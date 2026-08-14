@@ -143,14 +143,14 @@ states:
     manifest:
       label: 鼓掌
       priority: 880
-      group: Base
+      group: Gesture
       icon: cheer
     speed_profile: normal
   hello:
     manifest:
       label: 挥手
       priority: 870
-      group: Base
+      group: Gesture
       icon: waving_hand
     speed_profile: normal
   lie_down:

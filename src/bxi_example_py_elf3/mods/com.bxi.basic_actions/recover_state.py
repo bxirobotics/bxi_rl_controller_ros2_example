@@ -83,6 +83,8 @@ class RecoverState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
             dt,
             advance=self.playing and advance,
         )
+        if 500 < self.policy._frame <1350:
+            output.joints.position[17] = min(output.joints.position[17]+1,2.8)
         return self._motor_frame_from_target(ctx, output.joints)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:

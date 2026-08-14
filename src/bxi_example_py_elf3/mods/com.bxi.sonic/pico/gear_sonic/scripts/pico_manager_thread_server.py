@@ -20,6 +20,8 @@ from scipy.spatial.transform import Rotation as sRot
 import zmq
 
 from gear_sonic.trl.utils.numpy_smpl import compute_from_body_poses
+from gear_sonic.utils.teleop.face_combo import FaceComboEdgeDetector
+from gear_sonic.utils.teleop.head_tracking import PicoHeadMapper
 from gear_sonic.utils.teleop.zmq.zmq_poller import ZMQPoller
 from service_runtime import resolve_service_root, service_library_paths
 
@@ -59,6 +61,8 @@ PICO_BODY_WAIT_LOG_SECONDS = 5.0
 PICO_BODY_SAMPLE_MAX_AGE_SECONDS = 0.5
 PICO_INPUT_ERROR_LOG_SECONDS = 5.0
 MANAGER_POLL_PERIOD_SECONDS = 0.01
+PICO_SPINE3_JOINT_INDEX = 9
+PICO_HEAD_JOINT_INDEX = 15
 
 
 def _startup_log(prefix: str, message: str):
@@ -1297,6 +1301,7 @@ class PoseStreamer:
         self.record_idx = 0
 
         self.left_hand_ik_solver, self.right_hand_ik_solver = init_hand_ik_solvers()
+        self.head_mapper = PicoHeadMapper()
         self.parent_indices = [
             -1,
             0,
@@ -1355,6 +1360,7 @@ class PoseStreamer:
         """Called when entering pose mode. Resets yaw only.
         Calibration is triggered separately by the operator (A+B+X+Y → calibrate_now)."""
         self.yaw_accumulator.reset()
+        self.head_mapper.reset()
         self.last_fps_report = time.time()
         self.fps_counter = 0
         self.fps_warning_active = False
@@ -1373,6 +1379,7 @@ class PoseStreamer:
         self.fps_counter = 0
         self.fps_warning_active = False
         self.last_fps_warning_log = None
+        self.head_mapper.reset()
 
     def run_once(self):
         """Execute one iteration of the pose streaming loop."""
@@ -1413,6 +1420,17 @@ class PoseStreamer:
         smpl_joints_np = latest_data["smpl_joints_local"][0]
         body_quat_np = latest_data["global_orient_quat"][0]
         curr_stamp_ns = int(sample.get("timestamp_ns", 0))
+        body_poses = np.asarray(sample["body_poses_np"])
+        spine_quaternion_wxyz = body_poses[
+            PICO_SPINE3_JOINT_INDEX, [6, 3, 4, 5]
+        ]
+        head_quaternion_wxyz = body_poses[
+            PICO_HEAD_JOINT_INDEX, [6, 3, 4, 5]
+        ]
+        head_joint_pos = self.head_mapper.update(
+            spine_quaternion_wxyz,
+            head_quaternion_wxyz,
+        )
         step_ns = int(1e9 / max(1, self.target_fps))
         if self.prev_stamp_ns is None:
             self.prev_stamp_ns = curr_stamp_ns
@@ -1518,6 +1536,7 @@ class PoseStreamer:
         self.frame_buffer["body_quat_w"].append(use_body_quat)
         self.frame_buffer["frame_index"].append(int(self.step))
         self.frame_buffer["joint_pos"].append(joint_pos)
+        self.frame_buffer["head_joint_pos"].append(head_joint_pos)
         pico_dt = float(sample.get("dt", 0.0))
         pico_fps = float(sample.get("fps", 0.0))
         N = len(self.frame_buffer["frame_index"])
@@ -1539,6 +1558,9 @@ class PoseStreamer:
                 "smpl_joints": np.stack((self.frame_buffer["smpl_joints"]), axis=0),
                 "body_quat_w": np.stack((self.frame_buffer["body_quat_w"]), axis=0),
                 "joint_pos": np.stack((self.frame_buffer["joint_pos"]), axis=0),
+                "head_joint_pos": np.stack(
+                    self.frame_buffer["head_joint_pos"], axis=0
+                ),
                 "joint_vel": np.zeros((N, 29)),
                 "vr_position": vr_3pt_pose[:, :3].flatten(),
                 "vr_orientation": vr_3pt_pose[:, 3:].flatten(),
@@ -2043,7 +2065,10 @@ def run_pico_manager(
     #   Emergency stop from any mode: A+B+X+Y (start_combo) --> OFF
     #   POSE_PAUSE: left_menu_button held --> POSE_PAUSE, released --> POSE
     #
-    print("Manager controls: A+X=toggle mode, A+B+X+Y=start/stop policy")
+    print(
+        "Manager controls: A+X=toggle mode, A+B+X+Y=start/stop policy",
+        flush=True,
+    )
     current_mode = StreamMode.OFF
     # Track which mode VR_3PT was entered from, so left_axis_click returns to it.
     # Will be either PLANNER or PLANNER_FROZEN_UPPER_BODY.
@@ -2053,10 +2078,8 @@ def run_pico_manager(
     calibration_requested = False
     last_calibration_wait_log = None
     previous_buttons = None
+    face_combo_edges = FaceComboEdgeDetector()
     try:
-        prev_ax_pressed = False
-        prev_by_pressed = False
-        prev_start_combo = False
         prev_left_axis_click = False
         while not stop_event.is_set():
             loop_started = time.monotonic()
@@ -2069,24 +2092,31 @@ def run_pico_manager(
                     for name, pressed in zip(("A", "B", "X", "Y"), buttons)
                     if pressed
                 )
+                print(
+                    f"[Manager] Face buttons: {pressed_names or 'released'}",
+                    flush=True,
+                )
                 previous_buttons = buttons
 
             left_menu_button, _, _, left_grip_mgr, _ = get_controller_inputs()
 
             left_axis_click, _ = get_axis_clicks()
 
-            # Rising edge: A+X pressed together -> toggle POSE/PLANNER mode
-            ax_pressed = (a_pressed) and (x_pressed)
-
-            # Rising edge: B+Y pressed together -> toggle POSE/PLANNER_FROZEN_UPPER_BODY mode
-            by_pressed = (b_pressed) and (y_pressed)
-
-            # Rising edge: A+B+X+Y pressed together -> toggle policy start/stop (planner=True)
-            start_combo = (a_pressed) and (b_pressed) and (x_pressed) and (y_pressed)
+            combo = face_combo_edges.update(
+                a_pressed,
+                b_pressed,
+                x_pressed,
+                y_pressed,
+            )
+            if combo.rearmed:
+                print(
+                    "[Manager] Face-button combos re-armed after full release",
+                    flush=True,
+                )
 
             new_mode = current_mode
             if current_mode == StreamMode.OFF:
-                if start_combo and not prev_start_combo:
+                if combo.start_rising:
                     # Accept the operator command even when body tracking is still
                     # starting.  The first fresh sample below completes calibration.
                     calibration_requested = True
@@ -2148,34 +2178,34 @@ def run_pico_manager(
 
             elif current_mode == StreamMode.PLANNER:
                 # Chain 2: POSE <--(ax)--> PLANNER <--(left_axis_click)--> VR_3PT
-                if start_combo and not prev_start_combo:
+                if combo.start_rising:
                     new_mode = StreamMode.OFF
-                elif ax_pressed and not prev_ax_pressed:
+                elif combo.ax_rising:
                     new_mode = StreamMode.POSE
                 elif left_axis_click and not prev_left_axis_click:
                     new_mode = StreamMode.PLANNER_VR_3PT
 
             elif current_mode == StreamMode.POSE:
-                if start_combo and not prev_start_combo:
+                if combo.start_rising:
                     new_mode = StreamMode.OFF
-                elif ax_pressed and not prev_ax_pressed:
+                elif combo.ax_rising:
                     new_mode = StreamMode.PLANNER  # Enter chain 2
-                elif by_pressed and not prev_by_pressed:
+                elif combo.by_rising:
                     new_mode = StreamMode.PLANNER_FROZEN_UPPER_BODY  # Enter chain 1
                 elif left_menu_button:
                     new_mode = StreamMode.POSE_PAUSE
 
             elif current_mode == StreamMode.PLANNER_FROZEN_UPPER_BODY:
                 # Chain 1: POSE <--(by)--> FROZEN <--(left_axis_click)--> VR_3PT
-                if start_combo and not prev_start_combo:
+                if combo.start_rising:
                     new_mode = StreamMode.OFF
-                elif by_pressed and not prev_by_pressed:
+                elif combo.by_rising:
                     new_mode = StreamMode.POSE
                 elif left_axis_click and not prev_left_axis_click:
                     new_mode = StreamMode.PLANNER_VR_3PT
 
             elif current_mode == StreamMode.POSE_PAUSE:
-                if start_combo and not prev_start_combo:
+                if combo.start_rising:
                     new_mode = StreamMode.OFF
                 elif not left_menu_button:
                     new_mode = StreamMode.POSE
@@ -2185,13 +2215,13 @@ def run_pico_manager(
                 #   left_axis_click → return to parent (PLANNER or FROZEN)
                 #   ax_pressed      → POSE (chain 2 exit)
                 #   by_pressed      → POSE (chain 1 exit)
-                if start_combo and not prev_start_combo:
+                if combo.start_rising:
                     new_mode = StreamMode.OFF
                 elif left_axis_click and not prev_left_axis_click:
                     new_mode = vr3pt_parent_mode  # Return to parent mode
-                elif ax_pressed and not prev_ax_pressed:
+                elif combo.ax_rising:
                     new_mode = StreamMode.POSE
-                elif by_pressed and not prev_by_pressed:
+                elif combo.by_rising:
                     new_mode = StreamMode.POSE
 
             # Handle mode transitions before running loop
@@ -2246,7 +2276,10 @@ def run_pico_manager(
                 elif new_mode == StreamMode.POSE:
                     socket.send(build_command_message(start=True, stop=False, planner=False))
 
-                print(f"[Manager] StreamMode switch: {current_mode.name} -> {new_mode.name}")
+                print(
+                    f"[Manager] StreamMode switch: {current_mode.name} -> {new_mode.name}",
+                    flush=True,
+                )
                 current_mode = new_mode
 
             # Mode-independent: send manager_state for data exporter
@@ -2270,9 +2303,6 @@ def run_pico_manager(
                 )
             )
 
-            prev_ax_pressed = ax_pressed
-            prev_by_pressed = by_pressed
-            prev_start_combo = start_combo
             prev_left_axis_click = left_axis_click
             remaining = MANAGER_POLL_PERIOD_SECONDS - (
                 time.monotonic() - loop_started

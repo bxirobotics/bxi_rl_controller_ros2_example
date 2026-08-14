@@ -1,6 +1,6 @@
 """Builders for ZMQ wire-format messages on the 'command', 'planner', and 'pose' topics.
 
-Message layout: [topic_bytes][1024-byte JSON header][packed binary payload].
+Message layout: [topic_bytes][1280-byte JSON header][packed binary payload].
 The header describes field names, dtypes, and shapes so the receiver can
 deserialize without out-of-band schema knowledge.
 """
@@ -14,7 +14,13 @@ import numpy as np
 HEADER_SIZE = 1280
 
 
-def _build_header(fields: list, version: int = 1, count: int = 1) -> bytes:
+def _build_header(
+    fields: list,
+    version: int = 1,
+    count: int = 1,
+    *,
+    compact_if_needed: bool = False,
+) -> bytes:
     header = {
         "v": version,
         "endian": "le",
@@ -22,6 +28,17 @@ def _build_header(fields: list, version: int = 1, count: int = 1) -> bytes:
         "fields": fields,
     }
     header_json = json.dumps(header, separators=(",", ":")).encode("utf-8")
+    if len(header_json) > HEADER_SIZE and compact_if_needed:
+        # Version-3 pose packets always contain one little-endian record.  The
+        # receiver derives byte order from each dtype and never consumes the
+        # redundant top-level endian/count fields.  Omitting only those fields
+        # preserves the established 1280-byte payload offset while leaving all
+        # field names, dtypes and shapes self-describing.
+        header = {
+            "v": version,
+            "fields": fields,
+        }
+        header_json = json.dumps(header, separators=(",", ":")).encode("utf-8")
     if len(header_json) > HEADER_SIZE:
         raise ValueError(f"Header too large: {len(header_json)} > {HEADER_SIZE}")
     return header_json.ljust(HEADER_SIZE, b"\x00")
@@ -161,7 +178,7 @@ def build_planner_message(
 def pack_pose_message(pose_data: dict, topic: str = "pose", version: int = 3) -> bytes:
     """
     Pack pose/action data into ZMQ message format:
-    [topic_prefix][1024-byte JSON header][concatenated binary fields]
+    [topic_prefix][1280-byte JSON header][concatenated binary fields]
 
     This is a general-purpose function for packing numpy arrays into ZMQ messages.
     Supports protocol versions 3 and 4.
@@ -214,12 +231,16 @@ def pack_pose_message(pose_data: dict, topic: str = "pose", version: int = 3) ->
             binary_data.append(value.tobytes())
 
     # Build header using common utility
-    header_bytes = _build_header(fields, version=version, count=1)
+    header_bytes = _build_header(
+        fields,
+        version=version,
+        count=1,
+        compact_if_needed=version == 3,
+    )
 
-    # Pack message: [topic][1024-byte header][binary data]
+    # Pack message: [topic][1280-byte header][binary data]
     topic_bytes = topic.encode("utf-8")
     data_bytes = b"".join(binary_data)
 
     packed_message = topic_bytes + header_bytes + data_bytes
     return packed_message
-

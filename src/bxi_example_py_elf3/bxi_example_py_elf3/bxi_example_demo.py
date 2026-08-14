@@ -118,6 +118,7 @@ class BxiExample(Node):
 
         # 机器人状态变量(robot states)
         self.omega = np.zeros(3, dtype=np.double)
+        self.linear_acceleration = np.zeros(3, dtype=np.double)
         self.quat_xyzw = np.zeros(4, dtype=np.double)
         self.quat_wxyz = np.zeros(4, dtype=np.double)
         self.raw_cmd_vel = np.zeros(3, dtype=np.float32)
@@ -129,6 +130,7 @@ class BxiExample(Node):
         self._quat_xyzw_snapshot = np.zeros(4, dtype=np.float64)
         self._quat_wxyz_snapshot = np.zeros(4, dtype=np.float64)
         self._omega_snapshot = np.zeros(3, dtype=np.float64)
+        self._linear_acceleration_snapshot = np.zeros(3, dtype=np.float64)
         self._cmd_snapshot = np.zeros(3, dtype=np.float32)
         self._observation: RobotObservation | None = None
 
@@ -329,6 +331,7 @@ class BxiExample(Node):
                     quat_wxyz=self._quat_wxyz_snapshot,
                     omega=self._omega_snapshot,
                     raw_cmd_vel=self._cmd_snapshot,
+                    linear_acceleration=self._linear_acceleration_snapshot,
                 )
             self._joint_snapshot.update(
                 latest_joints.position,
@@ -338,6 +341,7 @@ class BxiExample(Node):
             np.copyto(self._quat_xyzw_snapshot, self.quat_xyzw)
             np.copyto(self._quat_wxyz_snapshot, self.quat_wxyz)
             np.copyto(self._omega_snapshot, self.omega)
+            np.copyto(self._linear_acceleration_snapshot, self.linear_acceleration)
             np.copyto(self._cmd_snapshot, self.raw_cmd_vel)
             events = tuple(self.pending_remote_events)
             self.pending_remote_events.clear()
@@ -530,11 +534,13 @@ class BxiExample(Node):
     def imu_callback(self, msg):
         quat = msg.orientation
         avel = msg.angular_velocity
+        acceleration = msg.linear_acceleration
 
         with self.lock_in:
             self.quat_xyzw[:] = quat.x, quat.y, quat.z, quat.w
             self.quat_wxyz[:] = quat.w, quat.x, quat.y, quat.z
             self.omega[:] = avel.x, avel.y, avel.z
+            self.linear_acceleration[:] = acceleration.x, acceleration.y, acceleration.z
 
     def touch_callback(self, _msg):
         pass

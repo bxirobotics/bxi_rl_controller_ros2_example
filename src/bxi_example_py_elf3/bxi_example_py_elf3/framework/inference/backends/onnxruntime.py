@@ -15,7 +15,13 @@ from ..model import ModelArtifact, ModelSpec, OnnxArtifact
 class OnnxBackend(InferenceBackend):
     backend_name = "onnxruntime"
 
-    def __init__(self, artifact: OnnxArtifact, spec: ModelSpec) -> None:
+    def __init__(
+        self,
+        artifact: OnnxArtifact,
+        spec: ModelSpec,
+        *,
+        model_source: str | bytes | None = None,
+    ) -> None:
         import onnxruntime as ort
 
         options = ort.SessionOptions()
@@ -33,7 +39,7 @@ class OnnxBackend(InferenceBackend):
             )
 
         self._session = ort.InferenceSession(
-            str(artifact.resolved_path),
+            str(artifact.resolved_path) if model_source is None else model_source,
             providers=providers,
             sess_options=options,
         )

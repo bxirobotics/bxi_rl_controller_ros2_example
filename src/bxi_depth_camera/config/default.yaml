@@ -18,6 +18,11 @@
     enable_infra2: false
     enable_gyro: false
     enable_accel: false
+    align_depth.enable: false
+    pointcloud.enable: false
+    pointcloud.ordered_pc: false
+    pointcloud.allow_no_texture_points: false
+    pointcloud.max_fps: 10.0
 
     depth_module.depth_profile: "848x480x30"
     depth_module.rectification.enable: false
@@ -49,6 +54,11 @@
     # cameras:
     #   head_depth_camera:
     #     serial_no: "CP0F4630000L"
+    #     align_depth:
+    #       enable: true
+    #     pointcloud:
+    #       enable: true
+    #       max_fps: 10.0
     #     depth_module:
     #       depth_profile: "848x480x30"
     #       rectification:

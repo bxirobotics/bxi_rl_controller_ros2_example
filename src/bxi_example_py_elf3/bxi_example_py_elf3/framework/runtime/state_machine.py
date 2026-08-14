@@ -200,6 +200,24 @@ class RobotStateMachine:
     def in_transition(self) -> bool:
         return self._active is not None
 
+    def requested_inference_hz(self, default_hz: float) -> float:
+        """Return the rate required by the current control path.
+
+        A transition may sample both its source and target states.  Running it
+        at the higher requested rate prevents either side's history or phase
+        from being undersampled.  States without an explicit rate inherit the
+        platform default.
+        """
+
+        def resolved(state: StateBehavior[RobotControlContext]) -> float:
+            configured = state.inference_hz
+            return default_hz if configured is None else configured
+
+        active = self._active
+        if active is None:
+            return resolved(self.current)
+        return max(resolved(active.from_state), resolved(active.to_state))
+
     def update(self, dt: float, events: Iterable[str]) -> bool:
         if self._active is not None:
             self._handle_events(events)
@@ -270,6 +288,7 @@ class RobotStateMachine:
                 "name": self.current.name,
                 "id": self.current.state_id,
                 "elapsed": self.state_elapsed,
+                "inference_hz": self.current.inference_hz,
             },
             "in_transition": self.in_transition,
             "transition": self._active_snapshot(),
@@ -862,6 +881,7 @@ class RobotStateMachine:
                     "name": state.name,
                     "id": state.state_id,
                     "behavior": state.__class__.__name__,
+                    "inference_hz": state.inference_hz,
                     **state.manifest,
                 }
                 for state in self._states.values()
