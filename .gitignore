@@ -37,6 +37,7 @@ htmlcov/
 # Local/private source trees
 /src/livox_ros_driver2/
 /src/bxi_example_py_elf3/mods/private_mods/
+/src/bxi_example_py_elf3/mods/private_git_mods/
 /src/bxi_example_py_elf3/test/*
 
 # Local editor, agent and documentation workspaces
