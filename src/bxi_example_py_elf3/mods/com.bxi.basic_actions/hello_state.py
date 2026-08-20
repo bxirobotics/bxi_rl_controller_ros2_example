@@ -41,6 +41,7 @@ HELLO_OUTPUT_JOINTS = JointLayout(
 
 
 class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
+    HELLO_DURATION_FRAMES = 150  # 3 s at the 50 Hz control period
     HEAD_Y_AMPLITUDE = 0.10
     HEAD_Z_AMPLITUDE = 0.20
     HEAD_ANGULAR_SPEED = 1.50
@@ -145,7 +146,9 @@ class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         self._update_command_sources()
         frame = self._compose()
         if self.shaketime < 50:
-            frame.kp[: ELF3_POLICY_JOINTS.dof_num] *= self.shaketime / 50.0
+            arm_gain = self.shaketime / 50.0
+            for name in HELLO_WAVE_JOINTS.names:
+                frame.kp[frame.layout.index(name)] *= arm_gain
         if self.playing and advance:
             self.shaketime += 1
             self._head_phase = math.fmod(
@@ -157,6 +160,13 @@ class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
             ctx.request_state("com.bxi.basic_actions/zero_torque", trigger="safety")
+            return
+        if self.shaketime >= self.HELLO_DURATION_FRAMES:
+            ctx.request_state(
+                "com.bxi.basic_actions/normal",
+                trigger="hello_finished",
+                transition={"profile": "dual_running_blend", "duration": 0.6},
+            )
             return
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
 
