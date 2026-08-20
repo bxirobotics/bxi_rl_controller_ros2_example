@@ -212,6 +212,41 @@ void test_debug_reports_changed_rule_selection()
     expect(messages.front().find("debug_axis") != std::string::npos);
 }
 
+void test_filtered_analog_snaps_zero_without_blocking_valid_input()
+{
+    RemoteConfig config;
+    ControlConfig control;
+    control.name = "filtered_axis";
+    control.type = "analog";
+    control.inputs.push_back(source_input("raw.axis"));
+    control.deadzone = 0.1;
+    control.alpha = 0.1;
+    config.controls.push_back(control);
+
+    remote_controller::AnalogOutputConfig output;
+    output.field = "yawdot_des";
+    output.controls = {"filtered_axis"};
+    config.analog_outputs.push_back(output);
+
+    InputMapper mapper(config);
+
+    // A valid target just outside the deadzone must be allowed to accumulate
+    // through the filter even while the filtered output starts below 0.1.
+    mapper.set_signal("raw.axis", 0.2);
+    for (int index = 0; index < 20; ++index) {
+        yaw(mapper);
+    }
+    expect(yaw(mapper) > 0.1);
+
+    // Once the raw target is centered, the filtered tail must eventually
+    // become an exact zero rather than an endlessly decaying residual.
+    mapper.set_signal("raw.axis", 0.0);
+    for (int index = 0; index < 20; ++index) {
+        yaw(mapper);
+    }
+    expect(yaw(mapper) == 0.0);
+}
+
 void test_three_button_chord_excludes_two_button_x_chords()
 {
     const RemoteConfig config = remote_controller::load_remote_config(
@@ -340,6 +375,7 @@ int main()
     test_priority_preempts_lower_active_inputs();
     test_bool_all_keeps_inactive_raw_inputs_in_the_selected_group();
     test_debug_reports_changed_rule_selection();
+    test_filtered_analog_snaps_zero_without_blocking_valid_input();
     test_three_button_chord_excludes_two_button_x_chords();
     test_all_auxiliary_and_face_button_combinations_are_reserved();
     return 0;

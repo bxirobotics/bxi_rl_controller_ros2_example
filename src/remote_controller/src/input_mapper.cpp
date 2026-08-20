@@ -636,6 +636,14 @@ InputMapper::ControlValue InputMapper::evaluate_control(const ControlConfig &con
         }
         analog = std::max(control.min_value, std::min(control.max_value, analog));
         value.analog = analog * control.alpha + previous.analog * (1.0 - control.alpha);
+        // The input deadzone above turns a centered axis into an exact zero
+        // target, but the low-pass filter otherwise only approaches zero
+        // asymptotically.  Snap the decaying filter state to zero once it is
+        // inside the configured deadzone.  Only do this for a zero target so
+        // a small valid input can still build up through a low alpha filter.
+        if (analog == 0.0 && std::fabs(value.analog) <= control.deadzone) {
+            value.analog = 0.0;
+        }
         value.pressed = std::fabs(value.analog) > 0.0;
         trace << "value=" << value.analog;
         value.debug_trace = trace.str();
