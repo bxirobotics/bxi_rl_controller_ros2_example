@@ -1,0 +1,39 @@
+schema: 1
+id: com.bxi.back_flip
+name: 后空翻
+version: 1.0.0
+api: ">=4,<5"
+enable: true
+entrypoint: plugin:create_mod
+visibility: protected
+requires:
+  - id: com.bxi.basic_actions
+    version: ">=1,<2"
+conflicts: []
+python_exports: []
+runtime_requirements:
+  python: []
+  ros: []
+  system: []
+
+events:
+  activate:
+    slot: btn_10
+    value: 1
+states:
+  back_flip:
+    manifest:
+      label: 后空翻
+      priority: 910
+      group: Advanced
+      icon: rotate_left
+      confirm: true
+      confirm_message: 请确保机器人后方3米范围内没有障碍物
+routes:
+  - from: com.bxi.basic_actions/normal
+    event: activate
+    to: back_flip
+    transition: soft_switch
+  - from: back_flip
+    event: com.bxi.basic_actions/zero_torque
+    to: com.bxi.basic_actions/zero_torque
