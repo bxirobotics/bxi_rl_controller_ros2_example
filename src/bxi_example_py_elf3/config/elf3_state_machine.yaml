@@ -2,7 +2,8 @@
 initial_state: com.bxi.basic_actions/zero_torque
 
 # 可追加客户 Mod 根目录；内置 Mods 总是从安装包的 mods/ 自动发现。
-mod_paths: []
+mod_paths:
+  - /opt/bxi/mods
 
 # 统一日志身份与子进程输出保护。levels 按最长 scope 前缀匹配。
 logging:
