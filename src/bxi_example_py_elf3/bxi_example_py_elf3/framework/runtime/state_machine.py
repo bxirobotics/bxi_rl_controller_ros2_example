@@ -200,6 +200,55 @@ class RobotStateMachine:
     def in_transition(self) -> bool:
         return self._active is not None
 
+    def _transition_request_in_flight(
+        self,
+        rule: TransitionRule,
+        trigger: str,
+    ) -> bool:
+        """Return whether the same accepted request is already in progress."""
+
+        target_name = rule.to_state
+        if target_name is None:
+            return False
+        transition = rule.transition or self._default_transition
+
+        def same_transition(candidate: ResolvedTransition | None) -> bool:
+            resolved = candidate or self._default_transition
+            return (
+                resolved.name == transition.name
+                and resolved.plan.snapshot() == transition.plan.snapshot()
+            )
+
+        active = self._active
+        if (
+            active is not None
+            and active.to_state.name == target_name
+            and active.trigger == trigger
+            and active.force == rule.force
+            and same_transition(active.transition)
+        ):
+            return True
+        pending = self._pending
+        if (
+            pending is not None
+            and pending.rule.to_state == target_name
+            and pending.trigger == trigger
+            and pending.rule.delay == rule.delay
+            and pending.rule.force == rule.force
+            and same_transition(pending.rule.transition)
+        ):
+            return True
+        preparing = self._preparing
+        return (
+            preparing is not None
+            and preparing.rule.to_state == target_name
+            and preparing.from_state == self.current.name
+            and preparing.trigger == trigger
+            and preparing.rule.delay == rule.delay
+            and preparing.rule.force == rule.force
+            and same_transition(preparing.rule.transition)
+        )
+
     def requested_inference_hz(self, default_hz: float) -> float:
         """Return the rate required by the current control path.
 
@@ -272,6 +321,8 @@ class RobotStateMachine:
             transition=resolved,
             force=force,
         )
+        if self._transition_request_in_flight(rule, trigger):
+            return True
         if delay > 0.0:
             if not self._can_enter_transition(rule, trigger):
                 return False
@@ -308,6 +359,8 @@ class RobotStateMachine:
                 self._run_action(rule.action)
             if not rule.to_state:
                 return
+            if self._transition_request_in_flight(rule, rule.event or ""):
+                return
             if rule.delay > 0.0:
                 if not self._can_enter_transition(rule, rule.event or ""):
                     return
@@ -336,6 +389,8 @@ class RobotStateMachine:
         if rule.to_state is None:
             if rule.action:
                 self._run_action(rule.action)
+            return True
+        if self._transition_request_in_flight(rule, trigger):
             return True
         if not self._can_enter_transition(rule, trigger):
             return False
