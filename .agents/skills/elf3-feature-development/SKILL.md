@@ -18,6 +18,16 @@ description: 为 bxi_example_py_elf3 规划、实现、迁移、状态、动作�
 - Mod 专属样例、参考数据、模型和配置放在 Mod 内的 `assets/`、`examples/` 或 `configs/`，并从 Mod 的 README 说明用途。
 - 只有框架加载器、公共 API、跨 Mod 共享基础设施或仓库级 CI 才可以放在主框架/仓库公共目录；这类改动必须在交付说明中说明为什么不能封装进单个 Mod。
 - 不要为了“方便测试”复制一份主框架实现到 Mod 外，也不要提交临时日志、缓存、`__pycache__`、机器专属生成文件或一次性调试输出。
+
+## 路径与跨 Mod 寻址（强制）
+
+Mod 的源码位置和安装位置不构成 API。它可能位于 `mods/<id>`、`mods/private_git_mods/<id>`、额外 `mod_paths`、发布包或其他安装前缀中：
+
+- 禁止用 `Path(__file__).parents[n]`、当前工作目录、固定 `src/`/`install/` 绝对路径或假定存在 `private_git_mods` 来推导包、example 或其他 Mod 的位置。
+- Mod 自有资产在 Mod API 工厂/Resource 中使用 `context.asset("assets/...")`；独立进程使用运行时或 launcher 明确传入的 Mod root，再访问自己的相对资产。仅当入口文件相对 Mod root 的位置本身是已校验契约时，才可从 `__file__` 定位本 Mod，且不能继续向上猜包目录。
+- ROS/ament 包级共享文件（例如本包 `data/`、`launch/`、`config/`）使用 `ament_index_python.packages.get_package_share_directory()` 或等价的 ament API 定位，不能从 Mod 目录向上数层。
+- 调用 example 或其他 Mod 时先声明 `requires`，再通过完整名称、`python_exports`、Resource、ROS topic/service/action 或其他公开契约交互；禁止遍历相邻目录、拼接另一个 Mod id 或直接读取其私有文件。确需共享文件时，把文件提升为所属包的 package-share 资产或独立 Resource Mod，并声明依赖。
+- 发布验证必须覆盖源码树、直接 Mod 安装和带额外中间目录的 private/external Mod 安装；移动 Mod 后功能仍应正确，缺失资产错误只报告真实解析出的目标。
 - 验证优先使用 Mod 内脚本和离线加载检查；若确实需要仓库级测试，测试内容必须验证框架公共契约，而不是某个 Mod 的业务细节。
 
 ## 开始前
@@ -91,6 +101,7 @@ git -C .wiki log -1 --format='%H %cI %s'
 - 状态自然输出布局，以及机器人缺失/新增关节的处理方式；
 - 外部话题、消息类型、QoS、超时与失效行为；
 - 模型、文件、SDK 或硬件对象的拥有者和加载策略；
+- 每个本 Mod、包级共享和跨 Mod 依赖路径分别使用哪种稳定解析契约；
 - 进入、退出、动作完成、断流和故障时的目标状态。
 
 跨 Mod 引用必须写完整名称并声明 `requires`。不要用数字关节下标、模型数组长度或机器人消息顺序充当跨组件契约。

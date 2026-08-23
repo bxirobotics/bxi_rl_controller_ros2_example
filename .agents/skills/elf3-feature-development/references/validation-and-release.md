@@ -31,6 +31,7 @@
 - Transition capability、speed profile、node state reference 均存在；
 - ResourceKey 全局命名，资产没有逃出 `assets/`；
 - runtime requirements 与目标平台一致。
+- 没有 `parents[n]`、`cwd`、固定 source/install 路径或相邻 Mod 目录拼接；Mod 自有、包级和跨 Mod 路径分别使用稳定契约。
 
 仓库当前可用的离线加载方式：
 
@@ -84,6 +85,8 @@ find install/share/bxi_example_py_elf3/mods \
 ```
 
 不要因旧 install layout 报错就删除整个工作区；只处理明确属于相关包的构建缓存，并在任何破坏性清理前确认目标。
+
+对包含资产或独立进程的 Mod，至少模拟两种安装深度进行路径检查，例如 `mods/<id>` 与 `mods/private_git_mods/<id>`。包级资产在两种布局下都必须通过 ament index 解析到同一个 package share；跨 Mod 行为只能依赖声明的公开契约。不要只在 symlink install 的原始源码位置验证成功就视为可发布。
 
 ## 仿真验证
 

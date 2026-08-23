@@ -3,6 +3,7 @@
 ## 目录
 
 - [什么应该成为 Resource](#什么应该成为-resource)
+- [稳定定位资产](#稳定定位资产)
 - [startup 与 on_demand](#startup-与-on_demand)
 - [模型契约](#模型契约)
 - [何时用 nodes](#何时用-nodes)
@@ -51,6 +52,45 @@ def create_mod(context) -> ModDefinition:
 - `ResourceHandle.get()` 只返回已经 ready 的对象，不触发加载、不阻塞等待。
 - 实例有 `close()` 时，资源管理器在关闭时逆序调用。
 - 模型 loader 应立刻验证输入输出张量、metadata、具名关节布局和静态配置，使错误发生在准备阶段。
+
+## 稳定定位资产
+
+不要把目录层级当作部署契约。相同 Mod 在开发、protected 安装和公开发布中可能分别位于：
+
+```text
+.../mods/com.example.motion
+.../mods/private_git_mods/com.example.motion
+.../<external-mod-root>/com.example.motion
+```
+
+按资产所有权选择定位方式：
+
+1. Mod 自有资产：在 Mod 工厂或 Resource loader 中使用 `context.asset()`。
+2. 独立 Mod 进程的自有资产：由 launcher/运行时显式提供 Mod root；然后只在该 root 内解析相对路径并校验目标没有逃逸。不要从 `cwd` 猜位置。
+3. ROS/ament 包资产：用 ament index 获取 package share。
+4. 其他 Mod 的能力：声明 `requires` 并使用公开契约，不直接定位对方目录或私有资产。
+
+包级文件示例：
+
+```python
+from pathlib import Path
+
+from ament_index_python.packages import get_package_share_directory
+
+
+package_share = Path(get_package_share_directory("bxi_example_py_elf3"))
+model_xml = package_share / "data" / "mujoco_simulation" / "elf3.xml"
+```
+
+禁止以下写法，即使它在当前机器暂时有效：
+
+```python
+package_share = Path(__file__).resolve().parents[2]
+other_mod = Path(__file__).resolve().parent.parent / "com.example.other"
+asset = Path("install/share/bxi_example_py_elf3/data/model.xml")
+```
+
+不要用“依次尝试若干猜测路径”掩盖所有权不清。解析失败时列出确实缺失的目标路径，并在启动/准备阶段失败；不要等到控制热路径才发现。
 
 ## startup 与 on_demand
 
