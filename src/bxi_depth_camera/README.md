@@ -21,6 +21,7 @@ sudo apt install -y \
   ros-humble-ament-cmake \
   ros-humble-rclcpp \
   ros-humble-rcl-interfaces \
+  ros-humble-realsense2-camera-msgs \
   ros-humble-sensor-msgs
 ```
 
@@ -212,6 +213,8 @@ ros2 run bxi_depth_camera cameras-inspect --watch \
 /hardware/<camera_name>/infra2/camera_info
 /hardware/<camera_name>/gyro/sample
 /hardware/<camera_name>/accel/sample
+/hardware/<camera_name>/imu
+/hardware/<camera_name>/rgbd
 ```
 
 例如 MuJoCo 中 `<camera name="head_depth_camera">` 对应真机
@@ -234,7 +237,23 @@ ros2 run bxi_depth_camera cameras-inspect --watch \
 图像主话题贴近 `realsense2_camera`：彩色使用 `color/image_raw`，深度与红外使用
 `image_rect_raw`，每个流同时发布 `camera_info`。每个流只发布一个主图像话题，
 对应去畸参数控制发布前是否执行软件去畸，不会额外发布一套重复图像。IMU 使用
-RealSense ROS 驱动也采用的 `gyro/sample` 和 `accel/sample` 话题结构。
+RealSense ROS 驱动也采用的 `gyro/sample` 和 `accel/sample` 话题结构；当
+`imu_sync_method` 非 `NONE` 且 gyro/accel 都启用时，额外发布组合 `/imu`。
+
+`enable_rgbd` 发布 `realsense2_camera_msgs/msg/RGBD` 复合消息。它按官方语义要求
+`enable_sync=true`、`align_depth.enable=true`、`enable_color=true` 和
+`enable_depth=true`，并默认关闭，避免普通 color/depth 路径额外等待同步 frameset。
+`enable_sync=false` 时，RealSense 彩色和普通深度继续走独立传感器回调的轻量路径。
+
+曝光、增益和 AE ROI 参数默认不强制写设备：`enable_auto_exposure=true` 且
+`exposure/gain < 0` 时不主动写 auto exposure，保留设备默认自动曝光；配置
+`enable_auto_exposure=false` 或设置手动 `exposure/gain` 时才写入设备。ROI 四项全为
+`-1` 表示不设置。RealSense 后端通过 `RS2_OPTION_*` 和 ROI extension
+写入；Orbbec 后端通过 `OB_PROP_*` 与结构化 AE ROI 写入。不支持的设备属性只在显式
+配置时节流告警，不阻止相机启动。深度 filter 当前显式暴露 decimation、spatial、
+temporal、hole filling、second hole filling 和 threshold 的实际使用参数；后端启动时
+会动态枚举并 debug 记录 SDK 返回的 filter/options schema，便于后续把特定设备选项提升
+为稳定 ROS 参数。
 
 ## 深度对齐到彩色图
 

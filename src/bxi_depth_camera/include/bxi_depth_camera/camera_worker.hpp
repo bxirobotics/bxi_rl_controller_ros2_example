@@ -3,6 +3,7 @@
 #include "bxi_depth_camera/types.hpp"
 
 #include <rclcpp/rclcpp.hpp>
+#include <realsense2_camera_msgs/msg/rgbd.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/imu.hpp>
@@ -12,6 +13,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -44,6 +46,7 @@ protected:
     using ImuPublisher = rclcpp::Publisher<sensor_msgs::msg::Imu>;
     using PointCloudPublisher =
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>;
+    using RgbdPublisher = rclcpp::Publisher<realsense2_camera_msgs::msg::RGBD>;
 
     void mark_frame() noexcept;
     bool video_consumers_requested() const;
@@ -53,7 +56,16 @@ protected:
     bool infra1_requested() const;
     bool infra2_requested() const;
     bool pointcloud_requested();
+    bool rgbd_requested() const;
 
+    sensor_msgs::msg::Image make_image(
+        const void *data, int width, int height, std::size_t source_step,
+        int cv_type, const std::string &encoding,
+        const std::string &frame_id, const rclcpp::Time &stamp) const;
+    sensor_msgs::msg::CameraInfo
+    make_camera_info(int width, int height, const std::string &frame_id,
+                     const rclcpp::Time &stamp, const Calibration &calibration,
+                     bool rectified) const;
     void publish_calibrated_image(
         const void *data, int width, int height, std::size_t source_step,
         int cv_type, const std::string &encoding, const std::string &frame_id,
@@ -64,6 +76,11 @@ protected:
     void publish_imu(const ImuPublisher::SharedPtr &publisher,
                      const std::string &frame_id, bool angular, float x,
                      float y, float z);
+    void publish_imu(const ImuPublisher::SharedPtr &publisher,
+                     const std::string &frame_id, const rclcpp::Time &stamp,
+                     bool angular, float x, float y, float z);
+    void publish_combined_imu(const rclcpp::Time &stamp, float gx, float gy,
+                              float gz, float ax, float ay, float az);
     void publish_pointcloud(const std::vector<PointXYZRGB> &points,
                             std::uint32_t width, std::uint32_t height,
                             const rclcpp::Time &stamp);
@@ -100,7 +117,9 @@ protected:
     InfoPublisher::SharedPtr pub_infra2_info_;
     ImuPublisher::SharedPtr pub_gyro_;
     ImuPublisher::SharedPtr pub_accel_;
+    ImuPublisher::SharedPtr pub_imu_;
     PointCloudPublisher::SharedPtr pub_pointcloud_;
+    RgbdPublisher::SharedPtr pub_rgbd_;
 
 private:
     struct RectificationMaps {
@@ -108,10 +127,6 @@ private:
         cv::Mat y;
     };
 
-    sensor_msgs::msg::CameraInfo
-    make_camera_info(int width, int height, const std::string &frame_id,
-                     const rclcpp::Time &stamp, const Calibration &calibration,
-                     bool rectified) const;
     const RectificationMaps &rectification_maps(const std::string &key,
                                                 int width, int height,
                                                 const Calibration &calibration);
@@ -137,6 +152,8 @@ private:
 
 std::vector<DeviceDescriptor> discover_realsense();
 std::vector<DeviceDescriptor> discover_orbbec();
+std::uint64_t realsense_device_generation();
+std::uint64_t orbbec_device_generation();
 
 std::unique_ptr<CameraDevice> make_realsense_camera(
     rclcpp::Node &node, const DeviceDescriptor &descriptor,

@@ -8,6 +8,7 @@
     # 一台未映射的连接摄像机使用此稳定的逻辑名称。与两个或
     # 更多未映射的摄像机，每个摄像机都使用 SN_<serial> 直到明确映射为止。
     single_camera_name: head_depth_camera
+    # 仅在没有健康相机流时用于发现兜底；在线热插拔由设备事件触发。
     discovery_interval_sec: 1.0
     retry_interval_sec: 2.0
     device_timeout_sec: 3.0
@@ -18,6 +19,13 @@
     enable_infra2: false
     enable_gyro: false
     enable_accel: false
+    # enable_sync 对齐官方：启用后彩色/深度经 SDK syncer 聚合。
+    # 默认关闭，避免普通 image_raw/depth 路径等待 frameset。
+    enable_sync: false
+    # RGBD 复合消息要求 enable_sync + align_depth.enable + color/depth。
+    enable_rgbd: false
+    # NONE / COPY / LINEAR_INTERPOLATION。非 NONE 时额外发布 /imu。
+    imu_sync_method: NONE
     align_depth.enable: false
     pointcloud.enable: false
     pointcloud.ordered_pc: false
@@ -27,9 +35,43 @@
     depth_module.depth_profile: "848x480x30"
     depth_module.rectification.enable: false
     rgb_camera.color_profile: "1920,1080,30"
-    rgb_camera.rectification.enable: true
+    # 与realsense-ros的image_raw语义一致：直接发布SDK原始彩色帧。
+    # 启用软件矫正会对每个1080p帧执行OpenCV remap，并使彩色发布重新经过
+    # latest-only后台worker；只在明确需要矫正图像时启用。
+    rgb_camera.rectification.enable: false
     infra1.rectification.enable: false
     infra2.rectification.enable: false
+    # QoS取值与realsense-ros一致：
+    # UNKNOWN, SYSTEM_DEFAULT, DEFAULT, PARAMETER_EVENTS, SERVICES_DEFAULT,
+    # PARAMETERS, SENSOR_DATA。
+    depth_qos: SYSTEM_DEFAULT
+    depth_info_qos: DEFAULT
+    color_qos: SYSTEM_DEFAULT
+    color_info_qos: DEFAULT
+    infra1_qos: SYSTEM_DEFAULT
+    infra1_info_qos: DEFAULT
+    infra2_qos: SYSTEM_DEFAULT
+    infra2_info_qos: DEFAULT
+    gyro_qos: SENSOR_DATA
+    accel_qos: SENSOR_DATA
+    pointcloud.pointcloud_qos: DEFAULT
+    rgbd_qos: SYSTEM_DEFAULT
+
+    linear_accel_cov: 0.01
+    angular_velocity_cov: 0.01
+
+    # 负数表示不强制设置，交给设备当前/默认值；如需手动 exposure/gain，
+    # 同时把对应 enable_auto_exposure 设为 false。ROI 四项全为 -1 表示不设置。
+    rgb_camera.enable_auto_exposure: true
+    rgb_camera.exposure: -1.0
+    rgb_camera.gain: -1.0
+    depth_module.enable_auto_exposure: true
+    depth_module.exposure: -1.0
+    depth_module.gain: -1.0
+    auto_exposure_roi.left: -1
+    auto_exposure_roi.top: -1
+    auto_exposure_roi.right: -1
+    auto_exposure_roi.bottom: -1
 
     decimation_filter.enable: false
     decimation_filter.filter_magnitude: 1
@@ -45,6 +87,9 @@
     hole_filling_filter.holes_fill: 1
     second_hole_filling_filter.enable: true
     second_hole_filling_filter.holes_fill: 2
+    threshold_filter.enable: false
+    threshold_filter.min_distance: -1.0
+    threshold_filter.max_distance: -1.0
 
     orbbec.enable_sdk_filters: true
     orbbec.fallback_hfov: 90.0

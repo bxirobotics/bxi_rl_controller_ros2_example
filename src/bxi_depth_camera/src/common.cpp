@@ -4,11 +4,13 @@
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
+#include <rmw/qos_profiles.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <regex>
 #include <stdexcept>
 
@@ -48,6 +50,40 @@ std::int64_t steady_ns(std::chrono::steady_clock::time_point value)
         .count();
 }
 
+rmw_qos_profile_t qos_profile_from_string(const std::string &value)
+{
+    if (value == "UNKNOWN") {
+        return rmw_qos_profile_unknown;
+    }
+    if (value == "SYSTEM_DEFAULT") {
+        return rmw_qos_profile_system_default;
+    }
+    if (value == "DEFAULT") {
+        return rmw_qos_profile_default;
+    }
+    if (value == "PARAMETER_EVENTS") {
+        return rmw_qos_profile_parameter_events;
+    }
+    if (value == "SERVICES_DEFAULT") {
+        return rmw_qos_profile_services_default;
+    }
+    if (value == "PARAMETERS") {
+        return rmw_qos_profile_parameters;
+    }
+    if (value == "SENSOR_DATA") {
+        return rmw_qos_profile_sensor_data;
+    }
+    throw std::invalid_argument(
+        "QoS must be one of UNKNOWN, SYSTEM_DEFAULT, DEFAULT, "
+        "PARAMETER_EVENTS, SERVICES_DEFAULT, PARAMETERS, SENSOR_DATA");
+}
+
+rclcpp::QoS qos_from_string(const std::string &value)
+{
+    const auto profile = qos_profile_from_string(value);
+    return rclcpp::QoS(rclcpp::QoSInitialization::from_rmw(profile), profile);
+}
+
 } // namespace
 
 void CameraConfig::validate() const
@@ -63,6 +99,11 @@ void CameraConfig::validate() const
     if (pointcloud_enabled && !enable_depth) {
         throw std::invalid_argument("pointcloud.enable requires enable_depth");
     }
+    if (enable_rgbd &&
+        !(enable_sync && align_depth && enable_depth && enable_color)) {
+        throw std::invalid_argument(
+            "enable_rgbd requires enable_sync, align_depth.enable, enable_depth, and enable_color");
+    }
     if (!std::isfinite(pointcloud_max_fps) || pointcloud_max_fps <= 0.0) {
         throw std::invalid_argument(
             "pointcloud.max_fps must be greater than zero");
@@ -71,6 +112,62 @@ void CameraConfig::validate() const
         throw std::invalid_argument(
             "device_timeout_sec must be greater than zero");
     }
+    if (imu_sync_method != "NONE" && imu_sync_method != "COPY" &&
+        imu_sync_method != "LINEAR_INTERPOLATION") {
+        throw std::invalid_argument(
+            "imu_sync_method must be NONE, COPY, or LINEAR_INTERPOLATION");
+    }
+    if (imu_sync_method != "NONE" && !(enable_gyro && enable_accel)) {
+        throw std::invalid_argument(
+            "imu_sync_method other than NONE requires enable_gyro and enable_accel");
+    }
+    if (!std::isfinite(linear_accel_cov) || linear_accel_cov < 0.0 ||
+        !std::isfinite(angular_velocity_cov) ||
+        angular_velocity_cov < 0.0) {
+        throw std::invalid_argument("IMU covariance values must be >= 0");
+    }
+    auto valid_optional_number = [](double value) {
+        return value < 0.0 || std::isfinite(value);
+    };
+    if (!valid_optional_number(color_exposure) ||
+        !valid_optional_number(color_gain) ||
+        !valid_optional_number(depth_exposure) ||
+        !valid_optional_number(depth_gain)) {
+        throw std::invalid_argument(
+            "exposure/gain values must be finite or negative to leave unchanged");
+    }
+    const bool roi_disabled = auto_exposure_roi_left < 0 &&
+                              auto_exposure_roi_top < 0 &&
+                              auto_exposure_roi_right < 0 &&
+                              auto_exposure_roi_bottom < 0;
+    const bool roi_enabled = auto_exposure_roi_left >= 0 &&
+                             auto_exposure_roi_top >= 0 &&
+                             auto_exposure_roi_right > auto_exposure_roi_left &&
+                             auto_exposure_roi_bottom > auto_exposure_roi_top;
+    if (!roi_disabled && !roi_enabled) {
+        throw std::invalid_argument(
+            "auto_exposure_roi must be all -1 or a valid left/top/right/bottom rectangle");
+    }
+    if (threshold_enabled &&
+        (!std::isfinite(threshold_min_distance) ||
+         !std::isfinite(threshold_max_distance) ||
+         threshold_min_distance < 0.0 ||
+         threshold_max_distance <= threshold_min_distance)) {
+        throw std::invalid_argument(
+            "threshold_filter min/max distances must be finite meters with 0 <= min < max");
+    }
+    qos_profile_from_string(depth_qos);
+    qos_profile_from_string(depth_info_qos);
+    qos_profile_from_string(color_qos);
+    qos_profile_from_string(color_info_qos);
+    qos_profile_from_string(infra1_qos);
+    qos_profile_from_string(infra1_info_qos);
+    qos_profile_from_string(infra2_qos);
+    qos_profile_from_string(infra2_info_qos);
+    qos_profile_from_string(gyro_qos);
+    qos_profile_from_string(accel_qos);
+    qos_profile_from_string(pointcloud_qos);
+    qos_profile_from_string(rgbd_qos);
 }
 
 StreamProfile parse_profile(const std::string &value, const std::string &name)
@@ -129,51 +226,71 @@ CameraWorker::CameraWorker(rclcpp::Node &node, DeviceDescriptor descriptor,
     , last_pointcloud_(std::chrono::steady_clock::time_point::min())
 {
     config_.validate();
-    const auto qos = rclcpp::SensorDataQoS();
+    const auto depth_qos = qos_from_string(config_.depth_qos);
+    const auto depth_info_qos = qos_from_string(config_.depth_info_qos);
+    const auto color_qos = qos_from_string(config_.color_qos);
+    const auto color_info_qos = qos_from_string(config_.color_info_qos);
+    const auto infra1_qos = qos_from_string(config_.infra1_qos);
+    const auto infra1_info_qos = qos_from_string(config_.infra1_info_qos);
+    const auto infra2_qos = qos_from_string(config_.infra2_qos);
+    const auto infra2_info_qos = qos_from_string(config_.infra2_info_qos);
+    const auto gyro_qos = qos_from_string(config_.gyro_qos);
+    const auto accel_qos = qos_from_string(config_.accel_qos);
+    const auto pointcloud_qos = qos_from_string(config_.pointcloud_qos);
+    const auto rgbd_qos = qos_from_string(config_.rgbd_qos);
     if (config_.enable_depth) {
         pub_depth_ = node_.create_publisher<sensor_msgs::msg::Image>(
-            topic("depth/image_rect_raw"), qos);
+            topic("depth/image_rect_raw"), depth_qos);
         pub_depth_info_ = node_.create_publisher<sensor_msgs::msg::CameraInfo>(
-            topic("depth/camera_info"), qos);
+            topic("depth/camera_info"), depth_info_qos);
     }
     if (config_.enable_color) {
         pub_color_ = node_.create_publisher<sensor_msgs::msg::Image>(
-            topic("color/image_raw"), qos);
+            topic("color/image_raw"), color_qos);
         pub_color_info_ = node_.create_publisher<sensor_msgs::msg::CameraInfo>(
-            topic("color/camera_info"), qos);
+            topic("color/camera_info"), color_info_qos);
     }
     if (config_.align_depth) {
         pub_aligned_depth_ = node_.create_publisher<sensor_msgs::msg::Image>(
-            topic("aligned_depth_to_color/image_raw"), qos);
+            topic("aligned_depth_to_color/image_raw"), color_qos);
         pub_aligned_depth_info_ =
             node_.create_publisher<sensor_msgs::msg::CameraInfo>(
-                topic("aligned_depth_to_color/camera_info"), qos);
+                topic("aligned_depth_to_color/camera_info"), color_info_qos);
     }
     if (config_.enable_infra1) {
         pub_infra1_ = node_.create_publisher<sensor_msgs::msg::Image>(
-            topic("infra1/image_rect_raw"), qos);
+            topic("infra1/image_rect_raw"), infra1_qos);
         pub_infra1_info_ = node_.create_publisher<sensor_msgs::msg::CameraInfo>(
-            topic("infra1/camera_info"), qos);
+            topic("infra1/camera_info"), infra1_info_qos);
     }
     if (config_.enable_infra2) {
         pub_infra2_ = node_.create_publisher<sensor_msgs::msg::Image>(
-            topic("infra2/image_rect_raw"), qos);
+            topic("infra2/image_rect_raw"), infra2_qos);
         pub_infra2_info_ = node_.create_publisher<sensor_msgs::msg::CameraInfo>(
-            topic("infra2/camera_info"), qos);
+            topic("infra2/camera_info"), infra2_info_qos);
     }
     if (config_.enable_gyro) {
         pub_gyro_ = node_.create_publisher<sensor_msgs::msg::Imu>(
-            topic("gyro/sample"), qos);
+            topic("gyro/sample"), gyro_qos);
     }
     if (config_.enable_accel) {
         pub_accel_ = node_.create_publisher<sensor_msgs::msg::Imu>(
-            topic("accel/sample"), qos);
+            topic("accel/sample"), accel_qos);
+    }
+    if (config_.enable_gyro && config_.enable_accel &&
+        config_.imu_sync_method != "NONE") {
+        pub_imu_ = node_.create_publisher<sensor_msgs::msg::Imu>(
+            topic("imu"), gyro_qos);
     }
     if (config_.pointcloud_enabled) {
         pub_pointcloud_ = node_.create_publisher<sensor_msgs::msg::PointCloud2>(
-            topic("depth/color/points"), qos);
+            topic("depth/color/points"), pointcloud_qos);
         pointcloud_thread_ =
             std::thread(&CameraWorker::run_pointcloud_worker, this);
+    }
+    if (config_.enable_rgbd) {
+        pub_rgbd_ = node_.create_publisher<realsense2_camera_msgs::msg::RGBD>(
+            topic("rgbd"), rgbd_qos);
     }
 }
 
@@ -236,7 +353,13 @@ bool CameraWorker::video_consumers_requested() const
 {
     return depth_requested() || color_requested() ||
            aligned_depth_requested() || infra1_requested() ||
-           infra2_requested() || has_subscribers(pub_pointcloud_);
+           infra2_requested() || has_subscribers(pub_pointcloud_) ||
+           rgbd_requested();
+}
+
+bool CameraWorker::rgbd_requested() const
+{
+    return has_subscribers(pub_rgbd_);
 }
 
 bool CameraWorker::pointcloud_requested()
@@ -354,6 +477,40 @@ sensor_msgs::msg::CameraInfo CameraWorker::make_camera_info(
     return info;
 }
 
+sensor_msgs::msg::Image CameraWorker::make_image(
+    const void *data, int width, int height, std::size_t source_step,
+    int cv_type, const std::string &encoding, const std::string &frame_id,
+    const rclcpp::Time &stamp) const
+{
+    if (data == nullptr || width <= 0 || height <= 0) {
+        throw std::invalid_argument("cannot create image from empty frame");
+    }
+    const auto element_size = static_cast<std::size_t>(CV_ELEM_SIZE(cv_type));
+    const auto packed_step = static_cast<std::size_t>(width) * element_size;
+    sensor_msgs::msg::Image image;
+    image.header.stamp = stamp;
+    image.header.frame_id = frame_id;
+    image.height = static_cast<std::uint32_t>(height);
+    image.width = static_cast<std::uint32_t>(width);
+    image.encoding = encoding;
+    image.is_bigendian = false;
+    image.step = static_cast<std::uint32_t>(packed_step);
+    image.data.resize(packed_step * static_cast<std::size_t>(height));
+
+    if (source_step == packed_step) {
+        std::memcpy(image.data.data(), data, image.data.size());
+    } else {
+        const auto *source = static_cast<const std::uint8_t *>(data);
+        for (int row = 0; row < height; ++row) {
+            std::memcpy(image.data.data() +
+                            static_cast<std::size_t>(row) * packed_step,
+                        source + static_cast<std::size_t>(row) * source_step,
+                        packed_step);
+        }
+    }
+    return image;
+}
+
 void CameraWorker::publish_calibrated_image(
     const void *data, int width, int height, std::size_t source_step,
     int cv_type, const std::string &encoding, const std::string &frame_id,
@@ -361,10 +518,46 @@ void CameraWorker::publish_calibrated_image(
     const InfoPublisher::SharedPtr &info_publisher,
     const Calibration &calibration, bool rectify, bool depth)
 {
-    if (!image_publisher || !info_publisher || data == nullptr || width <= 0 ||
-        height <= 0) {
+    if (!image_publisher || data == nullptr || width <= 0 || height <= 0) {
         return;
     }
+    const auto element_size = static_cast<std::size_t>(CV_ELEM_SIZE(cv_type));
+    const auto packed_step =
+        static_cast<std::size_t>(width) * element_size;
+
+    if (!rectify) {
+        auto image = std::make_unique<sensor_msgs::msg::Image>();
+        image->header.stamp = stamp;
+        image->header.frame_id = frame_id;
+        image->height = static_cast<std::uint32_t>(height);
+        image->width = static_cast<std::uint32_t>(width);
+        image->encoding = encoding;
+        image->is_bigendian = false;
+        image->step = static_cast<std::uint32_t>(packed_step);
+        image->data.resize(packed_step * static_cast<std::size_t>(height));
+
+        if (source_step == packed_step) {
+            std::memcpy(image->data.data(), data, image->data.size());
+        } else {
+            const auto *source =
+                static_cast<const std::uint8_t *>(data);
+            for (int row = 0; row < height; ++row) {
+                std::memcpy(image->data.data() +
+                                static_cast<std::size_t>(row) * packed_step,
+                            source +
+                                static_cast<std::size_t>(row) * source_step,
+                            packed_step);
+            }
+        }
+
+        if (requested(info_publisher)) {
+            info_publisher->publish(make_camera_info(
+                width, height, frame_id, stamp, calibration, false));
+        }
+        image_publisher->publish(std::move(image));
+        return;
+    }
+
     cv::Mat source(height, width, cv_type, const_cast<void *>(data),
                    source_step);
     cv::Mat output = source;
@@ -390,24 +583,24 @@ void CameraWorker::publish_calibrated_image(
         }
     }
 
-    sensor_msgs::msg::Image image;
-    image.header.stamp = stamp;
-    image.header.frame_id = frame_id;
-    image.height = static_cast<std::uint32_t>(height);
-    image.width = static_cast<std::uint32_t>(width);
-    image.encoding = encoding;
-    image.is_bigendian = false;
-    const auto packed_step =
-        static_cast<std::size_t>(width) * output.elemSize();
-    image.step = static_cast<std::uint32_t>(packed_step);
-    image.data.resize(packed_step * static_cast<std::size_t>(height));
+    auto image = std::make_unique<sensor_msgs::msg::Image>();
+    image->header.stamp = stamp;
+    image->header.frame_id = frame_id;
+    image->height = static_cast<std::uint32_t>(height);
+    image->width = static_cast<std::uint32_t>(width);
+    image->encoding = encoding;
+    image->is_bigendian = false;
+    image->step = static_cast<std::uint32_t>(packed_step);
+    image->data.resize(packed_step * static_cast<std::size_t>(height));
     for (int row = 0; row < height; ++row) {
-        std::memcpy(image.data.data() +
+        std::memcpy(image->data.data() +
                         static_cast<std::size_t>(row) * packed_step,
                     output.ptr(row), packed_step);
     }
-    info_publisher->publish(make_camera_info(width, height, frame_id, stamp,
-                                             calibration, rectified));
+    if (requested(info_publisher)) {
+        info_publisher->publish(make_camera_info(width, height, frame_id, stamp,
+                                                 calibration, rectified));
+    }
     image_publisher->publish(std::move(image));
 }
 
@@ -415,12 +608,27 @@ void CameraWorker::publish_imu(const ImuPublisher::SharedPtr &publisher,
                                const std::string &frame_id, bool angular,
                                float x, float y, float z)
 {
+    publish_imu(publisher, frame_id, node_.now(), angular, x, y, z);
+}
+
+void CameraWorker::publish_imu(const ImuPublisher::SharedPtr &publisher,
+                               const std::string &frame_id,
+                               const rclcpp::Time &stamp, bool angular,
+                               float x, float y, float z)
+{
     if (!has_subscribers(publisher)) {
         return;
     }
     sensor_msgs::msg::Imu message;
-    message.header.stamp = node_.now();
+    message.header.stamp = stamp;
     message.header.frame_id = frame_id;
+    message.orientation_covariance[0] = -1.0;
+    message.angular_velocity_covariance[0] = config_.angular_velocity_cov;
+    message.angular_velocity_covariance[4] = config_.angular_velocity_cov;
+    message.angular_velocity_covariance[8] = config_.angular_velocity_cov;
+    message.linear_acceleration_covariance[0] = config_.linear_accel_cov;
+    message.linear_acceleration_covariance[4] = config_.linear_accel_cov;
+    message.linear_acceleration_covariance[8] = config_.linear_accel_cov;
     if (angular) {
         message.angular_velocity.x = x;
         message.angular_velocity.y = y;
@@ -431,6 +639,32 @@ void CameraWorker::publish_imu(const ImuPublisher::SharedPtr &publisher,
         message.linear_acceleration.z = z;
     }
     publisher->publish(std::move(message));
+}
+
+void CameraWorker::publish_combined_imu(const rclcpp::Time &stamp, float gx,
+                                        float gy, float gz, float ax, float ay,
+                                        float az)
+{
+    if (!has_subscribers(pub_imu_)) {
+        return;
+    }
+    sensor_msgs::msg::Imu message;
+    message.header.stamp = stamp;
+    message.header.frame_id = gyro_frame_id();
+    message.orientation_covariance[0] = -1.0;
+    message.angular_velocity.x = gx;
+    message.angular_velocity.y = gy;
+    message.angular_velocity.z = gz;
+    message.linear_acceleration.x = ax;
+    message.linear_acceleration.y = ay;
+    message.linear_acceleration.z = az;
+    message.angular_velocity_covariance[0] = config_.angular_velocity_cov;
+    message.angular_velocity_covariance[4] = config_.angular_velocity_cov;
+    message.angular_velocity_covariance[8] = config_.angular_velocity_cov;
+    message.linear_acceleration_covariance[0] = config_.linear_accel_cov;
+    message.linear_acceleration_covariance[4] = config_.linear_accel_cov;
+    message.linear_acceleration_covariance[8] = config_.linear_accel_cov;
+    pub_imu_->publish(std::move(message));
 }
 
 void CameraWorker::publish_pointcloud(const std::vector<PointXYZRGB> &points,

@@ -11,6 +11,7 @@
 
   <depend>rclcpp</depend>
   <depend>rcl_interfaces</depend>
+  <depend>realsense2_camera_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>opencv</depend>
 

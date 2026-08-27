@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 
@@ -39,6 +40,28 @@ void configure_orbbec_logging()
         ob::Context::setLoggerToFile(OB_LOG_SEVERITY_OFF, "");
         ob::Context::setLoggerToConsole(OB_LOG_SEVERITY_WARN);
     });
+}
+
+struct OrbbecDiscoveryContext {
+    // Context destruction unregisters the callback before generation dies.
+    std::atomic<std::uint64_t> generation{ 1 };
+    ob::Context context;
+
+    OrbbecDiscoveryContext()
+    {
+        context.registerDeviceChangedCallback(
+            [this](std::shared_ptr<ob::DeviceList>,
+                   std::shared_ptr<ob::DeviceList>) {
+                generation.fetch_add(1, std::memory_order_relaxed);
+            });
+    }
+};
+
+OrbbecDiscoveryContext &orbbec_discovery_context()
+{
+    configure_orbbec_logging();
+    static OrbbecDiscoveryContext instance;
+    return instance;
 }
 
 std::shared_ptr<ob::Context> make_orbbec_context()
@@ -106,6 +129,7 @@ public:
     {
         auto devices = context_->queryDeviceList();
         device_ = devices->getDeviceBySN(descriptor_.serial.c_str());
+        configure_device_options();
         start_pipeline();
         video_thread_ = std::thread(&OrbbecCamera::run_video_worker, this);
     }
@@ -154,6 +178,113 @@ public:
     }
 
 private:
+    struct MotionSample {
+        rclcpp::Time stamp;
+        float x{ 0.0F };
+        float y{ 0.0F };
+        float z{ 0.0F };
+    };
+
+    bool roi_configured() const noexcept
+    {
+        return config_.auto_exposure_roi_left >= 0;
+    }
+
+    void set_bool_property(OBPropertyID property, bool value,
+                           const std::string &name)
+    {
+        if (!device_->isPropertySupported(property, OB_PERMISSION_WRITE)) {
+            warn_throttled("orbbec-property-unsupported-" + name,
+                           "Orbbec " + descriptor_.serial +
+                               " does not support writable property " + name);
+            return;
+        }
+        device_->setBoolProperty(property, value);
+    }
+
+    void set_int_property(OBPropertyID property, int value,
+                          const std::string &name)
+    {
+        if (!device_->isPropertySupported(property, OB_PERMISSION_WRITE)) {
+            warn_throttled("orbbec-property-unsupported-" + name,
+                           "Orbbec " + descriptor_.serial +
+                               " does not support writable property " + name);
+            return;
+        }
+        const auto range = device_->getIntPropertyRange(property);
+        const int clamped = std::clamp(value, range.min, range.max);
+        device_->setIntProperty(property, clamped);
+    }
+
+    void set_roi_property(OBPropertyID property, const std::string &name)
+    {
+        if (!roi_configured()) {
+            return;
+        }
+        if (!device_->isPropertySupported(property, OB_PERMISSION_WRITE)) {
+            warn_throttled("orbbec-roi-unsupported-" + name,
+                           "Orbbec " + descriptor_.serial +
+                               " does not support writable AE ROI " + name);
+            return;
+        }
+        OBRegionOfInterest roi{};
+        roi.x0_left = static_cast<int16_t>(config_.auto_exposure_roi_left);
+        roi.y0_top = static_cast<int16_t>(config_.auto_exposure_roi_top);
+        roi.x1_right = static_cast<int16_t>(config_.auto_exposure_roi_right);
+        roi.y1_bottom = static_cast<int16_t>(config_.auto_exposure_roi_bottom);
+        device_->setStructuredData(property,
+                                   reinterpret_cast<const uint8_t *>(&roi),
+                                   sizeof(roi));
+    }
+
+    void configure_device_options()
+    {
+        try {
+            if (!config_.color_enable_auto_exposure ||
+                config_.color_exposure >= 0.0 || config_.color_gain >= 0.0) {
+                set_bool_property(OB_PROP_COLOR_AUTO_EXPOSURE_BOOL,
+                                  config_.color_enable_auto_exposure,
+                                  "color_auto_exposure");
+            }
+            if (config_.color_exposure >= 0.0) {
+                set_int_property(OB_PROP_COLOR_EXPOSURE_INT,
+                                 static_cast<int>(std::lround(
+                                     config_.color_exposure)),
+                                 "color_exposure");
+            }
+            if (config_.color_gain >= 0.0) {
+                set_int_property(OB_PROP_COLOR_GAIN_INT,
+                                 static_cast<int>(
+                                     std::lround(config_.color_gain)),
+                                 "color_gain");
+            }
+            if (!config_.depth_enable_auto_exposure ||
+                config_.depth_exposure >= 0.0 || config_.depth_gain >= 0.0) {
+                set_bool_property(OB_PROP_DEPTH_AUTO_EXPOSURE_BOOL,
+                                  config_.depth_enable_auto_exposure,
+                                  "depth_auto_exposure");
+            }
+            if (config_.depth_exposure >= 0.0) {
+                set_int_property(OB_PROP_DEPTH_EXPOSURE_INT,
+                                 static_cast<int>(std::lround(
+                                     config_.depth_exposure)),
+                                 "depth_exposure");
+            }
+            if (config_.depth_gain >= 0.0) {
+                set_int_property(OB_PROP_DEPTH_GAIN_INT,
+                                 static_cast<int>(
+                                     std::lround(config_.depth_gain)),
+                                 "depth_gain");
+            }
+            set_roi_property(OB_STRUCT_COLOR_AE_ROI, "color");
+            set_roi_property(OB_STRUCT_DEPTH_AE_ROI, "depth");
+        } catch (const std::exception &error) {
+            warn_throttled("orbbec-options",
+                           "cannot configure Orbbec " + descriptor_.serial +
+                               ": " + error.what());
+        }
+    }
+
     void start_pipeline()
     {
         pipeline_ = std::make_shared<ob::Pipeline>(device_);
@@ -181,7 +312,8 @@ private:
             configure_ir(config, OB_SENSOR_IR, OB_STREAM_IR, true);
         }
 
-        if (config_.align_depth ||
+        if (config_.align_depth || config_.enable_sync ||
+            config_.enable_rgbd ||
             (config_.pointcloud_enabled && config_.enable_color)) {
             config->setFrameAggregateOutputMode(
                 OB_FRAME_AGGREGATE_OUTPUT_ALL_TYPE_FRAME_REQUIRE);
@@ -231,9 +363,30 @@ private:
         if (!config_.enable_depth) {
             return;
         }
+        if (config_.threshold_enabled) {
+            auto threshold = std::make_shared<ob::ThresholdFilter>();
+            threshold->enable(true);
+            const auto min_mm = static_cast<uint16_t>(std::clamp(
+                std::lround(config_.threshold_min_distance * 1000.0), 0L,
+                65535L));
+            const auto max_mm = static_cast<uint16_t>(std::clamp(
+                std::lround(config_.threshold_max_distance * 1000.0), 0L,
+                65535L));
+            if (!threshold->setValueRange(min_mm, max_mm)) {
+                throw std::runtime_error("invalid Orbbec threshold filter range");
+            }
+            RCLCPP_DEBUG(node_.get_logger(),
+                         "Orbbec %s threshold filter schema: %s",
+                         descriptor_.serial.c_str(),
+                         threshold->getConfigSchema().c_str());
+            depth_filters_.push_back(threshold);
+        }
         auto sensor = device_->getSensor(OB_SENSOR_DEPTH);
         for (auto &filter : sensor->createRecommendedFilters()) {
             const std::string name = lower(filter->getName());
+            RCLCPP_DEBUG(node_.get_logger(), "Orbbec %s SDK filter %s schema: %s",
+                         descriptor_.serial.c_str(), filter->getName().c_str(),
+                         filter->getConfigSchema().c_str());
             const bool mandatory = name.find("disparity") != std::string::npos;
             const bool selected = config_.orbbec_enable_sdk_filters &&
                                   (name.find("noise") != std::string::npos ||
@@ -288,26 +441,55 @@ private:
         }
         try {
             mark_frame();
-            if (pub_accel_ && pub_accel_->get_subscription_count() > 0) {
+            std::optional<MotionSample> accel_sample;
+            std::optional<MotionSample> gyro_sample;
+            const auto stamp = node_.now();
+            if (config_.enable_accel) {
                 auto frame = frameset->getFrame(OB_FRAME_ACCEL);
                 if (frame) {
                     const auto value = frame->as<ob::AccelFrame>()->getValue();
-                    publish_imu(pub_accel_, accel_frame_id(), false, value.x,
-                                value.y, value.z);
+                    accel_sample = MotionSample{ stamp, value.x, value.y,
+                                                 value.z };
+                    publish_imu(pub_accel_, accel_frame_id(), stamp, false,
+                                value.x, value.y, value.z);
                 }
             }
-            if (pub_gyro_ && pub_gyro_->get_subscription_count() > 0) {
+            if (config_.enable_gyro) {
                 auto frame = frameset->getFrame(OB_FRAME_GYRO);
                 if (frame) {
                     const auto value = frame->as<ob::GyroFrame>()->getValue();
-                    publish_imu(pub_gyro_, gyro_frame_id(), true, value.x,
-                                value.y, value.z);
+                    gyro_sample = MotionSample{ stamp, value.x, value.y,
+                                                value.z };
+                    publish_imu(pub_gyro_, gyro_frame_id(), stamp, true,
+                                value.x, value.y, value.z);
                 }
             }
+            handle_imu_samples(gyro_sample, accel_sample, stamp);
         } catch (const std::exception &error) {
             error_throttled("orbbec-imu-callback",
                             "Orbbec " + descriptor_.serial +
                                 " IMU callback failed: " + error.what());
+        }
+    }
+
+    void handle_imu_samples(const std::optional<MotionSample> &gyro,
+                            const std::optional<MotionSample> &accel,
+                            const rclcpp::Time &stamp)
+    {
+        if (!pub_imu_) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(imu_mutex_);
+        if (gyro) {
+            latest_gyro_ = gyro;
+        }
+        if (accel) {
+            latest_accel_ = accel;
+        }
+        if (latest_gyro_ && latest_accel_) {
+            publish_combined_imu(stamp, latest_gyro_->x, latest_gyro_->y,
+                                 latest_gyro_->z, latest_accel_->x,
+                                 latest_accel_->y, latest_accel_->z);
         }
     }
 
@@ -341,11 +523,12 @@ private:
         const bool need_depth = depth_requested();
         const bool need_color = color_requested();
         const bool need_aligned = aligned_depth_requested();
+        const bool need_rgbd = rgbd_requested();
         const bool need_infra1 = infra1_requested();
         const bool need_infra2 = infra2_requested();
         const bool need_pointcloud = pointcloud_requested();
         if (!(need_depth || need_color || need_aligned || need_infra1 ||
-              need_infra2 || need_pointcloud)) {
+              need_infra2 || need_rgbd || need_pointcloud)) {
             return;
         }
         const auto stamp = node_.now();
@@ -369,10 +552,13 @@ private:
                     config_.rectify_color, false);
             }
         }
-        if (need_aligned && align_to_color_) {
+        std::shared_ptr<ob::FrameSet> aligned;
+        if ((need_aligned || need_rgbd) && align_to_color_) {
             auto aligned_frame = align_to_color_->process(frameset);
-            auto aligned = aligned_frame ? aligned_frame->as<ob::FrameSet>() :
-                                           nullptr;
+            aligned = aligned_frame ? aligned_frame->as<ob::FrameSet>() :
+                                      nullptr;
+        }
+        if (need_aligned && align_to_color_) {
             if (!aligned || !aligned->getDepthFrame()) {
                 warn_throttled(
                     "orbbec-align-no-output",
@@ -383,6 +569,10 @@ private:
                               pub_aligned_depth_, pub_aligned_depth_info_,
                               color_frame_id(), config_.rectify_color, false);
             }
+        }
+        if (need_rgbd) {
+            publish_rgbd(frameset->getColorFrame(),
+                         aligned ? aligned->getDepthFrame() : nullptr, stamp);
         }
         if (need_infra1) {
             auto frame = frameset->getFrame(OB_FRAME_IR_LEFT);
@@ -402,6 +592,72 @@ private:
                 create_pointcloud(frameset, stamp);
             });
         }
+    }
+
+    std::vector<std::uint16_t>
+    depth_millimeters(const std::shared_ptr<ob::DepthFrame> &depth) const
+    {
+        if (!depth) {
+            return {};
+        }
+        const int width = static_cast<int>(depth->getWidth());
+        const int height = static_cast<int>(depth->getHeight());
+        const auto pixels = static_cast<std::size_t>(width) * height;
+        if (depth->getDataSize() < pixels * sizeof(std::uint16_t)) {
+            throw std::runtime_error("malformed Orbbec depth frame");
+        }
+        const auto *raw =
+            reinterpret_cast<const std::uint16_t *>(depth->getData());
+        const float scale = depth->getValueScale();
+        std::vector<std::uint16_t> millimeters(pixels);
+        for (std::size_t index = 0; index < pixels; ++index) {
+            millimeters[index] = static_cast<std::uint16_t>(
+                std::clamp(std::lround(static_cast<double>(raw[index]) * scale),
+                           0L, 65535L));
+        }
+        return millimeters;
+    }
+
+    void publish_rgbd(const std::shared_ptr<ob::ColorFrame> &color,
+                      const std::shared_ptr<ob::DepthFrame> &depth,
+                      const rclcpp::Time &stamp)
+    {
+        if (!has_rgbd_inputs(color, depth)) {
+            return;
+        }
+        auto color_image = color_bgr(color);
+        auto depth_image = depth_millimeters(depth);
+        const auto color_profile =
+            color->getStreamProfile()->as<ob::VideoStreamProfile>();
+        const auto calibration =
+            calibration_from(color_profile, config_.orbbec_fallback_hfov,
+                             config_.orbbec_fallback_vfov);
+        realsense2_camera_msgs::msg::RGBD message;
+        message.header.stamp = stamp;
+        message.header.frame_id = color_frame_id();
+        message.rgb = make_image(color_image.data, color_image.cols,
+                                 color_image.rows, color_image.step, CV_8UC3,
+                                 "bgr8", color_frame_id(), stamp);
+        message.depth = make_image(
+            depth_image.data(), static_cast<int>(depth->getWidth()),
+            static_cast<int>(depth->getHeight()),
+            static_cast<std::size_t>(depth->getWidth()) *
+                sizeof(std::uint16_t),
+            CV_16UC1, "16UC1", color_frame_id(), stamp);
+        message.rgb_camera_info = make_camera_info(
+            color_image.cols, color_image.rows, color_frame_id(), stamp,
+            calibration, false);
+        message.depth_camera_info = make_camera_info(
+            static_cast<int>(depth->getWidth()),
+            static_cast<int>(depth->getHeight()), color_frame_id(), stamp,
+            calibration, false);
+        pub_rgbd_->publish(std::move(message));
+    }
+
+    bool has_rgbd_inputs(const std::shared_ptr<ob::ColorFrame> &color,
+                         const std::shared_ptr<ob::DepthFrame> &depth) const
+    {
+        return pub_rgbd_ && color && depth;
     }
 
     std::shared_ptr<ob::DepthFrame>
@@ -435,19 +691,7 @@ private:
         }
         const int width = static_cast<int>(depth->getWidth());
         const int height = static_cast<int>(depth->getHeight());
-        const auto pixels = static_cast<std::size_t>(width) * height;
-        if (depth->getDataSize() < pixels * sizeof(std::uint16_t)) {
-            throw std::runtime_error("malformed Orbbec depth frame");
-        }
-        const auto *raw =
-            reinterpret_cast<const std::uint16_t *>(depth->getData());
-        const float scale = depth->getValueScale();
-        std::vector<std::uint16_t> millimeters(pixels);
-        for (std::size_t index = 0; index < pixels; ++index) {
-            millimeters[index] = static_cast<std::uint16_t>(
-                std::clamp(std::lround(static_cast<double>(raw[index]) * scale),
-                           0L, 65535L));
-        }
+        auto millimeters = depth_millimeters(depth);
         const auto profile =
             depth->getStreamProfile()->as<ob::VideoStreamProfile>();
         publish_calibrated_image(
@@ -614,6 +858,10 @@ private:
     std::shared_ptr<ob::VideoStreamProfile> infra1_profile_;
     std::shared_ptr<ob::VideoStreamProfile> infra2_profile_;
 
+    std::mutex imu_mutex_;
+    std::optional<MotionSample> latest_gyro_;
+    std::optional<MotionSample> latest_accel_;
+
     std::mutex video_mutex_;
     std::condition_variable video_cv_;
     std::optional<std::shared_ptr<ob::FrameSet>> latest_frameset_;
@@ -627,9 +875,7 @@ private:
 std::vector<DeviceDescriptor> discover_orbbec()
 {
     std::vector<DeviceDescriptor> result;
-    configure_orbbec_logging();
-    ob::Context context;
-    auto devices = context.queryDeviceList();
+    auto devices = orbbec_discovery_context().context.queryDeviceList();
     for (std::uint32_t index = 0; index < devices->getCount(); ++index) {
         try {
             if (devices->getVid(index) != kOrbbecVendorId ||
@@ -647,6 +893,12 @@ std::vector<DeviceDescriptor> discover_orbbec()
         }
     }
     return result;
+}
+
+std::uint64_t orbbec_device_generation()
+{
+    return orbbec_discovery_context().generation.load(
+        std::memory_order_relaxed);
 }
 
 std::unique_ptr<CameraDevice>

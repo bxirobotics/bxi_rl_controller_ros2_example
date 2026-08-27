@@ -26,6 +26,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rcl_interfaces REQUIRED)
+find_package(realsense2_camera_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs calib3d)
 
@@ -102,6 +103,7 @@ target_include_directories(bxi_depth_camera_core SYSTEM PUBLIC ${OpenCV_INCLUDE_
 ament_target_dependencies(bxi_depth_camera_core
   rclcpp
   rcl_interfaces
+  realsense2_camera_msgs
   sensor_msgs
 )
 target_compile_options(bxi_depth_camera_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -213,5 +215,12 @@ if(BUILD_TESTING)
     target_link_libraries(test_common bxi_depth_camera_core)
   endif()
 endif()
+
+ament_export_dependencies(
+  rclcpp
+  rcl_interfaces
+  realsense2_camera_msgs
+  sensor_msgs
+)
 
 ament_package()
