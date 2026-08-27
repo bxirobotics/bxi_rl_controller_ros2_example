@@ -3,7 +3,12 @@
 #include "bxi_depth_camera/types.hpp"
 
 #include <rclcpp/rclcpp.hpp>
+#ifndef BXI_DEPTH_CAMERA_HAS_RGBD_MSG
+#define BXI_DEPTH_CAMERA_HAS_RGBD_MSG 0
+#endif
+#if BXI_DEPTH_CAMERA_HAS_RGBD_MSG
 #include <realsense2_camera_msgs/msg/rgbd.hpp>
+#endif
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/imu.hpp>
@@ -46,7 +51,9 @@ protected:
     using ImuPublisher = rclcpp::Publisher<sensor_msgs::msg::Imu>;
     using PointCloudPublisher =
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>;
+#if BXI_DEPTH_CAMERA_HAS_RGBD_MSG
     using RgbdPublisher = rclcpp::Publisher<realsense2_camera_msgs::msg::RGBD>;
+#endif
 
     void mark_frame() noexcept;
     bool video_consumers_requested() const;
@@ -119,7 +126,9 @@ protected:
     ImuPublisher::SharedPtr pub_accel_;
     ImuPublisher::SharedPtr pub_imu_;
     PointCloudPublisher::SharedPtr pub_pointcloud_;
+#if BXI_DEPTH_CAMERA_HAS_RGBD_MSG
     RgbdPublisher::SharedPtr pub_rgbd_;
+#endif
 
 private:
     struct RectificationMaps {

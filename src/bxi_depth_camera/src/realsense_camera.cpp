@@ -959,6 +959,7 @@ private:
             }
         }
         if (need_rgbd && aligned && color) {
+#if BXI_DEPTH_CAMERA_HAS_RGBD_MSG
             auto depth = aligned->get_depth_frame();
             if (depth) {
                 const auto intrinsics = color.get_profile()
@@ -984,6 +985,7 @@ private:
                     stamp, calibration, false);
                 pub_rgbd_->publish(std::move(message));
             }
+#endif
         }
         if (need_pointcloud) {
             enqueue_pointcloud([this, processed, frameset, stamp] {

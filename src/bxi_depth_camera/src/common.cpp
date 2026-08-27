@@ -99,11 +99,18 @@ void CameraConfig::validate() const
     if (pointcloud_enabled && !enable_depth) {
         throw std::invalid_argument("pointcloud.enable requires enable_depth");
     }
+#if !BXI_DEPTH_CAMERA_HAS_RGBD_MSG
+    if (enable_rgbd) {
+        throw std::invalid_argument(
+            "enable_rgbd requires optional package realsense2_camera_msgs at build time");
+    }
+#else
     if (enable_rgbd &&
         !(enable_sync && align_depth && enable_depth && enable_color)) {
         throw std::invalid_argument(
             "enable_rgbd requires enable_sync, align_depth.enable, enable_depth, and enable_color");
     }
+#endif
     if (!std::isfinite(pointcloud_max_fps) || pointcloud_max_fps <= 0.0) {
         throw std::invalid_argument(
             "pointcloud.max_fps must be greater than zero");
@@ -237,7 +244,9 @@ CameraWorker::CameraWorker(rclcpp::Node &node, DeviceDescriptor descriptor,
     const auto gyro_qos = qos_from_string(config_.gyro_qos);
     const auto accel_qos = qos_from_string(config_.accel_qos);
     const auto pointcloud_qos = qos_from_string(config_.pointcloud_qos);
+#if BXI_DEPTH_CAMERA_HAS_RGBD_MSG
     const auto rgbd_qos = qos_from_string(config_.rgbd_qos);
+#endif
     if (config_.enable_depth) {
         pub_depth_ = node_.create_publisher<sensor_msgs::msg::Image>(
             topic("depth/image_rect_raw"), depth_qos);
@@ -288,10 +297,12 @@ CameraWorker::CameraWorker(rclcpp::Node &node, DeviceDescriptor descriptor,
         pointcloud_thread_ =
             std::thread(&CameraWorker::run_pointcloud_worker, this);
     }
+#if BXI_DEPTH_CAMERA_HAS_RGBD_MSG
     if (config_.enable_rgbd) {
         pub_rgbd_ = node_.create_publisher<realsense2_camera_msgs::msg::RGBD>(
             topic("rgbd"), rgbd_qos);
     }
+#endif
 }
 
 CameraWorker::~CameraWorker()
@@ -359,7 +370,11 @@ bool CameraWorker::video_consumers_requested() const
 
 bool CameraWorker::rgbd_requested() const
 {
+#if BXI_DEPTH_CAMERA_HAS_RGBD_MSG
     return has_subscribers(pub_rgbd_);
+#else
+    return false;
+#endif
 }
 
 bool CameraWorker::pointcloud_requested()

@@ -622,6 +622,7 @@ private:
                       const std::shared_ptr<ob::DepthFrame> &depth,
                       const rclcpp::Time &stamp)
     {
+#if BXI_DEPTH_CAMERA_HAS_RGBD_MSG
         if (!has_rgbd_inputs(color, depth)) {
             return;
         }
@@ -652,12 +653,23 @@ private:
             static_cast<int>(depth->getHeight()), color_frame_id(), stamp,
             calibration, false);
         pub_rgbd_->publish(std::move(message));
+#else
+        (void)color;
+        (void)depth;
+        (void)stamp;
+#endif
     }
 
     bool has_rgbd_inputs(const std::shared_ptr<ob::ColorFrame> &color,
                          const std::shared_ptr<ob::DepthFrame> &depth) const
     {
+#if BXI_DEPTH_CAMERA_HAS_RGBD_MSG
         return pub_rgbd_ && color && depth;
+#else
+        (void)color;
+        (void)depth;
+        return false;
+#endif
     }
 
     std::shared_ptr<ob::DepthFrame>

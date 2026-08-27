@@ -26,9 +26,15 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rcl_interfaces REQUIRED)
-find_package(realsense2_camera_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs calib3d)
+
+option(BXI_DEPTH_CAMERA_USE_REALSENSE2_CAMERA_MSGS
+  "Use optional realsense2_camera_msgs/msg/RGBD when the package is available"
+  ON)
+if(BXI_DEPTH_CAMERA_USE_REALSENSE2_CAMERA_MSGS)
+  find_package(realsense2_camera_msgs QUIET)
+endif()
 
 string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" BXI_SYSTEM_PROCESSOR)
 if(BXI_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
@@ -103,9 +109,16 @@ target_include_directories(bxi_depth_camera_core SYSTEM PUBLIC ${OpenCV_INCLUDE_
 ament_target_dependencies(bxi_depth_camera_core
   rclcpp
   rcl_interfaces
-  realsense2_camera_msgs
   sensor_msgs
 )
+if(realsense2_camera_msgs_FOUND)
+  ament_target_dependencies(bxi_depth_camera_core realsense2_camera_msgs)
+  target_compile_definitions(bxi_depth_camera_core PUBLIC
+    BXI_DEPTH_CAMERA_HAS_RGBD_MSG=1)
+else()
+  target_compile_definitions(bxi_depth_camera_core PUBLIC
+    BXI_DEPTH_CAMERA_HAS_RGBD_MSG=0)
+endif()
 target_compile_options(bxi_depth_camera_core PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(bxi_depth_camera_core PROPERTIES
   BUILD_RPATH "${BXI_ORBBEC_ROOT}/lib;${BXI_REALSENSE_ROOT}/lib"
@@ -219,8 +232,10 @@ endif()
 ament_export_dependencies(
   rclcpp
   rcl_interfaces
-  realsense2_camera_msgs
   sensor_msgs
 )
+if(realsense2_camera_msgs_FOUND)
+  ament_export_dependencies(realsense2_camera_msgs)
+endif()
 
 ament_package()

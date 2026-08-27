@@ -240,7 +240,11 @@ ros2 run bxi_depth_camera cameras-inspect --watch \
 RealSense ROS 驱动也采用的 `gyro/sample` 和 `accel/sample` 话题结构；当
 `imu_sync_method` 非 `NONE` 且 gyro/accel 都启用时，额外发布组合 `/imu`。
 
-`enable_rgbd` 发布 `realsense2_camera_msgs/msg/RGBD` 复合消息。它按官方语义要求
+`enable_rgbd` 在构建环境提供 `realsense2_camera_msgs` 时发布官方
+`realsense2_camera_msgs/msg/RGBD` 复合消息；该消息包是可选依赖，不属于内置相机
+SDK。没有安装该包时，基础相机包仍可构建和运行，只是启用 `enable_rgbd` 会得到明确
+配置错误。需要强制关闭这条可选路径时可在构建时传入
+`-DBXI_DEPTH_CAMERA_USE_REALSENSE2_CAMERA_MSGS=OFF`。RGBD 按官方语义要求
 `enable_sync=true`、`align_depth.enable=true`、`enable_color=true` 和
 `enable_depth=true`，并默认关闭，避免普通 color/depth 路径额外等待同步 frameset。
 `enable_sync=false` 时，RealSense 彩色和普通深度继续走独立传感器回调的轻量路径。
