@@ -947,13 +947,17 @@ system:
     - "ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log 2>&1 &"
     - "su bxi -c \"cd /home/bxi/bxi_ws/bxi_voice && ./bin/bxi-voice\" 2>&1 &"
   stop:
-    - "killall -SIGINT hardware_elf3"
-    - "killall -SIGINT bxi_example_py_elf3"
-    - "killall -SIGINT bxi_example_py_elf3_demo"
-    - "pkill -SIGINT -f '[/]bxi_depth_camera/cameras|[b]xi_depth_camera\\.manager'"
-    - "killall -SIGINT bxi_bms"
-    - "killall -SIGINT bxi_example_bms"
-    - "killall -SIGINT bxi-voice"
+    # Stop the launch parents by full command line.  Killing only node
+    # executable names can leave "ros2 launch ... example_demo_hw.launch.py"
+    # alive; that parent keeps /tmp/bxi_example_hw.lock held and blocks the
+    # next start.
+    - "pkill -SIGINT -f '[r]os2 launch bxi_example_py_elf3 .*demo_hw.*\\.py|[h]ardware_elf3|[b]xi_example_py_elf3_demo|[/]bxi_depth_camera/cameras|[b]xi_depth_camera\\.manager' || true"
+    - "pkill -SIGINT -f '[r]os2 launch bxi_example_bms bms\\.launch\\.py|[/]bxi_bms|[/]bxi_example_bms' || true"
+    - "pkill -SIGINT -f '[b]xi-voice' || true"
+    - "sleep 2"
+    - "pkill -SIGKILL -f '[r]os2 launch bxi_example_py_elf3 .*demo_hw.*\\.py|[h]ardware_elf3|[b]xi_example_py_elf3_demo|[/]bxi_depth_camera/cameras|[b]xi_depth_camera\\.manager' || true"
+    - "pkill -SIGKILL -f '[r]os2 launch bxi_example_bms bms\\.launch\\.py|[/]bxi_bms|[/]bxi_example_bms' || true"
+    - "pkill -SIGKILL -f '[b]xi-voice' || true"
 
 #互斥定义，只能acquire一次，但是可以release多次
 system_mutexes:
