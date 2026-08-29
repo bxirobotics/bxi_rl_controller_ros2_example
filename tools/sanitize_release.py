@@ -661,7 +661,6 @@ def copy_release_tree(source_root: Path, output_root: Path) -> None:
         ignored = {
             ".git",
             ".wiki",
-            ".agents",
             ".codex",
             "build",
             "install",

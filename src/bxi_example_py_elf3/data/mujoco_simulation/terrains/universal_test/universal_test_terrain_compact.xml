@@ -1,0 +1,6 @@
+<mujocoinclude>
+  <!-- Lightweight entry for fast terrain tests: spawn area plus compact obstacles. -->
+  <include file="assets.xml"/>
+  <include file="base.xml"/>
+  <include file="compact_obstacles.xml"/>
+</mujocoinclude>

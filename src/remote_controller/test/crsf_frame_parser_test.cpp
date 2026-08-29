@@ -9,7 +9,9 @@ namespace {
 
 using remote_controller::CrsfFrameParser;
 
-std::vector<std::uint8_t> make_channels_frame(const CrsfFrameParser::Channels &channels)
+std::vector<std::uint8_t> make_channels_frame(
+    const CrsfFrameParser::Channels &channels,
+    std::uint8_t address = CrsfFrameParser::kSyncByte)
 {
     std::array<std::uint8_t, CrsfFrameParser::kRcChannelsPayloadSize> payload{};
     for (std::size_t channel = 0; channel < channels.size(); ++channel) {
@@ -30,7 +32,7 @@ std::vector<std::uint8_t> make_channels_frame(const CrsfFrameParser::Channels &c
     constexpr std::uint8_t frame_length =
         1 + CrsfFrameParser::kRcChannelsPayloadSize + 1;
     std::vector<std::uint8_t> frame(2 + frame_length);
-    frame[0] = CrsfFrameParser::kSyncByte;
+    frame[0] = address;
     frame[1] = frame_length;
     frame[2] = CrsfFrameParser::kRcChannelsPackedFrameType;
     for (std::size_t index = 0; index < payload.size(); ++index) {
@@ -83,11 +85,32 @@ void test_bad_crc_is_ignored_and_parser_resynchronizes()
     assert(callback_count == 1);
 }
 
+void test_receiver_address_is_accepted()
+{
+    CrsfFrameParser::Channels expected{};
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        expected[index] = static_cast<std::uint16_t>(992 + index);
+    }
+    const std::vector<std::uint8_t> frame =
+        make_channels_frame(expected, CrsfFrameParser::kReceiverAddress);
+
+    int callback_count = 0;
+    CrsfFrameParser::Channels received{};
+    CrsfFrameParser parser([&callback_count, &received](const CrsfFrameParser::Channels &channels) {
+        ++callback_count;
+        received = channels;
+    });
+    parser.push(frame);
+    assert(callback_count == 1);
+    assert(received == expected);
+}
+
 }  // namespace
 
 int main()
 {
     test_fragmented_frame_and_channel_unpacking();
     test_bad_crc_is_ignored_and_parser_resynchronizes();
+    test_receiver_address_is_accepted();
     return 0;
 }

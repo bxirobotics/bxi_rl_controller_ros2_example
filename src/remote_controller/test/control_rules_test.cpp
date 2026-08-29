@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <string>
@@ -367,6 +368,41 @@ void test_all_auxiliary_and_face_button_combinations_are_reserved()
     }
 }
 
+void test_xbox_elrs_crsf_buttons_use_bit_packed_sources()
+{
+    const RemoteConfig config = remote_controller::load_remote_config(
+        REMOTE_CONTROLLER_TEST_CONFIG_PATH);
+
+    {
+        InputMapper mapper(config);
+        const std::vector<std::string> outputs =
+            mapper.set_signal("crsf.xbox.button.back", 1.0);
+        expect(
+            std::find(outputs.begin(), outputs.end(), "system.stop") !=
+            outputs.end());
+    }
+
+    {
+        InputMapper mapper(config);
+        const std::vector<std::string> outputs =
+            mapper.set_signal("crsf.xbox.button.start", 1.0);
+        expect(
+            std::find(outputs.begin(), outputs.end(), "system.start") !=
+            outputs.end());
+    }
+
+    {
+        InputMapper mapper(config);
+        mapper.set_signals({
+            {"crsf.xbox.button.rb", 1.0},
+            {"crsf.xbox.button.x", 1.0},
+        });
+        communication::msg::MotionCommands message;
+        mapper.fill_message(message);
+        expect(message.btn_1 == 1);
+    }
+}
+
 }  // namespace
 
 int main()
@@ -378,5 +414,6 @@ int main()
     test_filtered_analog_snaps_zero_without_blocking_valid_input();
     test_three_button_chord_excludes_two_button_x_chords();
     test_all_auxiliary_and_face_button_combinations_are_reserved();
+    test_xbox_elrs_crsf_buttons_use_bit_packed_sources();
     return 0;
 }
