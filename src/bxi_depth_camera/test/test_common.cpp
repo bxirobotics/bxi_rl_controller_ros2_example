@@ -61,5 +61,37 @@ TEST(ConfigValidation, RejectsInvalidRatesAndTimeouts)
     EXPECT_THROW(config.validate(), std::invalid_argument);
 }
 
+TEST(ConfigValidation, RejectsUnknownQos)
+{
+    CameraConfig config;
+    config.color_qos = "FAST_BUT_FAKE";
+    EXPECT_THROW(config.validate(), std::invalid_argument);
+}
+
+TEST(ConfigValidation, EnforcesRgbdDependencies)
+{
+    CameraConfig config;
+    config.enable_rgbd = true;
+    EXPECT_THROW(config.validate(), std::invalid_argument);
+
+    config.enable_sync = true;
+    config.align_depth = true;
+    EXPECT_NO_THROW(config.validate());
+}
+
+TEST(ConfigValidation, EnforcesImuSyncDependencies)
+{
+    CameraConfig config;
+    config.imu_sync_method = "COPY";
+    EXPECT_THROW(config.validate(), std::invalid_argument);
+
+    config.enable_gyro = true;
+    config.enable_accel = true;
+    EXPECT_NO_THROW(config.validate());
+
+    config.imu_sync_method = "BAD_SYNC";
+    EXPECT_THROW(config.validate(), std::invalid_argument);
+}
+
 } // namespace
 } // namespace bxi_depth_camera

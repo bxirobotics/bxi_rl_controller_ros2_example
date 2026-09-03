@@ -1,0 +1,4 @@
+interface:
+  display_name: "ELF3 功能开发"
+  short_description: "规划并实现可移植的 ELF3 功能、状态、动作与完整交互"
+  default_prompt: "Use $elf3-feature-development to plan and implement an ELF3 feature, state, or action as one portable Mod."

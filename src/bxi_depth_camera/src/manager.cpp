@@ -21,6 +21,9 @@ const std::map<std::string, rclcpp::ParameterValue> &config_defaults()
         { "enable_infra2", rclcpp::ParameterValue(false) },
         { "enable_gyro", rclcpp::ParameterValue(false) },
         { "enable_accel", rclcpp::ParameterValue(false) },
+        { "enable_sync", rclcpp::ParameterValue(false) },
+        { "enable_rgbd", rclcpp::ParameterValue(false) },
+        { "imu_sync_method", rclcpp::ParameterValue("NONE") },
         { "align_depth.enable", rclcpp::ParameterValue(false) },
         { "pointcloud.enable", rclcpp::ParameterValue(false) },
         { "pointcloud.ordered_pc", rclcpp::ParameterValue(false) },
@@ -29,9 +32,33 @@ const std::map<std::string, rclcpp::ParameterValue> &config_defaults()
         { "depth_module.depth_profile", rclcpp::ParameterValue("0,0,0") },
         { "depth_module.rectification.enable", rclcpp::ParameterValue(false) },
         { "rgb_camera.color_profile", rclcpp::ParameterValue("0,0,0") },
-        { "rgb_camera.rectification.enable", rclcpp::ParameterValue(true) },
+        { "rgb_camera.rectification.enable", rclcpp::ParameterValue(false) },
         { "infra1.rectification.enable", rclcpp::ParameterValue(false) },
         { "infra2.rectification.enable", rclcpp::ParameterValue(false) },
+        { "depth_qos", rclcpp::ParameterValue("SYSTEM_DEFAULT") },
+        { "depth_info_qos", rclcpp::ParameterValue("DEFAULT") },
+        { "color_qos", rclcpp::ParameterValue("SYSTEM_DEFAULT") },
+        { "color_info_qos", rclcpp::ParameterValue("DEFAULT") },
+        { "infra1_qos", rclcpp::ParameterValue("SYSTEM_DEFAULT") },
+        { "infra1_info_qos", rclcpp::ParameterValue("DEFAULT") },
+        { "infra2_qos", rclcpp::ParameterValue("SYSTEM_DEFAULT") },
+        { "infra2_info_qos", rclcpp::ParameterValue("DEFAULT") },
+        { "gyro_qos", rclcpp::ParameterValue("SENSOR_DATA") },
+        { "accel_qos", rclcpp::ParameterValue("SENSOR_DATA") },
+        { "pointcloud.pointcloud_qos", rclcpp::ParameterValue("DEFAULT") },
+        { "rgbd_qos", rclcpp::ParameterValue("SYSTEM_DEFAULT") },
+        { "linear_accel_cov", rclcpp::ParameterValue(0.01) },
+        { "angular_velocity_cov", rclcpp::ParameterValue(0.01) },
+        { "rgb_camera.enable_auto_exposure", rclcpp::ParameterValue(true) },
+        { "rgb_camera.exposure", rclcpp::ParameterValue(-1.0) },
+        { "rgb_camera.gain", rclcpp::ParameterValue(-1.0) },
+        { "depth_module.enable_auto_exposure", rclcpp::ParameterValue(true) },
+        { "depth_module.exposure", rclcpp::ParameterValue(-1.0) },
+        { "depth_module.gain", rclcpp::ParameterValue(-1.0) },
+        { "auto_exposure_roi.left", rclcpp::ParameterValue(-1) },
+        { "auto_exposure_roi.top", rclcpp::ParameterValue(-1) },
+        { "auto_exposure_roi.right", rclcpp::ParameterValue(-1) },
+        { "auto_exposure_roi.bottom", rclcpp::ParameterValue(-1) },
         { "decimation_filter.enable", rclcpp::ParameterValue(false) },
         { "decimation_filter.filter_magnitude", rclcpp::ParameterValue(1) },
         { "spatial_filter.enable", rclcpp::ParameterValue(true) },
@@ -46,6 +73,9 @@ const std::map<std::string, rclcpp::ParameterValue> &config_defaults()
         { "hole_filling_filter.holes_fill", rclcpp::ParameterValue(1) },
         { "second_hole_filling_filter.enable", rclcpp::ParameterValue(true) },
         { "second_hole_filling_filter.holes_fill", rclcpp::ParameterValue(2) },
+        { "threshold_filter.enable", rclcpp::ParameterValue(false) },
+        { "threshold_filter.min_distance", rclcpp::ParameterValue(-1.0) },
+        { "threshold_filter.max_distance", rclcpp::ParameterValue(-1.0) },
         { "orbbec.enable_sdk_filters", rclcpp::ParameterValue(true) },
         { "orbbec.fallback_hfov", rclcpp::ParameterValue(90.0) },
         { "orbbec.fallback_vfov", rclcpp::ParameterValue(65.0) },
@@ -235,6 +265,9 @@ CameraConfig CameraManager::read_config(const std::string &logical_name,
     config.enable_infra2 = boolean(value("enable_infra2"));
     config.enable_gyro = boolean(value("enable_gyro"));
     config.enable_accel = boolean(value("enable_accel"));
+    config.enable_sync = boolean(value("enable_sync"));
+    config.enable_rgbd = boolean(value("enable_rgbd"));
+    config.imu_sync_method = text(value("imu_sync_method"));
     config.align_depth = boolean(value("align_depth.enable"));
     config.pointcloud_enabled = boolean(value("pointcloud.enable"));
     config.pointcloud_ordered = boolean(value("pointcloud.ordered_pc"));
@@ -245,6 +278,36 @@ CameraConfig CameraManager::read_config(const std::string &logical_name,
     config.rectify_color = boolean(value("rgb_camera.rectification.enable"));
     config.rectify_infra1 = boolean(value("infra1.rectification.enable"));
     config.rectify_infra2 = boolean(value("infra2.rectification.enable"));
+    config.depth_qos = text(value("depth_qos"));
+    config.depth_info_qos = text(value("depth_info_qos"));
+    config.color_qos = text(value("color_qos"));
+    config.color_info_qos = text(value("color_info_qos"));
+    config.infra1_qos = text(value("infra1_qos"));
+    config.infra1_info_qos = text(value("infra1_info_qos"));
+    config.infra2_qos = text(value("infra2_qos"));
+    config.infra2_info_qos = text(value("infra2_info_qos"));
+    config.gyro_qos = text(value("gyro_qos"));
+    config.accel_qos = text(value("accel_qos"));
+    config.pointcloud_qos = text(value("pointcloud.pointcloud_qos"));
+    config.rgbd_qos = text(value("rgbd_qos"));
+    config.linear_accel_cov = number(value("linear_accel_cov"));
+    config.angular_velocity_cov = number(value("angular_velocity_cov"));
+    config.color_enable_auto_exposure =
+        boolean(value("rgb_camera.enable_auto_exposure"));
+    config.color_exposure = number(value("rgb_camera.exposure"));
+    config.color_gain = number(value("rgb_camera.gain"));
+    config.depth_enable_auto_exposure =
+        boolean(value("depth_module.enable_auto_exposure"));
+    config.depth_exposure = number(value("depth_module.exposure"));
+    config.depth_gain = number(value("depth_module.gain"));
+    config.auto_exposure_roi_left =
+        bounded_integer(value("auto_exposure_roi.left"), -1, 32767);
+    config.auto_exposure_roi_top =
+        bounded_integer(value("auto_exposure_roi.top"), -1, 32767);
+    config.auto_exposure_roi_right =
+        bounded_integer(value("auto_exposure_roi.right"), -1, 32767);
+    config.auto_exposure_roi_bottom =
+        bounded_integer(value("auto_exposure_roi.bottom"), -1, 32767);
     config.device_timeout_sec = positive(value("device_timeout_sec"));
     config.decimation_enabled = boolean(value("decimation_filter.enable"));
     config.decimation_magnitude =
@@ -268,6 +331,9 @@ CameraConfig CameraManager::read_config(const std::string &logical_name,
         boolean(value("second_hole_filling_filter.enable"));
     config.second_hole_filling_mode =
         bounded_integer(value("second_hole_filling_filter.holes_fill"), 0, 2);
+    config.threshold_enabled = boolean(value("threshold_filter.enable"));
+    config.threshold_min_distance = number(value("threshold_filter.min_distance"));
+    config.threshold_max_distance = number(value("threshold_filter.max_distance"));
     config.orbbec_enable_sdk_filters =
         boolean(value("orbbec.enable_sdk_filters"));
     config.orbbec_fallback_hfov = number(value("orbbec.fallback_hfov"));
@@ -380,22 +446,28 @@ void CameraManager::update_single_camera_fallback(
     }
 }
 
-std::vector<DeviceDescriptor> CameraManager::discover()
+std::vector<DeviceDescriptor> CameraManager::discover(bool refresh_realsense,
+                                                      bool refresh_orbbec)
 {
-    std::vector<DeviceDescriptor> descriptors;
-    try {
-        auto values = discover_realsense();
-        descriptors.insert(descriptors.end(), values.begin(), values.end());
-    } catch (const std::exception &error) {
-        RCLCPP_WARN(get_logger(), "RealSense discovery failed: %s",
-                    error.what());
+    if (refresh_realsense) {
+        try {
+            realsense_devices_ = discover_realsense();
+        } catch (const std::exception &error) {
+            RCLCPP_WARN(get_logger(), "RealSense discovery failed: %s",
+                        error.what());
+        }
     }
-    try {
-        auto values = discover_orbbec();
-        descriptors.insert(descriptors.end(), values.begin(), values.end());
-    } catch (const std::exception &error) {
-        RCLCPP_WARN(get_logger(), "Orbbec discovery failed: %s", error.what());
+    if (refresh_orbbec) {
+        try {
+            orbbec_devices_ = discover_orbbec();
+        } catch (const std::exception &error) {
+            RCLCPP_WARN(get_logger(), "Orbbec discovery failed: %s",
+                        error.what());
+        }
     }
+    std::vector<DeviceDescriptor> descriptors = realsense_devices_;
+    descriptors.insert(descriptors.end(), orbbec_devices_.begin(),
+                       orbbec_devices_.end());
     const std::string selected_serial =
         strip_leading_underscores(get_parameter("serial_no").as_string());
     if (!selected_serial.empty()) {
@@ -414,6 +486,9 @@ std::vector<DeviceDescriptor> CameraManager::discover()
 void CameraManager::reconcile()
 {
     const auto now = std::chrono::steady_clock::now();
+    bool force_discovery = !initial_discovery_complete_;
+    bool refresh_realsense = !initial_discovery_complete_;
+    bool refresh_orbbec = !initial_discovery_complete_;
     if (!pending_restarts_.empty()) {
         std::vector<std::string> removals;
         for (const auto &entry : workers_) {
@@ -428,15 +503,89 @@ void CameraManager::reconcile()
         }
         pending_restarts_.clear();
         next_discovery_ = std::chrono::steady_clock::time_point::min();
+        force_discovery = true;
     }
-    if (now < next_discovery_) {
+
+    // SDK callbacks only increment atomic generations. This timer consumes the
+    // event outside vendor callback threads, where stopping and starting ROS
+    // publishers is safe. Merely checking generations performs no USB query.
+    std::uint64_t realsense_generation = last_realsense_generation_;
+    std::uint64_t orbbec_generation = last_orbbec_generation_;
+    try {
+        realsense_generation = realsense_device_generation();
+        if (initial_discovery_complete_ &&
+            realsense_generation != last_realsense_generation_) {
+            force_discovery = true;
+            refresh_realsense = true;
+        }
+    } catch (const std::exception &error) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 30000,
+                             "RealSense device-event setup failed: %s",
+                             error.what());
+    }
+    try {
+        orbbec_generation = orbbec_device_generation();
+        if (initial_discovery_complete_ &&
+            orbbec_generation != last_orbbec_generation_) {
+            force_discovery = true;
+            refresh_orbbec = true;
+        }
+    } catch (const std::exception &error) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 30000,
+                             "Orbbec device-event setup failed: %s",
+                             error.what());
+    }
+
+    // Stream freshness is a backend-neutral safety net for a missed vendor
+    // disconnect event. It is not the normal discovery mechanism.
+    std::vector<std::string> stale_workers;
+    for (const auto &entry : workers_) {
+        if (entry.second->stale(now)) {
+            stale_workers.push_back(entry.first);
+            if (entry.second->descriptor().backend == "realsense") {
+                refresh_realsense = true;
+            } else if (entry.second->descriptor().backend == "orbbec") {
+                refresh_orbbec = true;
+            }
+        }
+    }
+    for (const auto &key : stale_workers) {
+        remove_camera(key, "stream timed out");
+        failures_[key] =
+            Failure{ now + std::chrono::duration_cast<
+                                std::chrono::steady_clock::duration>(
+                                std::chrono::duration<double>(positive(
+                                    get_parameter("retry_interval_sec")))),
+                     {}, {} };
+    }
+    if (!stale_workers.empty()) {
+        next_discovery_ = std::chrono::steady_clock::time_point::min();
+        force_discovery = true;
+    }
+
+    // A device that was found but failed to start needs a timed retry. Outside
+    // that failure path, healthy runtime discovery is strictly event-driven.
+    const bool retry_due = std::any_of(
+        failures_.begin(), failures_.end(), [&now](const auto &entry) {
+            return now >= entry.second.retry_at;
+        });
+    const bool absence_retry = !force_discovery && failures_.empty() &&
+                               workers_.empty() && now >= next_discovery_;
+    if (absence_retry) {
+        refresh_realsense = true;
+        refresh_orbbec = true;
+    }
+    if (!force_discovery && !retry_due && !absence_retry) {
         return;
     }
     next_discovery_ =
         now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                   std::chrono::duration<double>(
                       positive(get_parameter("discovery_interval_sec"))));
-    const auto descriptors = discover();
+    const auto descriptors = discover(refresh_realsense, refresh_orbbec);
+    initial_discovery_complete_ = true;
+    last_realsense_generation_ = realsense_generation;
+    last_orbbec_generation_ = orbbec_generation;
     std::map<std::string, DeviceDescriptor> discovered;
     std::map<std::string, std::string> topic_owners;
     for (const auto &descriptor : descriptors) {
