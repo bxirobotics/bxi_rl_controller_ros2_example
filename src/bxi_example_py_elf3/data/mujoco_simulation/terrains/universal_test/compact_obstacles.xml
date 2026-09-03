@@ -1,0 +1,28 @@
+<mujocoinclude>
+  <worldbody>
+    <!-- Keep the first 4 m around spawn clear. Obstacles are aligned along +X. -->
+    <site name="ut_compact_start" type="box" pos="3.2 0 0.006" size="0.18 0.9 0.006" rgba="0.1 0.8 0.25 0.55"/>
+
+    <!-- Low civil stair: 3 steps, 10 cm rise, 28 cm tread. -->
+    <geom name="ut_compact_low_stair_1" type="box" pos="4.80 0 0.050" size="0.14 0.60 0.050" material="ut_concrete" friction="1.05 0.01 0.001"/>
+    <geom name="ut_compact_low_stair_2" type="box" pos="5.08 0 0.100" size="0.14 0.60 0.100" material="ut_concrete" friction="1.05 0.01 0.001"/>
+    <geom name="ut_compact_low_stair_3" type="box" pos="5.36 0 0.150" size="0.14 0.60 0.150" material="ut_concrete" friction="1.05 0.01 0.001"/>
+    <geom name="ut_compact_low_landing" type="box" pos="5.86 0 0.150" size="0.36 0.60 0.150" material="ut_concrete" friction="1.05 0.01 0.001"/>
+    <geom name="ut_compact_low_stair_down_1" type="box" pos="6.36 0 0.100" size="0.14 0.60 0.100" material="ut_concrete" friction="1.05 0.01 0.001"/>
+    <geom name="ut_compact_low_stair_down_2" type="box" pos="6.64 0 0.050" size="0.14 0.60 0.050" material="ut_concrete" friction="1.05 0.01 0.001"/>
+
+    <!-- Shorter-width higher stair for a harder but still compact test. -->
+    <geom name="ut_compact_high_stair_1" type="box" pos="8.00 0 0.075" size="0.14 0.50 0.075" material="ut_metal" friction="1.20 0.015 0.001"/>
+    <geom name="ut_compact_high_stair_2" type="box" pos="8.30 0 0.150" size="0.15 0.50 0.150" material="ut_metal" friction="1.20 0.015 0.001"/>
+    <geom name="ut_compact_high_landing" type="box" pos="8.85 0 0.150" size="0.40 0.50 0.150" material="ut_metal" friction="1.20 0.015 0.001"/>
+    <geom name="ut_compact_high_stair_down_1" type="box" pos="9.40 0 0.075" size="0.15 0.50 0.075" material="ut_metal" friction="1.20 0.015 0.001"/>
+
+    <!-- Raised banks create a real negative obstacle above the infinite ground plane. -->
+    <geom name="ut_compact_trench_entry_bank" type="box" pos="11.10 0 0.125" size="0.75 0.70 0.125" material="ut_asphalt" friction="0.95 0.01 0.001"/>
+    <geom name="ut_compact_trench_exit_bank" type="box" pos="12.15 0 0.125" size="0.75 0.70 0.125" material="ut_asphalt" friction="0.95 0.01 0.001"/>
+    <geom name="ut_compact_trench_bottom_marker" type="box" pos="11.625 0 0.006" size="0.225 0.70 0.006" material="ut_crack" contype="0" conaffinity="0"/>
+    <site name="ut_compact_trench_gap" type="box" pos="11.625 0 0.135" size="0.225 0.68 0.012" rgba="1 0.08 0.04 0.30"/>
+
+    <site name="ut_compact_finish" type="box" pos="13.2 0 0.006" size="0.18 0.9 0.006" rgba="0.1 0.35 1.0 0.55"/>
+  </worldbody>
+</mujocoinclude>

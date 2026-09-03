@@ -7,8 +7,10 @@ inputs:
 
 sources:
   # CRSF 接收机。只有持续收到 CRC 正确的 RC 通道帧才会参与候选选择。
-  # 连续 Xbox 输入和 CH8/CH9 离散编码按键组均在下方 signals 中明确映射。业务动作仍由
-  # controls/outputs 统一定义，因此可以复用手柄的全部组合键行为。
+  # 高频头转接器 usb_f2 使用 ELRS Hybrid/Wide 低延迟自定义协议：
+  # CH1..CH4 的 40 bit 每包同时携带四轴、15 个 HID 按钮、Consumer 键和十字帽；
+  # CH6/CH7 携带 LT/RT。数字状态整包原子更新，任意组合不会被轮询拆散。
+  # driver 解码后输出 crsf.xbox.* 原始信号，业务动作仍由 controls/outputs 统一定义。
   crsf:
     type: crsf
     device: /dev/ttyCRSF
@@ -18,14 +20,48 @@ sources:
     loss_timeout_ms: 300
     cooldown_ms: 1000
     signals:
-      crsf.left_x:        {from: crsf.channel.1}  # CH1
-      crsf.left_y:        {from: crsf.channel.2}  # CH2, control 中反向
-      crsf.trigger_right: {from: crsf.channel.3}  # CH3 / RT
-      crsf.right_x:       {from: crsf.channel.4}  # CH4
-      crsf.right_y:       {from: crsf.channel.6}  # CH6, 使用时反向
-      crsf.trigger_left:  {from: crsf.channel.7}  # CH7 / LT
-      crsf.button_group_a: {from: crsf.channel.8} # A/B/X/Y/LStick/RStick 编码组
-      crsf.button_group_b: {from: crsf.channel.9} # LB/RB/Back/Start/D-pad 编码组
+      # 与下方 Xbox gamepad 配置逐项对应：js.axis.3 是 HID Rz（右摇杆 Y），
+      # js.axis.0 是 HID X（左摇杆 X），js.axis.6 是 Hat X（十字键左右）。
+      crsf.left_y:        {from: crsf.xbox.right_y}
+      crsf.left_x:        {from: crsf.xbox.left_x}
+      crsf.yaw:           {from: crsf.xbox.hat_x}
+      crsf.right_x:       {from: crsf.xbox.right_x}
+      crsf.right_y:       {from: crsf.xbox.right_y}
+      crsf.trigger_left:  {from: crsf.xbox.trigger_left}
+      crsf.trigger_right: {from: crsf.xbox.trigger_right}
+      crsf.a:             {from: crsf.xbox.button.a}
+      crsf.b:             {from: crsf.xbox.button.b}
+      crsf.x:             {from: crsf.xbox.button.x}
+      crsf.y:             {from: crsf.xbox.button.y}
+      crsf.lb:            {from: crsf.xbox.button.lb}
+      crsf.rb:            {from: crsf.xbox.button.rb}
+      crsf.back:          {from: crsf.xbox.button.back}
+      crsf.start:         {from: crsf.xbox.button.start}
+      crsf.lstick:        {from: crsf.xbox.button.lstick}
+      crsf.rstick:        {from: crsf.xbox.button.rstick}
+      crsf.dpad_up:       {from: crsf.xbox.button.dpad_up}
+      crsf.dpad_down:     {from: crsf.xbox.button.dpad_down}
+      crsf.dpad_left:     {from: crsf.xbox.button.dpad_left}
+      crsf.dpad_right:    {from: crsf.xbox.button.dpad_right}
+      crsf.hat:           {from: crsf.xbox.hat}
+      crsf.hat_x:         {from: crsf.xbox.hat_x}
+      crsf.hat_y:         {from: crsf.xbox.hat_y}
+      crsf.button.0:      {from: crsf.xbox.button.0}
+      crsf.button.1:      {from: crsf.xbox.button.1}
+      crsf.button.2:      {from: crsf.xbox.button.2}
+      crsf.button.3:      {from: crsf.xbox.button.3}
+      crsf.button.4:      {from: crsf.xbox.button.4}
+      crsf.button.5:      {from: crsf.xbox.button.5}
+      crsf.button.6:      {from: crsf.xbox.button.6}
+      crsf.button.7:      {from: crsf.xbox.button.7}
+      crsf.button.8:      {from: crsf.xbox.button.8}
+      crsf.button.9:      {from: crsf.xbox.button.9}
+      crsf.button.10:     {from: crsf.xbox.button.10}
+      crsf.button.11:     {from: crsf.xbox.button.11}
+      crsf.button.12:     {from: crsf.xbox.button.12}
+      crsf.button.13:     {from: crsf.xbox.button.13}
+      crsf.button.14:     {from: crsf.xbox.button.14}
+      crsf.consumer:      {from: crsf.xbox.button.15}
 
   # 手柄按键配置。
   # 这里的 A/B/X/Y 是框架统一使用的 Xbox 逻辑名称；使用 PS4 手柄时分别对应
@@ -54,9 +90,9 @@ sources:
       # gamepad.y: {from: js.button.3}           # △（框架逻辑名 Y）
 
       # Xbox / BattleDragon
-      gamepad.left_y: {from: js.axis.3}          # 左摇杆上下：前进/后退
+      gamepad.left_y: {from: js.axis.3}          # 右摇杆上下：前进/后退（逻辑名沿用 left_y）
       gamepad.left_x: {from: js.axis.0}          # 左摇杆左右：左移/右移
-      gamepad.yaw: {from: js.axis.6}             # 右摇杆左右：原地转向
+      gamepad.yaw: {from: js.axis.6}             # 十字键左右：原地转向
       gamepad.trigger_left: {from: js.axis.5}    # LT
       gamepad.trigger_right: {from: js.axis.4}   # RT
       gamepad.stop: {from: js.button.11}         # Back/View：停止机器人程序
@@ -115,8 +151,7 @@ controls:
       - source: gamepad.left_y
         direction: -1
         curve: stick
-      # 使用 CRSF CH5（右摇杆 Y）；反向后与手柄前后方向一致。
-      - source: crsf.right_y
+      - source: crsf.left_y
         direction: -1
         curve: stick
       - source: keyboard.vx
@@ -149,24 +184,11 @@ controls:
       - source: gamepad.yaw
         direction: -1
         curve: stick
+      - source: crsf.yaw
+        direction: -1
+        curve: stick
       - source: keyboard.yaw
     deadzone: 0.03
-    min: -1.0
-    max: 1.0
-    alpha: 0.05
-
-  # CRSF yaw 直接依据已解码的 CH8 enum；raw 区间之间是否连续不再重要。
-  # 未设置 alpha，默认立即输出；D-pad 左为 +1，右为 -1。
-  crsf.yaw:
-    type: analog
-    mix: sum
-    inputs:
-      - name: dpad_left
-        when: [crsf.button_group_b=dpad_left]
-        value: 1.0
-      - name: dpad_right
-        when: [crsf.button_group_b=dpad_right]
-        value: -1.0
     min: -1.0
     max: 1.0
     alpha: 0.05
@@ -181,65 +203,17 @@ controls:
   gamepad.x_event: {type: bool, inputs: [{source: gamepad.x}]}
   gamepad.y_event: {type: bool, inputs: [{source: gamepad.y}]}
 
-  # CH8 离散值：200/400/600/800 分别对应 A/B/X/Y；
-  # 1180/1380 分别对应 LStick/RStick，992 是空闲。
-  # 区间边界是相邻发送值的中点。
-  crsf.button_group_a:
-    type: enum
-    default: idle
-    hysteresis: 0.03
-    inputs: [{source: crsf.button_group_a}]
-    positions:
-      a: [-1.0, -0.846]
-      b: [-0.845, -0.602]
-      x: [-0.601, -0.358]
-      y: [-0.357, -0.118]
-      idle: [-0.117, 0.114]
-      lstick: [0.115, 0.351]
-      rstick: [0.352, 1.0]
-
-  # CH9 离散值：200/400/600/800 分别对应 LB/RB/Back/Start；
-  # 1180/1380/1580/1780 分别对应 D-pad Up/Down/Left/Right，992 是空闲。
-  crsf.button_group_b:
-    type: enum
-    default: idle
-    hysteresis: 0.03
-    inputs: [{source: crsf.button_group_b}]
-    positions:
-      lb: [-1.0, -0.846]
-      rb: [-0.845, -0.602]
-      back: [-0.601, -0.358]
-      start: [-0.357, -0.118]
-      idle: [-0.117, 0.114]
-      dpad_up: [0.115, 0.351]
-      dpad_down: [0.352, 0.596]
-      dpad_left: [0.597, 0.841]
-      dpad_right: [0.842, 1.0]
-
-  crsf.stop_event:
-    type: bool
-    inputs: [{when: [crsf.button_group_b=start], value: true}]
-  crsf.start_event:
-    type: bool
-    inputs: [{when: [crsf.button_group_a=rstick], value: true}]
-  crsf.lb_event:
-    type: bool
-    inputs: [{when: [crsf.button_group_b=lb], value: true}]
-  crsf.rb_event:
-    type: bool
-    inputs: [{when: [crsf.button_group_b=rb], value: true}]
-  crsf.a_event:
-    type: bool
-    inputs: [{when: [crsf.button_group_a=a], value: true}]
-  crsf.b_event:
-    type: bool
-    inputs: [{when: [crsf.button_group_a=b], value: true}]
-  crsf.x_event:
-    type: bool
-    inputs: [{when: [crsf.button_group_a=x], value: true}]
-  crsf.y_event:
-    type: bool
-    inputs: [{when: [crsf.button_group_a=y], value: true}]
+  # CRSF 与 gamepad 使用相同的物理键和相同业务含义。
+  crsf.stop_event: {type: bool, inputs: [{source: crsf.back}]}
+  crsf.start_event: {type: bool, inputs: [{source: crsf.start}]}
+  crsf.lb_event: {type: bool, inputs: [{source: crsf.lb}]}
+  crsf.rb_event: {type: bool, inputs: [{source: crsf.rb}]}
+  crsf.a_event: {type: bool, inputs: [{source: crsf.a}]}
+  crsf.b_event: {type: bool, inputs: [{source: crsf.b}]}
+  crsf.x_event: {type: bool, inputs: [{source: crsf.x}]}
+  crsf.y_event: {type: bool, inputs: [{source: crsf.y}]}
+  crsf.dpad_left_event: {type: bool, inputs: [{source: crsf.dpad_left}]}
+  crsf.dpad_right_event: {type: bool, inputs: [{source: crsf.dpad_right}]}
 
   system.stop_event:
     type: bool
@@ -278,12 +252,12 @@ controls:
     inputs: [{source: gamepad.trigger_right}]
   crsf.trigger.left_event:
     type: bool
-    threshold: 0.5
+    threshold: 0.85
     hysteresis: 0.05
     inputs: [{source: crsf.trigger_left}]
   crsf.trigger.right_event:
     type: bool
-    threshold: 0.5
+    threshold: 0.85
     hysteresis: 0.05
     inputs: [{source: crsf.trigger_right}]
   trigger.left_event:
@@ -316,16 +290,16 @@ outputs:
     vx: move.vx
     vy: move.vy
     yaw:
-      controls: [move.yaw, crsf.yaw]
+      controls: [move.yaw]
       mix: max_abs
 
   #上升沿触发，满足条件会输出目标值随后恢复为0
   edge:
     # system.<name> 代表触发下面的特定命令。
-    # Xbox Back/View（CRSF Start）：停止机器人程序。
+    # Xbox Back/View：停止机器人程序（gamepad 与 CRSF 一致）。
     - output: system.stop
       when: [system.stop_event]
-    # Xbox Start/Menu（CRSF RStick）：启动机器人程序。
+    # Xbox Start/Menu：启动机器人程序（gamepad 与 CRSF 一致）。
     - output: system.start
       when: [system.start_event]
 
@@ -947,13 +921,19 @@ system:
     - "ros2 launch bxi_example_bms bms.launch.py > /var/log/bxi_log/bms_$(date +%Y-%m-%d_%H-%M-%S)_bms.log 2>&1 &"
     - "su bxi -c \"cd /home/bxi/bxi_ws/bxi_voice && ./bin/bxi-voice\" 2>&1 &"
   stop:
-    - "killall -SIGINT hardware_elf3"
-    - "killall -SIGINT bxi_example_py_elf3"
-    - "killall -SIGINT bxi_example_py_elf3_demo"
-    - "pkill -SIGINT -f '[/]bxi_depth_camera/cameras|[b]xi_depth_camera\\.manager'"
-    - "killall -SIGINT bxi_bms"
-    - "killall -SIGINT bxi_example_bms"
-    - "killall -SIGINT bxi-voice"
+    # Stop the launch parents by full command line.  Killing only node
+    # executable names can leave "ros2 launch ... example_demo_hw.launch.py"
+    # alive; that parent keeps /tmp/bxi_example_hw.lock held and blocks the
+    # next start.
+    - "pkill -SIGINT -f '[r]os2 launch bxi_example_py_elf3 .*demo_hw.*\\.py|[h]ardware_elf3|[b]xi_example_py_elf3_demo|[/]bxi_depth_camera/cameras|[b]xi_depth_camera\\.manager' || true"
+    - "pkill -SIGINT -f '[r]os2 launch bxi_example_bms bms\\.launch\\.py|[/]bxi_bms|[/]bxi_example_bms' || true"
+    - "pkill -SIGINT -f '[b]xi-voice' || true"
+    - "sleep 2"
+    - "pkill -SIGTERM -f '[r]os2 launch bxi_example_py_elf3 .*demo_hw.*\\.py|[h]ardware_elf3|[b]xi_example_py_elf3_demo|[/]bxi_depth_camera/cameras|[b]xi_depth_camera\\.manager' || true"
+    - "sleep 1"
+    - "pkill -SIGKILL -f '[r]os2 launch bxi_example_py_elf3 .*demo_hw.*\\.py|[h]ardware_elf3|[b]xi_example_py_elf3_demo|[/]bxi_depth_camera/cameras|[b]xi_depth_camera\\.manager' || true"
+    - "pkill -SIGKILL -f '[r]os2 launch bxi_example_bms bms\\.launch\\.py|[/]bxi_bms|[/]bxi_example_bms' || true"
+    - "pkill -SIGKILL -f '[b]xi-voice' || true"
 
 #互斥定义，只能acquire一次，但是可以release多次
 system_mutexes:

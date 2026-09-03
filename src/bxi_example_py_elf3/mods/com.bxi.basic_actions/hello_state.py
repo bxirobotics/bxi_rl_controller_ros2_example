@@ -161,13 +161,13 @@ class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
             ctx.request_state("com.bxi.basic_actions/zero_torque", trigger="safety")
             return
-        if self.shaketime >= self.HELLO_DURATION_FRAMES:
-            ctx.request_state(
-                "com.bxi.basic_actions/normal",
-                trigger="hello_finished",
-                transition={"profile": "dual_running_blend", "duration": 0.6},
-            )
-            return
+        # if self.shaketime >= self.HELLO_DURATION_FRAMES:
+        #     ctx.request_state(
+        #         "com.bxi.basic_actions/normal",
+        #         trigger="hello_finished",
+        #         transition={"profile": "dual_running_blend", "duration": 0.6},
+        #     )
+        #     return
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
 
     def on_action(self, ctx: RobotControlContext, action_name: str) -> bool:

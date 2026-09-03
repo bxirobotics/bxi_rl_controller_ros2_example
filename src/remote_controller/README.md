@@ -59,8 +59,13 @@ ros2 launch remote_controller remote_controller.launch.py DEBUG:=true
 
 新驱动通常继承 `InputDriverBase`（或直接实现 `InputDriver`），并用 `register_input_driver_factory("类型名", factory)` 注册。`InputDriverBase::set_signal()` 已处理与 mapper 的同步。`is_available()` 必须非阻塞；驱动可按自身协议定义可用性。对 CRSF，建议仅在设备打开且近期收到校验通过的完整通道帧时返回可用。`is_ready()` 只有在已收到驱动认为足够安全的完整状态快照时才返回 `true`。
 
-`crsf` 已是内置 driver。它把 CRC 正确的完整 RC 帧输出为 16 个 raw channel，
-业务映射保留在 YAML。默认配置已经包含完整的 `crsf` 候选项；最小配置如下：
+`crsf` 已是内置 driver。它兼容标准 CRC 正确的 CRSF `0x16` 通道帧地址 `0xC8` 和
+高频头转接器 `usb_f2` 使用的 `0xEE`。driver 会继续暴露 `crsf.channel.1` 到
+`crsf.channel.16` 作为调试/兼容 raw channel，同时按 `usb_f2` 的 ELRS Hybrid/Wide
+低延迟协议从 CH1..CH4 的 10-bit 字里还原 Xbox 摇杆和 14 个按钮，输出
+`crsf.xbox.*` 原始信号。
+
+默认配置已经包含完整的 `crsf` 候选项；最小配置如下：
 
 ```yaml
 sources:
@@ -73,28 +78,37 @@ sources:
     cooldown_ms: 1000
     baud_rate: 460800
     signals:
-      crsf.left_x:       {from: crsf.channel.1}   # CH1 / Xbox 左摇杆 X
-      crsf.left_y:       {from: crsf.channel.2}   # CH2 / Xbox 左摇杆 Y
-      crsf.trigger_right: {from: crsf.channel.3}  # CH3 / RT
-      crsf.right_x:      {from: crsf.channel.4}   # CH4 / Xbox 右摇杆 X
-      crsf.right_y:      {from: crsf.channel.5}   # CH5 / Xbox 右摇杆 Y
-      crsf.trigger_left: {from: crsf.channel.6}   # CH6 / LT
-      crsf.button_group_a: {from: crsf.channel.7} # A/B/X/Y 编码组
-      crsf.button_group_b: {from: crsf.channel.8} # LB/RB/Back/Start/D-pad 编码组
+      crsf.left_x:        {from: crsf.xbox.left_x}
+      crsf.left_y:        {from: crsf.xbox.left_y}
+      crsf.right_x:       {from: crsf.xbox.right_x}
+      crsf.right_y:       {from: crsf.xbox.right_y}
+      crsf.trigger_left:  {from: crsf.xbox.trigger_left}
+      crsf.trigger_right: {from: crsf.xbox.trigger_right}
+      crsf.a:             {from: crsf.xbox.button.a}
+      crsf.b:             {from: crsf.xbox.button.b}
+      crsf.x:             {from: crsf.xbox.button.x}
+      crsf.y:             {from: crsf.xbox.button.y}
+      crsf.lb:            {from: crsf.xbox.button.lb}
+      crsf.rb:            {from: crsf.xbox.button.rb}
+      crsf.back:          {from: crsf.xbox.button.back}
+      crsf.start:         {from: crsf.xbox.button.start}
+      crsf.dpad_left:     {from: crsf.xbox.button.dpad_left}
+      crsf.dpad_right:    {from: crsf.xbox.button.dpad_right}
 ```
 
-`xbox_default.yaml` 把 CH1..CH8 映射为虚拟 Xbox 输入：
+`usb_f2` 协议约定：
 
-- CH1/CH2：左摇杆 X/Y（Y 在 `move.vx` 中反向）
-- CH3/CH6：RT/LT；CH4/CH5：右摇杆 X/Y（Y 留给未来的相机或辅助控制）
-- CH7：按键组 A，`200/400/600/800` 分别表示 A/B/X/Y，`992` 为空闲
-- CH8：按键组 B，`200/400/600/800` 分别表示 LB/RB/Back/Start；
-  `1180/1380/1580/1780` 分别表示十字键上/下/左/右，`992` 为空闲
+- CH1：左摇杆 X 7 bit + A/B/X 3 bit；
+- CH2：左摇杆 Y 7 bit + Y/LB/RB 3 bit；
+- CH3：右摇杆 X 6 bit + Back/Start/LStick/RStick 4 bit；
+- CH4：右摇杆 Y 6 bit + D-pad Up/Down/Left/Right 4 bit；
+- CH5：固定 low，避免 ELRS arm；
+- CH6/CH7：LT/RT。
 
-按键组中的 A/B/X/Y/LB/RB/Start/Back 会复用手柄已有的组合键和系统 start/stop 逻辑。CH8 的
-左、右十字键通过 enum 条件规则映射为 CRSF yaw 的 `+1/-1`；上、下仍以
-`crsf.button_group_b=dpad_up` 等 enum 暴露，可按需绑定。`crsf.channel.1` 到 `crsf.channel.16` 默认按旧接收机范围
-`174..1811` 归一化至 `[-1, 1]`。未激活时
+按钮按位同时传输，所以 A/B/X/Y/LB/RB/Start/Back 等组合键不会再被 CH8/CH9 的单一离散值互斥掉。
+默认配置中 Start 对应 stop，RStick 对应 start；D-pad 左/右也映射为 CRSF yaw 的 `+1/-1`。
+`crsf.channel.1` 到 `crsf.channel.16` 默认按接收机范围 `172..1811` 归一化至 `[-1, 1]`。
+未激活时
 driver 做非阻塞协议 probe，只有近期收到 CRC 正确帧才会参与抢占；激活后停止收到有效帧
 超过 `loss_timeout_ms` 就会断连。尚未编译的其他 `type` 不会导致节点启动失败：节点会记录
 warning、忽略该候选项，并自动使用下一个可用设备；没有任何可用设备时保持安全停止。

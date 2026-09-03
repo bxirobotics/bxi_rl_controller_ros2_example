@@ -25,9 +25,33 @@ namespace remote_controller {
 namespace {
 
 constexpr int kDefaultBaudRate = 460800;
-constexpr int kDefaultChannelMin = 174;
+constexpr int kDefaultChannelMin = 172;
 constexpr int kDefaultChannelMax = 1811;
+constexpr int kElrsHybridWideChannelMin = 172;
+constexpr int kElrsHybridWideChannelMax = 1811;
 constexpr std::chrono::milliseconds kRetryInterval(100);
+
+struct XboxElrsState {
+    std::uint16_t buttons = 0;
+    std::uint8_t hat = 0;
+    std::uint8_t left_x = 0;
+    std::uint8_t left_y = 0;
+    std::uint8_t right_x = 0;
+    std::uint8_t right_y = 0;
+};
+
+enum XboxElrsButton : std::uint16_t {
+    kXboxElrsButtonA = 1u << 0,
+    kXboxElrsButtonB = 1u << 1,
+    kXboxElrsButtonX = 1u << 3,
+    kXboxElrsButtonY = 1u << 4,
+    kXboxElrsButtonLb = 1u << 6,
+    kXboxElrsButtonRb = 1u << 7,
+    kXboxElrsButtonRStick = 1u << 10,
+    kXboxElrsButtonBack = 1u << 11,
+    kXboxElrsButtonLStick = 1u << 13,
+    kXboxElrsButtonStart = 1u << 14,
+};
 
 speed_t baud_to_termios_speed(int baud_rate)
 {
@@ -84,6 +108,87 @@ std::int64_t steady_now_ns()
 {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+std::uint16_t crsf_to_elrs_uint10(std::uint16_t value)
+{
+    if (value < kElrsHybridWideChannelMin) {
+        value = kElrsHybridWideChannelMin;
+    } else if (value > kElrsHybridWideChannelMax) {
+        value = kElrsHybridWideChannelMax;
+    }
+
+    const std::int32_t result =
+        (((static_cast<std::int32_t>(value) - kElrsHybridWideChannelMin) *
+          1023 * 2 / (kElrsHybridWideChannelMax - kElrsHybridWideChannelMin)) + 1) /
+        2;
+    return static_cast<std::uint16_t>(result);
+}
+
+XboxElrsState decode_xbox_elrs_state(const CrsfFrameParser::Channels &channels)
+{
+    const std::uint16_t word0 = crsf_to_elrs_uint10(channels[0]);
+    const std::uint16_t word1 = crsf_to_elrs_uint10(channels[1]);
+    const std::uint16_t word2 = crsf_to_elrs_uint10(channels[2]);
+    const std::uint16_t word3 = crsf_to_elrs_uint10(channels[3]);
+
+    XboxElrsState state;
+    state.left_x = static_cast<std::uint8_t>(word0 & 0x1Fu);
+    state.left_y = static_cast<std::uint8_t>((word0 >> 5) & 0x1Fu);
+    state.right_x = static_cast<std::uint8_t>(word1 & 0x1Fu);
+    state.right_y = static_cast<std::uint8_t>((word1 >> 5) & 0x1Fu);
+    state.buttons = static_cast<std::uint16_t>(
+        word2 | ((word3 & 0x3Fu) << 10));
+    state.hat = static_cast<std::uint8_t>((word3 >> 6) & 0x0Fu);
+    return state;
+}
+
+double normalize_quantized_axis(std::uint8_t value, std::uint8_t max_value)
+{
+    const double center = static_cast<double>(max_value + 1u) * 0.5;
+    const double raw = static_cast<double>(value);
+    const double normalized = raw >= center
+        ? (raw - center) / (static_cast<double>(max_value) - center)
+        : (raw - center) / center;
+    return std::max(-1.0, std::min(1.0, normalized));
+}
+
+double button_value(std::uint16_t buttons, XboxElrsButton button)
+{
+    return (buttons & static_cast<std::uint16_t>(button)) != 0 ? 1.0 : 0.0;
+}
+
+double raw_button_value(std::uint16_t buttons, unsigned int bit)
+{
+    return (buttons & static_cast<std::uint16_t>(1u << bit)) != 0 ? 1.0 : 0.0;
+}
+
+double hat_direction_value(std::uint8_t hat, std::uint8_t first, std::uint8_t second,
+                           std::uint8_t third)
+{
+    return (hat == first || hat == second || hat == third) ? 1.0 : 0.0;
+}
+
+double hat_x_value(std::uint8_t hat)
+{
+    if (hat == 6 || hat == 7 || hat == 8) {
+        return -1.0;
+    }
+    if (hat == 2 || hat == 3 || hat == 4) {
+        return 1.0;
+    }
+    return 0.0;
+}
+
+double hat_y_value(std::uint8_t hat)
+{
+    if (hat == 8 || hat == 1 || hat == 2) {
+        return -1.0;
+    }
+    if (hat == 4 || hat == 5 || hat == 6) {
+        return 1.0;
+    }
+    return 0.0;
 }
 
 class CrsfInputDriver : public InputDriverBase {
@@ -154,11 +259,13 @@ public:
     void debug() const override
     {
         std::array<double, CrsfFrameParser::kChannelCount> channels{};
+        XboxElrsState xbox_state{};
         bool has_channels = false;
         {
             const std::lock_guard<std::mutex> guard(debug_lock_);
             has_channels = has_debug_channels_;
             channels = debug_channels_;
+            xbox_state = debug_xbox_state_;
         }
 
         if (!has_channels) {
@@ -171,6 +278,14 @@ public:
         for (std::size_t index = 0; index < channels.size(); ++index) {
             stream << " ch" << (index + 1) << '=' << channels[index];
         }
+        stream << " | xbox_elrs:"
+               << " lx=" << normalize_quantized_axis(xbox_state.left_x, 31)
+               << " ly=" << normalize_quantized_axis(xbox_state.left_y, 31)
+               << " rx=" << normalize_quantized_axis(xbox_state.right_x, 31)
+               << " ry=" << normalize_quantized_axis(xbox_state.right_y, 31)
+               << " buttons=0x" << std::hex << std::setw(4) << std::setfill('0')
+               << xbox_state.buttons << std::dec << std::setfill(' ')
+               << " hat=" << static_cast<unsigned int>(xbox_state.hat);
         log(stream.str());
     }
 
@@ -228,6 +343,7 @@ private:
     std::atomic<bool> ready_{false};
     std::atomic<std::int64_t> last_valid_frame_ns_{0};
     std::array<double, CrsfFrameParser::kChannelCount> debug_channels_{};
+    XboxElrsState debug_xbox_state_{};
     bool has_debug_channels_ = false;
 
     void record_valid_frame()
@@ -251,6 +367,7 @@ private:
     {
         const std::lock_guard<std::mutex> guard(debug_lock_);
         debug_channels_.fill(0.0);
+        debug_xbox_state_ = XboxElrsState();
         has_debug_channels_ = false;
     }
 
@@ -260,6 +377,7 @@ private:
         for (std::size_t index = 0; index < channels.size(); ++index) {
             debug_channels_[index] = normalize_channel(channels[index]);
         }
+        debug_xbox_state_ = decode_xbox_elrs_state(channels);
         has_debug_channels_ = true;
     }
 
@@ -421,15 +539,68 @@ private:
     {
         record_valid_frame();
         cache_debug_channels(channels);
+        const XboxElrsState xbox_state = decode_xbox_elrs_state(channels);
 
         std::vector<std::pair<std::string, double>> signals;
-        signals.reserve(CrsfFrameParser::kChannelCount);
+        signals.reserve(CrsfFrameParser::kChannelCount + 32);
         for (std::size_t index = 0; index < CrsfFrameParser::kChannelCount; ++index) {
             const std::string source = "crsf.channel." + std::to_string(index + 1);
             if (config_.raw_sources.count(source) == 0) {
                 continue;
             }
             signals.emplace_back(source, normalize_channel(channels[index]));
+        }
+        add_signal_if_used(signals, "crsf.xbox.left_x",
+                           normalize_quantized_axis(xbox_state.left_x, 31));
+        add_signal_if_used(signals, "crsf.xbox.left_y",
+                           normalize_quantized_axis(xbox_state.left_y, 31));
+        add_signal_if_used(signals, "crsf.xbox.right_x",
+                           normalize_quantized_axis(xbox_state.right_x, 31));
+        add_signal_if_used(signals, "crsf.xbox.right_y",
+                           normalize_quantized_axis(xbox_state.right_y, 31));
+        add_signal_if_used(signals, "crsf.xbox.trigger_left",
+                           normalize_trigger(channels[5]));
+        add_signal_if_used(signals, "crsf.xbox.trigger_right",
+                           normalize_trigger(channels[6]));
+        add_signal_if_used(signals, "crsf.xbox.button.a",
+                           button_value(xbox_state.buttons, kXboxElrsButtonA));
+        add_signal_if_used(signals, "crsf.xbox.button.b",
+                           button_value(xbox_state.buttons, kXboxElrsButtonB));
+        add_signal_if_used(signals, "crsf.xbox.button.x",
+                           button_value(xbox_state.buttons, kXboxElrsButtonX));
+        add_signal_if_used(signals, "crsf.xbox.button.y",
+                           button_value(xbox_state.buttons, kXboxElrsButtonY));
+        add_signal_if_used(signals, "crsf.xbox.button.lb",
+                           button_value(xbox_state.buttons, kXboxElrsButtonLb));
+        add_signal_if_used(signals, "crsf.xbox.button.rb",
+                           button_value(xbox_state.buttons, kXboxElrsButtonRb));
+        add_signal_if_used(signals, "crsf.xbox.button.back",
+                           button_value(xbox_state.buttons, kXboxElrsButtonBack));
+        add_signal_if_used(signals, "crsf.xbox.button.start",
+                           button_value(xbox_state.buttons, kXboxElrsButtonStart));
+        add_signal_if_used(signals, "crsf.xbox.button.lstick",
+                           button_value(xbox_state.buttons, kXboxElrsButtonLStick));
+        add_signal_if_used(signals, "crsf.xbox.button.rstick",
+                           button_value(xbox_state.buttons, kXboxElrsButtonRStick));
+        add_signal_if_used(signals, "crsf.xbox.button.dpad_up",
+                           hat_direction_value(xbox_state.hat, 1, 2, 8));
+        add_signal_if_used(signals, "crsf.xbox.button.dpad_down",
+                           hat_direction_value(xbox_state.hat, 4, 5, 6));
+        add_signal_if_used(signals, "crsf.xbox.button.dpad_left",
+                           hat_direction_value(xbox_state.hat, 6, 7, 8));
+        add_signal_if_used(signals, "crsf.xbox.button.dpad_right",
+                           hat_direction_value(xbox_state.hat, 2, 3, 4));
+        add_signal_if_used(signals, "crsf.xbox.hat_x",
+                           hat_x_value(xbox_state.hat));
+        add_signal_if_used(signals, "crsf.xbox.hat_y",
+                           hat_y_value(xbox_state.hat));
+        add_signal_if_used(signals, "crsf.xbox.hat",
+                           static_cast<double>(xbox_state.hat));
+        for (unsigned int bit = 0; bit < 16; ++bit) {
+            add_signal_if_used(
+                signals,
+                "crsf.xbox.button." + std::to_string(bit),
+                raw_button_value(xbox_state.buttons, bit));
         }
         if (config_.raw_sources.count("crsf.connected") > 0) {
             signals.emplace_back("crsf.connected", 1.0);
@@ -442,6 +613,25 @@ private:
     {
         record_valid_frame();
         cache_debug_channels(channels);
+    }
+
+    double normalize_trigger(std::uint16_t value) const
+    {
+        const double zero_to_one =
+            (static_cast<double>(value) - kElrsHybridWideChannelMin) /
+            static_cast<double>(kElrsHybridWideChannelMax - kElrsHybridWideChannelMin);
+        const double normalized = zero_to_one * 2.0 - 1.0;
+        return std::max(-1.0, std::min(1.0, normalized));
+    }
+
+    void add_signal_if_used(
+        std::vector<std::pair<std::string, double>> &signals,
+        const std::string &source,
+        double value) const
+    {
+        if (config_.raw_sources.count(source) > 0) {
+            signals.emplace_back(source, value);
+        }
     }
 };
 
