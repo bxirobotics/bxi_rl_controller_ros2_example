@@ -34,7 +34,8 @@ private:
 
     void declare_defaults();
     void reconcile();
-    std::vector<DeviceDescriptor> discover();
+    std::vector<DeviceDescriptor> discover(bool refresh_realsense,
+                                           bool refresh_orbbec);
     void start_camera(const DeviceDescriptor &descriptor,
                       std::chrono::steady_clock::time_point now);
     void remove_camera(const std::string &key, const std::string &reason);
@@ -66,8 +67,13 @@ private:
     std::unordered_map<std::string, std::unique_ptr<CameraDevice>> workers_;
     std::unordered_map<std::string, Failure> failures_;
     std::set<std::string> pending_restarts_;
+    std::vector<DeviceDescriptor> realsense_devices_;
+    std::vector<DeviceDescriptor> orbbec_devices_;
     std::optional<std::string> single_unmapped_serial_;
     std::chrono::steady_clock::time_point next_discovery_{};
+    std::uint64_t last_realsense_generation_{ 0 };
+    std::uint64_t last_orbbec_generation_{ 0 };
+    bool initial_discovery_complete_{ false };
     bool closed_{ false };
 };
 

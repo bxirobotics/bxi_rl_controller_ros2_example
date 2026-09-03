@@ -351,5 +351,5 @@
 
   <include file="sensors/head_lidar.xml"/>
 
-  <include file="terrains/universal_test/universal_test_terrain.xml"/>
+  <include file="terrains/universal_test/universal_test_terrain_compact.xml"/>
 </mujoco>

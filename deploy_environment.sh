@@ -98,7 +98,7 @@ if [[ "$CHECK_ONLY" == true ]]; then
     exit 0
 fi
 
-"$PYTHON_EXECUTABLE" -m pip install --upgrade -r "$REQUIREMENTS_FILE" -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+"$PYTHON_EXECUTABLE" -m pip install --upgrade -r "$REQUIREMENTS_FILE" --index-url "${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}"
 check_environment
 
 echo "Python environment deployment completed."

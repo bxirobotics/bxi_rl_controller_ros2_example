@@ -8,6 +8,13 @@
 ```
 
 入口内部再加载材质、公共出生区、城市、工业、野外和救援模块。
+如需快速仿真迭代，可改用额外的精简入口：
+
+```xml
+<include file="terrains/universal_test/universal_test_terrain_compact.xml"/>
+```
+
+精简入口只加载出生区、两组短楼梯和一个沟壑。
 所有长度使用米、角度由主模型的 `compiler angle="radian"` 解释。
 
 ## 布局
@@ -27,11 +34,14 @@
 | 人形净空区 | `x=-50..40, y=-48..-44` | 60/70/80/90 cm门洞、0.6–1.8 m横杆、80 cm通道、直角与S形肩宽通道 |
 | 室内仓储区 | `x=-45..17, y=-66..-54` | 地毯卷边、软垫、木地板接缝、1/3/5 cm门槛、电缆软管、托盘、货架、格栅、装卸平台和散落工具 |
 | RGB-D感知区 | `x=-45..20, y=-82..-70` | 黑色/镜面/玻璃/水面、细杆、金属网、纯白长廊、重复柱阵和1–8 cm低障碍 |
+| 精简障碍线 | `x=4.8..12.9, y=-0.7..0.7` | 仅在 `universal_test_terrain_compact.xml` 中启用；两组短楼梯和一个 45 cm 宽、25 cm 深的沟壑 |
 
 地铁间隙为 18 cm；路肩为 5/10/15 cm；民用楼梯为 15 cm × 28 cm；
 工业楼梯为 20 cm × 25 cm；管廊净宽 80 cm、净高 2 m；沟渠宽 50 cm、
 深 30 cm。无限地面不会填平深度障碍：坑洞和沟渠位于局部抬高的测试台上，
 地铁间隙、塌陷地板、竖井和断梯同样保留实际高度差，而不是贴图。
+精简入口中的低楼梯为 10 cm × 28 cm，高楼梯为 15 cm × 30 cm；沟壑由
+局部抬高的两侧平台形成，底部落到无限地面。
 
 ## 已移除的全局动态叠加
 
@@ -54,9 +64,11 @@
 
 ## 文件职责
 
-- `universal_test_terrain.xml`：唯一外部入口。
+- `universal_test_terrain.xml`：完整测试场外部入口。
+- `universal_test_terrain_compact.xml`：额外精简入口。
 - `assets.xml`：共享纹理和材质。
 - `base.xml`：无限地面、出生安全区和简单无阴影方向光。
+- `compact_obstacles.xml`：精简障碍线，两组楼梯和一个沟壑。
 - `urban.xml`、`industrial.xml`、`outdoor.xml`、`rescue.xml`：原始四个分区。
 - `straight_obstacle_course.xml`：100 m综合直线障碍道。
 - `endurance_routes.xml`：长距离材质、横坡、连续坡和闭环耐久路线。

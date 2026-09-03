@@ -15,6 +15,7 @@ namespace remote_controller {
 class CrsfFrameParser {
 public:
     static constexpr std::uint8_t kSyncByte = 0xC8;
+    static constexpr std::uint8_t kReceiverAddress = 0xEE;
     static constexpr std::uint8_t kRcChannelsPackedFrameType = 0x16;
     static constexpr std::size_t kChannelCount = 16;
     static constexpr std::size_t kRcChannelsPayloadSize = 22;
@@ -92,10 +93,15 @@ private:
     std::vector<std::uint8_t> buffer_;
     ChannelsHandler channels_handler_;
 
+    static bool is_frame_address(std::uint8_t value)
+    {
+        return value == kSyncByte || value == kReceiverAddress;
+    }
+
     void process_buffer()
     {
         while (!buffer_.empty()) {
-            if (buffer_.front() != kSyncByte) {
+            if (!is_frame_address(buffer_.front())) {
                 buffer_.erase(buffer_.begin());
                 continue;
             }
