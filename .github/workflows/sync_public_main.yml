@@ -37,6 +37,25 @@ jobs:
             exit 1
           fi
 
+      - name: Diagnose Public Release Token
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+        run: |
+          echo "Token identity:"
+          gh api user --jq '{login: .login, id: .id, type: .type}'
+          echo "Repository permissions for ${TARGET_REPOSITORY}:"
+          gh api "repos/${TARGET_REPOSITORY}" \
+            --jq '{full_name: .full_name, private: .private, permissions: .permissions}'
+          echo "Token-scoped repository access (if available):"
+          gh api "user/repos?affiliation=owner,collaborator,organization_member&per_page=100" \
+            --paginate --jq ".[] | select(.full_name == \"${TARGET_REPOSITORY}\") | {full_name: .full_name, permissions: .permissions}" \
+            | head -n 1 || true
+          echo "Classic PAT OAuth scopes (if exposed):"
+          gh api -i user \
+            | grep -iE '^(x-oauth-scopes|x-accepted-oauth-scopes):' \
+            || echo "OAuth scopes are not exposed; this is likely a fine-grained token."
+
       - name: Install Sanitizer Dependencies
         run: python3 -m pip install --user PyYAML
 
@@ -92,6 +111,20 @@ jobs:
           git commit --file /tmp/public-release-commit-message.txt
           echo "has_changes=true" >> "${GITHUB_OUTPUT}"
 
+      - name: Diagnose Git Push Authorization
+        if: steps.commit_public_branch.outputs.has_changes == 'true'
+        run: |
+          cd "${MAIN_DIR}"
+          echo "Git remote:" 
+          git remote get-url origin
+          echo "Prepared ref:" 
+          git show --format='%H %s' --stat --oneline HEAD
+          echo "Running non-mutating push authorization check:"
+          if ! git push --dry-run --force-with-lease origin HEAD:"${PUBLIC_BRANCH}"; then
+            echo "::error::GitHub rejected the push during dry-run. Check the error above for workflow-scope, branch-rule, or repository-policy details."
+            exit 1
+          fi
+
       - name: Push Public Branch
         if: steps.commit_public_branch.outputs.has_changes == 'true'
         env:
@@ -144,5 +177,4 @@ jobs:
             exit 0
           fi
 
-          echo "::warning::PR could not be merged normally; retrying with admin bypass."
-          gh pr merge "${PR_URL}" --admin --merge --delete-branch
+          echo "::warning::PR requires an approving review and was left open: ${PR_URL}"
